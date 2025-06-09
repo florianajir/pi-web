@@ -1,0 +1,43 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    restart: always
+    expose:
+      - 3000
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.n8n.rule=Host(`${SUBDOMAIN}.${HOSTNAME}`)
+      - traefik.http.routers.n8n.entrypoints=web
+      # - traefik.http.routers.n8n.tls=true
+      # - traefik.http.routers.n8n.tls.certresolver=mytlschallenge
+      - traefik.http.middlewares.n8n.headers.browserXSSFilter=true
+      - traefik.http.middlewares.n8n.headers.contentTypeNosniff=true
+      # - traefik.http.middlewares.n8n.headers.forceSTSHeader=true
+      # - traefik.http.middlewares.n8n.headers.SSLRedirect=true
+      # - traefik.http.middlewares.n8n.headers.SSLHost=${HOSTNAME}
+      # - traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true
+      # - traefik.http.middlewares.n8n.headers.STSPreload=true
+      # - traefik.http.middlewares.n8n.headers.STSSeconds=315360000
+      - traefik.http.routers.n8n.middlewares=n8n@docker
+      - traefik.http.services.n8n.loadbalancer.server.port=5678
+    environment:
+      - N8N_HOST=${SUBDOMAIN}.${HOSTNAME}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=${PROTOCOL}
+      - NODE_ENV=production
+      - WEBHOOK_URL=${PROTOCOL}://${SUBDOMAIN}.${HOSTNAME}/
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+    env_file:
+      - ./.env
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./files:/files
+    networks:
+      - web
+
+networks:
+  web:
+    external: true
+
+volumes:
+  n8n_data:
