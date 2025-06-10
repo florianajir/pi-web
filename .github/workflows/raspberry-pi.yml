@@ -2,9 +2,9 @@ name: Raspberry Pi Test
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   schedule:
     # Run weekly on Sundays at 2 AM UTC
     - cron: '0 2 * * 0'
@@ -35,18 +35,19 @@ jobs:
           echo "EMAIL=test@example.com" >> .env
           echo "PASSWORD=testpass123" >> .env
           echo "PROTOCOL=http" >> .env
+          echo "SUBDOMAIN=test" >> .env
 
       - name: Test multi-arch image compatibility
         run: |
           # Test Traefik ARM compatibility
           docker run --platform ${{ matrix.platform }} --rm traefik:v3.4 version
-          
+
           # Test Grafana ARM compatibility
           docker run --platform ${{ matrix.platform }} --rm grafana/grafana:latest --version
-          
+
           # Test Prometheus ARM compatibility
           docker run --platform ${{ matrix.platform }} --rm prom/prometheus:latest --version
-          
+
           # Test n8n ARM compatibility
           docker run --platform ${{ matrix.platform }} --rm n8nio/n8n:latest --version
 
@@ -54,17 +55,17 @@ jobs:
         run: |
           # Create network
           docker network create web || true
-          
+
           # Test proxy service
           cd proxy
           docker compose build --platform ${{ matrix.platform }}
-          
-          # Test monitoring service  
+
+          # Test monitoring service
           cd ../monitoring
           docker compose build --platform ${{ matrix.platform }}
-          
+
           # Test n8n service
-          cd ../n8n  
+          cd ../n8n
           docker compose build --platform ${{ matrix.platform }}
 
   validate-systemd:
@@ -83,14 +84,14 @@ jobs:
         run: |
           # Check syntax of service files
           sudo systemd-analyze verify etc/systemd/system/proxy.service
-          sudo systemd-analyze verify etc/systemd/system/monitoring.service  
+          sudo systemd-analyze verify etc/systemd/system/monitoring.service
           sudo systemd-analyze verify etc/systemd/system/n8n.service
 
       - name: Test Makefile systemd commands
         run: |
           # Test that systemd-related make targets work
           make help
-          
+
           # Simulate systemd installation (without actually installing)
           echo "Testing systemd file installation paths..."
           test -f etc/systemd/system/proxy.service
@@ -109,10 +110,10 @@ jobs:
           # Test Docker availability
           docker --version
           docker compose version
-          
+
           # Test make availability
           make --version
-          
+
           # Test git availability (for make update)
           git --version
 
@@ -128,9 +129,9 @@ jobs:
           # Install age for testing
           sudo apt-get update
           sudo apt-get install -y age
-          
+
           # Generate test key
           age-keygen -o test.key
-          
+
           # Test that age works
           age --version

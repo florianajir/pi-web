@@ -75,7 +75,7 @@ body:
       placeholder: |
         # Service status
         make status
-        
+
         # Service logs
         journalctl -u proxy.service --no-pager -l
         journalctl -u monitoring.service --no-pager -l
@@ -87,7 +87,7 @@ body:
       label: Environment Details
       description: Additional environment information
       placeholder: |
-        - Docker version: 
+        - Docker version:
         - Docker Compose version:
         - Available memory:
         - SD card type/speed:

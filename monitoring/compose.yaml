@@ -9,7 +9,7 @@ services:
       - internal
       - web
     expose:
-      - 3000 
+      - 3000
     env_file:
       - ./grafana/.env
     volumes:

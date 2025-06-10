@@ -105,6 +105,35 @@ sudo systemctl start monitoring.service
 sudo systemctl stop n8n.service
 ```
 
+## 🧪 Development Setup
+
+For contributors and developers who want to maintain code quality:
+
+### Linting Setup
+
+Install linting tools for validation:
+
+```bash
+make setup-lint
+```
+
+This installs:
+- ✅ yamllint for YAML syntax and formatting
+- ✅ Git pre-commit hook for automatic validation
+
+### Manual Linting
+
+Run quality checks manually:
+
+```bash
+make lint
+```
+
+This checks:
+- YAML syntax and formatting in compose files
+- Dockerfile best practices (if present)
+- Docker Compose configuration validation
+
 ## ⚙️ Configuration
 
 ### Environment Variables

@@ -2,16 +2,16 @@ name: Documentation
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
       - 'README.md'
       - 'docs/**'
       - '*.md'
   pull_request:
-    branches: [ main ]
+    branches: [main]
     paths:
       - 'README.md'
-      - 'docs/**' 
+      - 'docs/**'
       - '*.md'
 
 jobs:
@@ -56,7 +56,7 @@ jobs:
       - name: Generate architecture diagram
         run: |
           mkdir -p docs/diagrams
-          
+
           cat > docs/diagrams/architecture.mermaid << 'EOF'
           graph TB
               subgraph "Raspberry Pi"
@@ -68,17 +68,17 @@ jobs:
                       C[cAdvisor<br/>:8080]
                       E[Node Exporter<br/>:9100]
                   end
-                  
+
                   S1[systemd: proxy.service]
                   S2[systemd: monitoring.service]
                   S3[systemd: n8n.service]
               end
-              
+
               subgraph "External Access"
                   U[User Browser]
                   H[/etc/hosts<br/>proxy.pi.home<br/>monitoring.pi.home<br/>n8n.pi.home]
               end
-              
+
               U --> H
               H --> T
               T --> G
@@ -86,7 +86,7 @@ jobs:
               G --> P
               P --> C
               P --> E
-              
+
               S1 -.-> T
               S2 -.-> G
               S2 -.-> P
@@ -98,42 +98,42 @@ jobs:
       - name: Generate service documentation
         run: |
           mkdir -p docs
-          
+
           cat > docs/SERVICES.md << 'EOF'
           # Services Documentation
-          
+
           ## Traefik Proxy
           - **Image**: traefik:v3.4
           - **Ports**: 80 (HTTP), 8080 (Dashboard)
           - **Purpose**: Reverse proxy with automatic service discovery
           - **Access**: http://proxy.pi.home
-          
+
           ## Grafana
           - **Image**: grafana/grafana:latest
           - **Port**: 3000
           - **Purpose**: Monitoring dashboards and analytics
           - **Access**: http://monitoring.pi.home
           - **Default Login**: admin/admin (change on first login)
-          
+
           ## Prometheus
           - **Image**: prom/prometheus:latest
           - **Port**: 9090
           - **Purpose**: Metrics collection and storage
           - **Config**: monitoring/prometheus/prometheus.yml
-          
+
           ## n8n
           - **Image**: n8nio/n8n:latest
           - **Port**: 5678
           - **Purpose**: Workflow automation platform
           - **Access**: http://n8n.pi.home
           - **Data**: Persisted in n8n/files/
-          
+
           ## cAdvisor
           - **Image**: gcr.io/cadvisor/cadvisor:latest
           - **Port**: 8080
           - **Purpose**: Container resource monitoring
           - **Metrics**: Exposed to Prometheus
-          
+
           ## Node Exporter
           - **Image**: prom/node-exporter:latest
           - **Port**: 9100
@@ -145,69 +145,69 @@ jobs:
         run: |
           cat > docs/TROUBLESHOOTING.md << 'EOF'
           # Troubleshooting Guide
-          
+
           ## Common Issues
-          
+
           ### Services Won't Start
           ```bash
           # Check service status
           make status
-          
+
           # Check individual service logs
           journalctl -u proxy.service -f
           journalctl -u monitoring.service -f
           journalctl -u n8n.service -f
           ```
-          
+
           ### Can't Access Web Interfaces
           1. Check /etc/hosts configuration on your local machine
           2. Verify services are running: `make status`
           3. Check firewall: `sudo ufw status`
           4. Test direct IP access: `curl http://PI_IP:8080`
-          
+
           ### Environment Decryption Fails
           ```bash
           # Install dependencies
           make dependencies
-          
+
           # Check SOPS configuration
           sops --version
-          
+
           # Verify age key
           ls -la ~/.config/sops/age/
           ```
-          
+
           ### Docker Issues
           ```bash
           # Check Docker daemon
           sudo systemctl status docker
-          
+
           # Check Docker Compose
           docker compose version
-          
+
           # Recreate containers
           cd proxy && docker compose down && docker compose up -d
           ```
-          
+
           ### High Resource Usage
           ```bash
           # Check container resources
           docker stats
-          
+
           # Check system resources
           htop
-          
+
           # Restart services
           make restart
           ```
-          
+
           ## Performance Optimization
-          
+
           ### Raspberry Pi 3/4
           - Increase GPU memory split: `gpu_mem=128` in /boot/config.txt
           - Use fast SD card (Class 10, U3)
           - Consider USB 3.0 SSD for storage
-          
+
           ### Memory Management
           - Monitor with Grafana dashboards
           - Adjust Docker container limits if needed

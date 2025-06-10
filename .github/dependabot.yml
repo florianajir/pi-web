@@ -19,7 +19,7 @@ updates:
     directory: "/monitoring"
     schedule:
       interval: "weekly"
-      day: "sunday" 
+      day: "sunday"
       time: "04:00"
     open-pull-requests-limit: 5
     labels:

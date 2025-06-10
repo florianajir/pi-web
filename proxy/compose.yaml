@@ -24,6 +24,8 @@ services:
     ports:
       - "80:80"
       # - "443:443"
+    expose:
+      - 8080
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik_data:/letsencrypt
