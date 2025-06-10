@@ -88,7 +88,10 @@ lint:
 	@if command -v yamllint >/dev/null 2>&1; then \
 		yamllint -c .yamllint */compose.yaml .github/workflows/*.yml || true; \
 	else \
-		echo "⚠️  yamllint not installed. Run 'make setup-lint' first."; \
+		echo "installing yamllint..."; \
+		sudo apt-get update \
+		sudo apt-get install -y yamllint \
+		yamllint -c .yamllint */compose.yaml .github/workflows/*.yml || true; \
 	fi
 	@echo "Checking Docker Compose files..."
 	@for file in */compose.yaml; do \

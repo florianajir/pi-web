@@ -4,19 +4,6 @@ This project uses yamllint to ensure YAML code quality and catch syntax errors e
 
 - **yamllint** - YAML validation and formatting
 
-## Setup
-
-Install yamllint once:
-
-```bash
-make setup-lint
-```
-
-This installs:
-
-- yamllint (via apt)
-- Git pre-commit hook for automatic validation
-
 ## Usage
 
 ### Manual Check
@@ -29,10 +16,6 @@ This checks:
 
 - ✅ YAML syntax in compose files and workflows
 - ✅ Docker Compose configuration validation
-
-### Automatic Check
-
-The git pre-commit hook automatically runs yamllint on commit to catch issues early.
 
 ## Fixing Issues
 
