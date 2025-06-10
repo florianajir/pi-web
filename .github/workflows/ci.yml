@@ -1,0 +1,182 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    name: Lint and Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose files
+        run: |
+          docker compose -f proxy/compose.yaml config
+          docker compose -f monitoring/compose.yaml config
+          docker compose -f n8n/compose.yaml config
+
+      - name: Lint Dockerfile and compose files
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: proxy/compose.yaml
+          format: tty
+          failure-threshold: warning
+
+      - name: Validate Prometheus config
+        run: |
+          docker run --rm -v $PWD/monitoring/prometheus:/etc/prometheus prom/prometheus:latest promtool check config /etc/prometheus/prometheus.yml
+
+      - name: Check Makefile syntax
+        run: |
+          make help > /dev/null
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  test-deployment:
+    name: Test Deployment
+    runs-on: ubuntu-latest
+    env:
+      HOSTNAME: test.local
+      USER: testuser
+      EMAIL: test@example.com
+      PASSWORD: testpassword123
+      SUBDOMAIN: proxy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create test environment file
+        run: |
+          echo "HOSTNAME=test.local" > .env
+          echo "USER=testuser" >> .env
+          echo "EMAIL=test@example.com" >> .env
+          echo "PASSWORD=testpassword123" >> .env
+          echo "SUBDOMAIN=proxy" >> .env
+
+      - name: Create Docker network
+        run: docker network create web
+
+      - name: Test Traefik deployment
+        run: |
+          cd proxy
+          docker compose up -d
+          sleep 10
+          docker compose ps
+          curl -f http://localhost:8080/api/rawdata || exit 1
+          docker compose down
+
+      - name: Test Monitoring stack
+        run: |
+          cd monitoring
+          docker compose up -d
+          sleep 30
+          docker compose ps
+          # Test Prometheus
+          curl -f http://localhost:9090/-/healthy || exit 1
+          # Test Grafana
+          curl -f http://localhost:3000/api/health || exit 1
+          docker compose down
+
+      - name: Test n8n deployment
+        run: |
+          cd n8n
+          docker compose up -d
+          sleep 20
+          docker compose ps
+          curl -f http://localhost:5678/healthz || exit 1
+          docker compose down
+
+  build-and-push:
+    name: Build and Push Documentation
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: [lint, security, test-deployment]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Generate project documentation
+        run: |
+          echo "# pi-web Documentation" > docs.md
+          echo "" >> docs.md
+          echo "## Services Health Check" >> docs.md
+          echo "- ✅ Traefik proxy configuration validated" >> docs.md
+          echo "- ✅ Monitoring stack validated" >> docs.md
+          echo "- ✅ n8n automation validated" >> docs.md
+          echo "- ✅ Security scan completed" >> docs.md
+          echo "" >> docs.md
+          echo "Generated on: $(date)" >> docs.md
+
+      - name: Deploy documentation to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .
+          destination_dir: docs
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]')
+    needs: [lint, security, test-deployment]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          echo "## Changes" > CHANGELOG.md
+          git log --oneline --pretty=format:"- %s" $(git describe --tags --abbrev=0)..HEAD >> CHANGELOG.md || echo "- Initial release" >> CHANGELOG.md
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(date +'%Y.%m.%d')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          release_name: Release v${{ steps.version.outputs.version }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
