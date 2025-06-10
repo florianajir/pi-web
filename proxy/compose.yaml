@@ -1,5 +1,5 @@
 services:
-  reverse-proxy:
+  traefik:
     image: traefik:v3.4
     restart: always
     command:
@@ -13,11 +13,17 @@ services:
       # - "--certificatesresolvers.mytlschallenge.acme.tlschallenge=true"
       # - "--certificatesresolvers.mytlschallenge.acme.email=${EMAIL}"
       # - "--certificatesresolvers.mytlschallenge.acme.storage=/letsencrypt/acme.json"
+    labels:
+      - "com.example.service=proxy"
+      - "traefik.enable=true"
+      - "traefik.docker.network=web"
+      - "traefik.http.routers.traefik.rule=Host(`${SUBDOMAIN}.${HOSTNAME}`)"
+      - "traefik.http.routers.traefik.entrypoints=web"
+      - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+
     ports:
       - "80:80"
       # - "443:443"
-      # The Web UI (enabled by --api.insecure=true)
-      - "8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik_data:/letsencrypt
