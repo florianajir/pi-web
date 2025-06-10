@@ -34,6 +34,7 @@ jobs:
           echo "USER=testuser" >> .env
           echo "EMAIL=test@example.com" >> .env
           echo "PASSWORD=testpass123" >> .env
+          echo "PROTOCOL=http" >> .env
 
       - name: Test multi-arch image compatibility
         run: |

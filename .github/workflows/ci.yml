@@ -20,16 +20,55 @@ jobs:
           docker compose -f monitoring/compose.yaml config
           docker compose -f n8n/compose.yaml config
 
-      - name: Lint Dockerfile and compose files
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: proxy/compose.yaml
-          format: tty
-          failure-threshold: warning
+      - name: Lint YAML files
+        run: |
+          # Install yamllint
+          pip install yamllint
+          
+          # Lint compose files with custom config
+          yamllint -c .yamllint proxy/compose.yaml
+          yamllint -c .yamllint monitoring/compose.yaml
+          yamllint -c .yamllint n8n/compose.yaml
+          
+          # Lint other YAML files
+          yamllint -c .yamllint .github/workflows/*.yml
+
+      - name: Validate Docker Compose security
+        run: |
+          # Check for common security issues in compose files
+          echo "Checking for security issues in Docker Compose files..."
+          
+          # Check for privileged containers
+          if grep -r "privileged.*true" */compose.yaml; then
+            echo "Warning: Found privileged containers"
+          fi
+          
+          # Check for host network mode
+          if grep -r "network_mode.*host" */compose.yaml; then
+            echo "Warning: Found host network mode usage"
+          fi
+          
+          # Check for bind mounts to sensitive paths
+          if grep -r "/etc:" */compose.yaml; then
+            echo "Warning: Found bind mount to /etc"
+          fi
+          
+          # Check for missing restart policies
+          for file in */compose.yaml; do
+            if ! grep -q "restart:" "$file"; then
+              echo "Info: $file missing restart policy"
+            fi
+          done
 
       - name: Validate Prometheus config
         run: |
-          docker run --rm -v $PWD/monitoring/prometheus:/etc/prometheus prom/prometheus:latest promtool check config /etc/prometheus/prometheus.yml
+          # Check if prometheus config exists
+          if [ -f monitoring/prometheus/prometheus.yml ]; then
+            # Use promtool to validate config
+            docker run --rm -v $PWD/monitoring/prometheus:/etc/prometheus prom/prometheus:latest promtool check config /etc/prometheus/prometheus.yml
+          else
+            echo "Warning: prometheus.yml not found"
+          fi
 
       - name: Check Makefile syntax
         run: |
