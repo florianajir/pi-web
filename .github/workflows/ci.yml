@@ -1,0 +1,198 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  lint:
+    name: Lint and Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose files
+        run: |
+          docker compose -f proxy/compose.yaml config
+          docker compose -f monitoring/compose.yaml config
+          docker compose -f n8n/compose.yaml config
+
+      - name: Lint YAML files
+        run: |
+          # Install yamllint
+          pip install yamllint
+
+          # Lint compose files with custom config
+          yamllint -c .yamllint proxy/compose.yaml
+          yamllint -c .yamllint monitoring/compose.yaml
+          yamllint -c .yamllint n8n/compose.yaml
+
+          # Lint other YAML files
+          yamllint -c .yamllint .github/workflows/*.yml
+
+      - name: Validate Prometheus config
+        run: |
+          # Check if prometheus config exists
+          if [ -f monitoring/prometheus/prometheus.yml ]; then
+            # Use promtool to validate config
+            docker run --rm \
+              -v $PWD/monitoring/prometheus:/etc/prometheus \
+              --entrypoint=promtool \
+              prom/prometheus:latest \
+              check config /etc/prometheus/prometheus.yml
+          else
+            echo "Warning: prometheus.yml not found"
+          fi
+
+      - name: Check Makefile syntax
+        run: |
+          make help > /dev/null
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+        continue-on-error: true
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && github.repository_owner == github.actor
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+
+      - name: Upload Trivy results as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-results
+          path: trivy-results.sarif
+          retention-days: 30
+
+      - name: Security checks
+        run: |
+          echo "🔍 Running security checks..."
+
+          # Check Docker Compose configurations
+          for file in */compose.yaml; do
+            echo "Checking $file..."
+            grep -q "privileged.*true" "$file" && echo "⚠️ WARNING: Privileged container in $file"
+            grep -q "network_mode.*host" "$file" && echo "⚠️ WARNING: Host network mode in $file"
+            grep -q "/etc:" "$file" && echo "⚠️ WARNING: Bind mount to /etc in $file"
+            grep -q "restart:" "$file" || echo "ℹ️ INFO: No restart policy in $file"
+          done
+
+          echo "✅ Security checks completed"
+
+  test-deployment:
+    name: Test Deployment
+    runs-on: ubuntu-latest
+    env:
+      HOSTNAME: test.local
+      USER: testuser
+      EMAIL: test@example.com
+      PASSWORD: testpassword123
+      SUBDOMAIN: proxy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Test all services deployment
+        run: |
+          # Create test environment
+          echo "HOSTNAME=test.local" > .env
+          echo "USER=testuser" >> .env
+          echo "EMAIL=test@example.com" >> .env
+          echo "PASSWORD=testpassword123" >> .env
+          echo "SUBDOMAIN=proxy" >> .env
+
+          docker network create web
+
+          # Test each service quickly
+          services=("proxy" "monitoring" "n8n")
+          for service in "${services[@]}"; do
+            echo "Testing $service..."
+            cd "$service"
+            docker compose up -d
+            sleep 15
+            docker compose ps
+            docker compose down
+            cd ..
+          done
+
+  build-and-push:
+    name: Build and Push Documentation
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: [lint, security, test-deployment]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate documentation
+        run: |
+          cat > docs.md << EOF
+          # pi-web Documentation
+
+          ## Services Validated
+          - ✅ All services deployment tested
+          - ✅ Security scan completed
+
+          Generated: $(date)
+          EOF
+
+      - name: Deploy documentation to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .
+          destination_dir: docs
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]')
+    needs: [lint, security, test-deployment]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v$(date +'%Y.%m.%d')
+          release_name: Release v$(date +'%Y.%m.%d')
+          body: "Automated release with validated services"
+          draft: false
+          prerelease: false

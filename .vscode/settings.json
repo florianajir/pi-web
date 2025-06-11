@@ -1,0 +1,16 @@
+{
+  "cSpell.words": [
+    "cadvisor",
+    "certificatesresolvers",
+    "exposedbydefault",
+    "healthcheck",
+    "letsencrypt",
+    "mytlschallenge",
+    "redirections",
+    "rootfs",
+    "rslave",
+    "tlschallenge",
+    "traefik",
+    "websecure"
+  ]
+}
