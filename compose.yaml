@@ -6,13 +6,13 @@ services:
     hostname: pi-traefik
     restart: always
     command:
-      - "--api.insecure=false"
+      - "--api.insecure=true"
       - "--api.dashboard=true"
-      - "--providers.docker"
+      - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
-      # - "--entrypoints.web.address=:80"
-      # - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      # - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
       - "--entrypoints.websecure.address=:443"
       - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
       - "--certificatesresolvers.letsencrypt.acme.email=${EMAIL}"
@@ -32,8 +32,8 @@ services:
     expose:
       - 8080
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik_data:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - frontend
     logging:
@@ -47,10 +47,10 @@ services:
   # Monitoring Stack
   grafana:
     container_name: pi-grafana
-    image: grafana/grafana:latest
+    image: grafana/grafana-oss:latest
     hostname: pi-grafana
     restart: unless-stopped
-    user: "472"
+    user: ${USER_ID:-1000}
     networks:
       - monitoring
       - frontend
@@ -85,9 +85,11 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      - GF_SECURITY_ADMIN_USER=${USER}
+      - GF_DEFAULT_INSTANCE_NAME=${HOSTNAME}
       - GF_SECURITY_ADMIN_EMAIL=${EMAIL}
+      - GF_SECURITY_ADMIN_USER=${USER}
       - GF_SECURITY_ADMIN_PASSWORD=${PASSWORD}
+      - GF_SERVER_ROOT_URL=https://grafana.${HOSTNAME}/
     mem_limit: 512m
     mem_reservation: 256m
 
@@ -100,6 +102,7 @@ services:
       - SYS_ADMIN
     networks:
       - monitoring
+      - frontend
     expose:
       - 8080
     command:
@@ -113,8 +116,6 @@ services:
       - /var/run:/var/run:rw
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
-      - /etc/machine-id:/etc/machine-id:ro
     healthcheck:
       test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:8080/healthz"]
       interval: 30s
@@ -123,6 +124,13 @@ services:
     labels:
       - "com.example.description=cAdvisor Container Monitoring"
       - "com.example.service=monitoring"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.cadvisor.rule=Host(`cadvisor.${HOSTNAME}`)"
+      - "traefik.http.routers.cadvisor.entrypoints=websecure"
+      - "traefik.http.routers.cadvisor.tls=true"
+      - "traefik.http.routers.cadvisor.tls.certresolver=letsencrypt"
+      - "traefik.http.services.cadvisor.loadbalancer.server.port=8080"
     logging:
       driver: "json-file"
       options:
@@ -218,9 +226,11 @@ services:
   # Automation Service
   n8n:
     container_name: pi-n8n
-    image: docker.n8n.io/n8nio/n8n
+    image: n8nio/n8n:latest
     hostname: pi-n8n
-    restart: always
+    restart: unless-stopped
+    # ports:
+    #   - "127.0.0.1:5678:5678"
     expose:
       - 5678
     labels:
@@ -229,19 +239,17 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.n8n.rule=Host(`n8n.${HOSTNAME}`)"
-      - "traefik.http.routers.n8n.entrypoints=websecure"
-      - "traefik.http.routers.n8n.tls=true"
-      - "traefik.http.routers.n8n.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.n8n.middlewares=n8n@docker"
-      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
-      - "traefik.http.middlewares.n8n.headers.browserXSSFilter=true"
-      - "traefik.http.middlewares.n8n.headers.contentTypeNosniff=true"
-      # - "traefik.http.middlewares.n8n.headers.forceSTSHeader=true"
-      # - "traefik.http.middlewares.n8n.headers.SSLRedirect=true"
-      # - "traefik.http.middlewares.n8n.headers.SSLHost=${HOSTNAME}"
-      # - "traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true"
-      # - "traefik.http.middlewares.n8n.headers.STSPreload=true"
-      # - "traefik.http.middlewares.n8n.headers.STSSeconds=315360000"
+      - "traefik.http.routers.n8n.entrypoints=web,websecure"
+      - traefik.http.routers.n8n.tls.certresolver=mytlschallenge
+      - traefik.http.middlewares.n8n.headers.SSLRedirect=true
+      - traefik.http.middlewares.n8n.headers.STSSeconds=315360000
+      - traefik.http.middlewares.n8n.headers.browserXSSFilter=true
+      - traefik.http.middlewares.n8n.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.n8n.headers.forceSTSHeader=true
+      - traefik.http.middlewares.n8n.headers.SSLHost=${HOSTNAME}
+      - traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true
+      - traefik.http.middlewares.n8n.headers.STSPreload=true
+      - traefik.http.routers.n8n.middlewares=n8n@docker
     environment:
       - N8N_HOST=n8n.${HOSTNAME}
       - N8N_PORT=5678
@@ -249,11 +257,10 @@ services:
       - NODE_ENV=production
       - WEBHOOK_URL=https://n8n.${HOSTNAME}/
       - GENERIC_TIMEZONE=${TIMEZONE}
-    env_file:
-      - ./n8n/.env
+      - TZ=${TIMEZONE}
     volumes:
       - n8n_data:/home/node/.n8n
-      - ./n8n/files:/files
+      - ./data/n8n/files:/files
     networks:
       - frontend
     logging:
@@ -276,8 +283,8 @@ services:
       - NET_ADMIN
       - SYS_MODULE
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=${USER_ID:-1000}
+      - PGID=${GROUP_ID:-1000}
       - TZ=${TIMEZONE}
       - SERVERURL=${HOSTNAME}
       - SERVERPORT=51820
@@ -327,28 +334,19 @@ services:
       - "53:53/tcp"
       - "53:53/udp"
     expose:
-      - 80
+      - 53
+      - 8082
     environment:
-      - TZ=${TIMEZONE}
-      - WEBPASSWORD=${PASSWORD}
-      - PIHOLE_DNS_=1.1.1.1;1.0.0.1
-      - DNSSEC=true
-      - DNS_BOGUS_PRIV=true
-      - DNS_FQDN_REQUIRED=true
-      - REV_SERVER=true
-      - REV_SERVER_DOMAIN=${HOSTNAME}
-      - REV_SERVER_TARGET=192.168.1.1
-      - REV_SERVER_CIDR=192.168.1.0/24
+      TZ: ${TIMEZONE}
+      FTLCONF_webserver_api_password: ${PASSWORD}
+      FTLCONF_dns_upstreams: '127.0.0.1;1.1.1.1'
+      FTLCONF_misc_dnsmasq_lines: 'address=/${HOSTNAME}/172.21.0.1'
+      FTLCONF_webserver_port: 8082
     volumes:
       - pihole_data:/etc/pihole
-      - pihole_dnsmasq:/etc/dnsmasq.d
+      - ./etc/dnsmasq.d:/etc/dnsmasq.d
     networks:
       - frontend
-    cap_add:
-      - NET_ADMIN
-    dns:
-      - 127.0.0.1
-      - 1.1.1.1
     labels:
       - "com.example.description=Pi-hole DNS Ad-Blocker"
       - "com.example.service=dns"
@@ -358,7 +356,7 @@ services:
       - "traefik.http.routers.pihole.entrypoints=websecure"
       - "traefik.http.routers.pihole.tls=true"
       - "traefik.http.routers.pihole.tls.certresolver=letsencrypt"
-      - "traefik.http.services.pihole.loadbalancer.server.port=80"
+      - "traefik.http.services.pihole.loadbalancer.server.port=8082"
     healthcheck:
       test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
       interval: 30s
@@ -389,10 +387,6 @@ volumes:
   pihole_data:
     labels:
       - "com.example.description=Pi-hole Configuration Data"
-      - "com.example.service=dns"
-  pihole_dnsmasq:
-    labels:
-      - "com.example.description=Pi-hole DNS Configuration"
       - "com.example.service=dns"
   n8n_data:
     labels:

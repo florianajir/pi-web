@@ -21,21 +21,12 @@ jobs:
 
       - name: Validate Docker Compose files
         run: |
-          docker compose -f proxy/compose.yaml config
-          docker compose -f monitoring/compose.yaml config
-          docker compose -f n8n/compose.yaml config
+          docker compose -f compose.yaml config
 
       - name: Lint YAML files
         run: |
-          # Install yamllint
-          pip install yamllint
-
-          # Lint compose files with custom config
-          yamllint -c .yamllint proxy/compose.yaml
-          yamllint -c .yamllint monitoring/compose.yaml
-          yamllint -c .yamllint n8n/compose.yaml
-
-          # Lint other YAML files
+          pip install .yamllint
+          yamllint -c .yamllint compose.yaml
           yamllint -c .yamllint .github/workflows/*.yml
 
       - name: Validate Prometheus config
@@ -128,19 +119,13 @@ jobs:
           echo "EMAIL=test@example.com" >> .env
           echo "PASSWORD=testpassword123" >> .env
 
-          docker network create web
+          docker network create monitoring
+          docker network create frontend
 
-          # Test each service quickly
-          services=("proxy" "monitoring" "n8n")
-          for service in "${services[@]}"; do
-            echo "Testing $service..."
-            cd "$service"
-            docker compose up -d
-            sleep 15
-            docker compose ps
-            docker compose down
-            cd ..
-          done
+          docker compose up -d
+          sleep 15
+          docker compose ps
+          docker compose down
 
   build-and-push:
     name: Build and Push Documentation
@@ -156,13 +141,9 @@ jobs:
       - name: Generate documentation
         run: |
           cat > docs.md << EOF
-          # pi-web Documentation
+          # pi-web build status
 
-          ## Services Validated
-          - ✅ All services deployment tested
-          - ✅ Security scan completed
-
-          Generated: $(date)
+          Last build: $(date)
           EOF
 
       - name: Deploy documentation to GitHub Pages
@@ -172,25 +153,3 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: .
           destination_dir: docs
-
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]')
-    needs: [lint, security, test-deployment]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Create Release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v$(date +'%Y.%m.%d')
-          release_name: Release v$(date +'%Y.%m.%d')
-          body: "Automated release with validated services"
-          draft: false
-          prerelease: false

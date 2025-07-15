@@ -1,6 +1,7 @@
 {
 	"cSpell.words": [
 		"ALLOWEDIPS",
+		"aufs",
 		"cadvisor",
 		"certificatesresolvers",
 		"certresolver",
@@ -9,12 +10,16 @@
 		"dnsmasq",
 		"DNSSEC",
 		"exposedbydefault",
+		"FTLCONF",
 		"grafana",
 		"healthcheck",
+		"journalctl",
 		"kmsg",
 		"letsencrypt",
 		"loadbalancer",
 		"mytlschallenge",
+		"netns",
+		"Nosniff",
 		"PEERDNS",
 		"PERSISTENTKEEPALIVE",
 		"PGID",
@@ -30,6 +35,7 @@
 		"sysfs",
 		"tlschallenge",
 		"traefik",
+		"WEBPASSWORD",
 		"websecure"
 	]
 }

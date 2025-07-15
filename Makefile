@@ -11,11 +11,12 @@ help:
 	@echo "  logs               - Show docker stack logs"
 	@echo "  help               - Show this help message"
 
-install: dependencies enable start
+install:
 	sudo cp etc/systemd/system/*.service /etc/systemd/system/
 	sudo systemctl daemon-reload
 	sudo systemctl enable pi-web.service
 	@echo "✅ Pi-Web service enabled"
+	make start
 
 start:
 	@echo "🚀 Starting..."

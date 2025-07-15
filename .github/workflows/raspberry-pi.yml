@@ -49,6 +49,12 @@ jobs:
           # Test n8n ARM compatibility
           docker run --platform ${{ matrix.platform }} --rm n8nio/n8n:latest --version
 
+          # Test WireGuard ARM compatibility
+          docker run --platform ${{ matrix.platform }} --rm linuxserver/wireguard:latest --version
+
+          # Test Pi Hole ARM compatibility
+          docker run --platform ${{ matrix.platform }} --rm pihole/pihole:latest --version
+
       - name: Build and test on ARM
         run: |
           # Create networks
@@ -98,22 +104,3 @@ jobs:
 
           # Test git availability (for make update)
           git --version
-
-      - name: Simulate SOPS installation
-        run: |
-          # Download and test SOPS
-          wget https://github.com/mozilla/sops/releases/download/v3.8.1/sops-v3.8.1.linux.amd64
-          chmod +x sops-v3.8.1.linux.amd64
-          ./sops-v3.8.1.linux.amd64 --version
-
-      - name: Test age key generation
-        run: |
-          # Install age for testing
-          sudo apt-get update
-          sudo apt-get install -y age
-
-          # Generate test key
-          age-keygen -o test.key
-
-          # Test that age works
-          age --version
