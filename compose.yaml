@@ -341,7 +341,7 @@ services:
       FTLCONF_webserver_api_password: ${PASSWORD}
       FTLCONF_dns_listeningMode: 'all'
       FTLCONF_dns_upstreams: '1.1.1.1;8.8.8.8'
-      FTLCONF_misc_dnsmasq_lines: 'address=/${HOSTNAME}/172.21.0.1'
+      FTLCONF_misc_dnsmasq_lines: 'address=/${HOSTNAME}/${IP}'
       FTLCONF_webserver_port: 8082
     volumes:
       - pihole_data:/etc/pihole

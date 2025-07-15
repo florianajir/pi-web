@@ -38,6 +38,7 @@ update:
 	sudo apt update && sudo apt upgrade -y
 	git pull
 	sudo cp -f etc/systemd/system/pi-web.service /etc/systemd/system/
+	systemctl daemon-reload
 	make restart
 	@echo "✅ Services updated and restarted"
 
