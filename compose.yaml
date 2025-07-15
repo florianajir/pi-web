@@ -104,11 +104,12 @@ services:
       - monitoring
       - frontend
     expose:
-      - 8080
+      - 9091
     command:
       - '-housekeeping_interval=15s'
       - '-docker_only=true'
       - '-store_container_labels=false'
+      - '-port=9091'
     devices:
       - /dev/kmsg
     volumes:
@@ -130,7 +131,7 @@ services:
       - "traefik.http.routers.cadvisor.entrypoints=websecure"
       - "traefik.http.routers.cadvisor.tls=true"
       - "traefik.http.routers.cadvisor.tls.certresolver=letsencrypt"
-      - "traefik.http.services.cadvisor.loadbalancer.server.port=8080"
+      - "traefik.http.services.cadvisor.loadbalancer.server.port=9091"
     logging:
       driver: "json-file"
       options:
