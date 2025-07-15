@@ -113,7 +113,6 @@ jobs:
       USER: testuser
       EMAIL: test@example.com
       PASSWORD: testpassword123
-      SUBDOMAIN: proxy
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -128,7 +127,6 @@ jobs:
           echo "USER=testuser" >> .env
           echo "EMAIL=test@example.com" >> .env
           echo "PASSWORD=testpassword123" >> .env
-          echo "SUBDOMAIN=proxy" >> .env
 
           docker network create web
 

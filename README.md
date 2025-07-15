@@ -46,21 +46,11 @@ A comprehensive, production-ready Docker Compose stack for Raspberry Pi that pro
 ### Installation
 
 1. **Clone the repository**:
-   ```bash
-   sudo git clone https://github.com/yourusername/pi-web.git /opt/web
-   cd /opt/web
-   ```
 
-2. **One-command setup**:
-   ```bash
-   make install
-   ```
-
-That's it! The installation will:
-- Install dependencies (SOPS for encryption)
-- Configure environment variables
-- Set up systemd services
-- Start all services automatically
+```bash
+git clone https://github.com/yourusername/pi-web.git
+make install
+```
 
 ### Access Your Services
 
