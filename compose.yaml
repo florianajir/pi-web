@@ -331,15 +331,15 @@ services:
     hostname: pi-pihole
     restart: unless-stopped
     ports:
-      - "53:53/tcp"
-      - "53:53/udp"
+      - "0.0.0.0:53:53/tcp"
+      - "0.0.0.0:53:53/udp"
     expose:
       - 53
       - 8082
     environment:
       TZ: ${TIMEZONE}
       FTLCONF_webserver_api_password: ${PASSWORD}
-      FTLCONF_dns_upstreams: '127.0.0.1;1.1.1.1'
+      FTLCONF_dns_upstreams: '1.1.1.1;8.8.8.8'
       FTLCONF_misc_dnsmasq_lines: 'address=/${HOSTNAME}/172.21.0.1'
       FTLCONF_webserver_port: 8082
     volumes:
