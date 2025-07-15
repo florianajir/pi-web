@@ -25,7 +25,6 @@ services:
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.tls=true"
       - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.traefik.middlewares=global-auth"
       - "traefik.http.services.traefik.loadbalancer.server.port=8080"
     ports:
       - "80:80"
@@ -79,7 +78,6 @@ services:
       - "traefik.http.routers.grafana.entrypoints=websecure"
       - "traefik.http.routers.grafana.tls=true"
       - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.grafana.middlewares=global-auth"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
     logging:
       driver: "json-file"
@@ -132,7 +130,6 @@ services:
       - "traefik.http.routers.cadvisor.entrypoints=websecure"
       - "traefik.http.routers.cadvisor.tls=true"
       - "traefik.http.routers.cadvisor.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.cadvisor.middlewares=global-auth"
       - "traefik.http.services.cadvisor.loadbalancer.server.port=8080"
     logging:
       driver: "json-file"
@@ -241,10 +238,10 @@ services:
       - traefik.enable=true
       - traefik.docker.network=frontend
       - traefik.http.routers.n8n.rule=Host(`n8n.${HOSTNAME}`)
-      - traefik.http.routers.n8n.entrypoints=web,websecure
+      - traefik.http.routers.n8n.entrypoints=websecure
+      - traefik.http.routers.n8n.tls=true
       - traefik.http.routers.n8n.tls.certresolver=letsencrypt
       - traefik.http.routers.n8n.middlewares=n8n@docker
-      - traefik.http.routers.n8n.middlewares=global-auth
       - traefik.http.middlewares.n8n.headers.SSLRedirect=true
       - traefik.http.middlewares.n8n.headers.STSSeconds=315360000
       - traefik.http.middlewares.n8n.headers.browserXSSFilter=true
@@ -253,6 +250,7 @@ services:
       - traefik.http.middlewares.n8n.headers.SSLHost=${HOSTNAME}
       - traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true
       - traefik.http.middlewares.n8n.headers.STSPreload=true
+      - traefik.http.services.n8n.loadbalancer.server.port=8082
     environment:
       - N8N_HOST=n8n.${HOSTNAME}
       - N8N_PORT=5678
