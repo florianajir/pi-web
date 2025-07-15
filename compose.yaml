@@ -6,7 +6,6 @@ services:
     hostname: pi-traefik
     restart: always
     command:
-      - "--api.insecure=true"
       - "--api.dashboard=true"
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
@@ -21,10 +20,12 @@ services:
       - "com.example.service=proxy"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
+      - "traefik.http.middlewares.global-auth.basicauth.users=${BASIC_AUTH}"
       - "traefik.http.routers.traefik.rule=Host(`traefik.${HOSTNAME}`)"
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.tls=true"
       - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik.middlewares=global-auth"
       - "traefik.http.services.traefik.loadbalancer.server.port=8080"
     ports:
       - "80:80"
@@ -70,14 +71,15 @@ services:
       retries: 3
       start_period: 30s
     labels:
-      - "com.example.description=Grafana Dashboard"
-      - "com.example.service=monitoring"
+      - "com.example.description=Grafana Monitoring"
+      - "com.example.service=grafana"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      - "traefik.http.routers.grafana.rule=Host(`monitoring.${HOSTNAME}`)"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${HOSTNAME}`)"
       - "traefik.http.routers.grafana.entrypoints=websecure"
       - "traefik.http.routers.grafana.tls=true"
       - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.grafana.middlewares=global-auth"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
     logging:
       driver: "json-file"
@@ -130,6 +132,7 @@ services:
       - "traefik.http.routers.cadvisor.entrypoints=websecure"
       - "traefik.http.routers.cadvisor.tls=true"
       - "traefik.http.routers.cadvisor.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.cadvisor.middlewares=global-auth"
       - "traefik.http.services.cadvisor.loadbalancer.server.port=8080"
     logging:
       driver: "json-file"
@@ -165,8 +168,8 @@ services:
       timeout: 10s
       retries: 3
     labels:
-      - "com.example.description=Node Exporter"
-      - "com.example.service=monitoring"
+      - "com.example.description=Node Exporter (monitoring)"
+      - "com.example.service=node-exporter"
     logging:
       driver: "json-file"
       options:
@@ -207,13 +210,14 @@ services:
       start_period: 30s
     labels:
       - "com.example.description=Prometheus Time Series Database"
-      - "com.example.service=monitoring"
+      - "com.example.service=prometheus"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.prometheus.rule=Host(`prometheus.${HOSTNAME}`)"
       - "traefik.http.routers.prometheus.entrypoints=websecure"
       - "traefik.http.routers.prometheus.tls=true"
       - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.prometheus.middlewares=global-auth"
       - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
     logging:
       driver: "json-file"
@@ -229,18 +233,18 @@ services:
     image: n8nio/n8n:latest
     hostname: pi-n8n
     restart: unless-stopped
-    # ports:
-    #   - "127.0.0.1:5678:5678"
     expose:
       - 5678
     labels:
-      - "com.example.description=n8n Workflow Automation"
-      - "com.example.service=automation"
-      - "traefik.enable=true"
-      - "traefik.docker.network=frontend"
-      - "traefik.http.routers.n8n.rule=Host(`n8n.${HOSTNAME}`)"
-      - "traefik.http.routers.n8n.entrypoints=web,websecure"
-      - traefik.http.routers.n8n.tls.certresolver=mytlschallenge
+      - "com.example.description=n8n (automation)"
+      - com.example.service=n8n
+      - traefik.enable=true
+      - traefik.docker.network=frontend
+      - traefik.http.routers.n8n.rule=Host(`n8n.${HOSTNAME}`)
+      - traefik.http.routers.n8n.entrypoints=web,websecure
+      - traefik.http.routers.n8n.tls.certresolver=letsencrypt
+      - traefik.http.routers.n8n.middlewares=n8n@docker
+      - traefik.http.routers.n8n.middlewares=global-auth
       - traefik.http.middlewares.n8n.headers.SSLRedirect=true
       - traefik.http.middlewares.n8n.headers.STSSeconds=315360000
       - traefik.http.middlewares.n8n.headers.browserXSSFilter=true
@@ -249,7 +253,6 @@ services:
       - traefik.http.middlewares.n8n.headers.SSLHost=${HOSTNAME}
       - traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true
       - traefik.http.middlewares.n8n.headers.STSPreload=true
-      - traefik.http.routers.n8n.middlewares=n8n@docker
     environment:
       - N8N_HOST=n8n.${HOSTNAME}
       - N8N_PORT=5678
@@ -295,7 +298,7 @@ services:
       - PERSISTENTKEEPALIVE_PEERS=all
       - LOG_CONFS=true
     volumes:
-      - wireguard_data:/config
+      - ./data/wireguard/config:/config
       - /lib/modules:/lib/modules:ro
     ports:
       - 51820:51820/udp
@@ -307,8 +310,8 @@ services:
     networks:
       - frontend
     labels:
-      - "com.example.description=WireGuard VPN Server"
-      - "com.example.service=vpn"
+      - "com.example.description=WireGuard (VPN)"
+      - "com.example.service=wireguard"
       - "traefik.enable=false"
     healthcheck:
       test: ["CMD", "wg", "show"]
@@ -349,8 +352,8 @@ services:
     networks:
       - frontend
     labels:
-      - "com.example.description=Pi-hole DNS Ad-Blocker"
-      - "com.example.service=dns"
+      - "com.example.description=Pi-Hole (DNS/Ad-Blocker)"
+      - "com.example.service=pihole"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.pihole.rule=Host(`pihole.${HOSTNAME}`)"
