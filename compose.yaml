@@ -1,5 +1,15 @@
 services:
-  # Reverse Proxy Service
+  watchtower:
+    image: containrrr/watchtower:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_SCHEDULE=0 0 3 * * *
+      - WATCHTOWER_NO_RESTART=true
+      - TZ=${TIMEZONE}
+    restart: unless-stopped
+
   traefik:
     image: traefik:v3.4
     container_name: pi-traefik
@@ -18,7 +28,7 @@ services:
       - "--certificatesresolvers.letsencrypt.acme.email=${EMAIL}"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
     labels:
-      - "com.example.description=Traefik (proxy)"
+      - "com.example.description=Traefik reverse proxy"
       - "com.example.service=traefik"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
@@ -74,7 +84,7 @@ services:
       retries: 3
       start_period: 30s
     labels:
-      - "com.example.description=Grafana Monitoring"
+      - "com.example.description=Grafana dashboard monitoring"
       - "com.example.service=grafana"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
@@ -96,91 +106,6 @@ services:
       - GF_SERVER_ROOT_URL=https://grafana.${HOSTNAME}/
     mem_limit: 512m
     mem_reservation: 256m
-
-  cadvisor:
-    container_name: pi-cadvisor
-    image: gcr.io/cadvisor/cadvisor:latest
-    hostname: pi-cadvisor
-    restart: unless-stopped
-    cap_add:
-      - SYS_ADMIN
-    networks:
-      - monitoring
-      - frontend
-    expose:
-      - 9091
-    command:
-      - '-housekeeping_interval=15s'
-      - '-docker_only=true'
-      - '-store_container_labels=false'
-      - '-port=9091'
-    devices:
-      - /dev/kmsg
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:rw
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
-      - /etc/machine-id:/etc/machine-id:ro
-    healthcheck:
-      test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:9091/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    labels:
-      - "com.example.description=cAdvisor Container Monitoring"
-      - "com.example.service=monitoring"
-      - "traefik.enable=true"
-      - "traefik.docker.network=frontend"
-      - "traefik.http.routers.cadvisor.rule=Host(`cadvisor.${HOSTNAME}`)"
-      - "traefik.http.routers.cadvisor.entrypoints=websecure"
-      - "traefik.http.routers.cadvisor.tls=true"
-      - "traefik.http.routers.cadvisor.tls.certresolver=letsencrypt"
-      - "traefik.http.services.cadvisor.loadbalancer.server.port=9091"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    mem_limit: 256m
-    mem_reservation: 128m
-
-  node-exporter:
-    container_name: pi-node-exporter
-    image: prom/node-exporter:latest
-    hostname: pi-node-exporter
-    restart: unless-stopped
-    networks:
-      - monitoring
-    expose:
-      - 9100
-    command:
-      - --path.procfs=/host/proc
-      - --path.sysfs=/host/sys
-      - --path.rootfs=/host
-      - --collector.filesystem.ignored-mount-points
-      - ^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($$|/)
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-      - /:/host:ro,rslave
-    healthcheck:
-      test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:9100/metrics"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    labels:
-      - "com.example.description=Node Exporter (monitoring)"
-      - "com.example.service=node-exporter"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    mem_limit: 128m
-    mem_reservation: 64m
 
   prometheus:
     container_name: pi-prometheus
@@ -231,7 +156,134 @@ services:
     mem_limit: 1g
     mem_reservation: 512m
 
-  # Automation Service
+  cadvisor:
+    container_name: pi-cadvisor
+    image: gcr.io/cadvisor/cadvisor:latest
+    hostname: pi-cadvisor
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN
+    networks:
+      - monitoring
+      - frontend
+    expose:
+      - 9091
+    command:
+      - '-housekeeping_interval=15s'
+      - '-docker_only=true'
+      - '-store_container_labels=false'
+      - '-port=9091'
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+      - /etc/machine-id:/etc/machine-id:ro
+    healthcheck:
+      test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "com.example.description=cAdvisor container monitoring"
+      - "com.example.service=cadvisor"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
+    mem_reservation: 128m
+
+  node-exporter:
+    container_name: pi-node-exporter
+    image: prom/node-exporter:latest
+    hostname: pi-node-exporter
+    restart: unless-stopped
+    networks:
+      - monitoring
+    expose:
+      - 9100
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host
+      - --collector.filesystem.ignored-mount-points
+      - ^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - /:/host:ro,rslave
+    healthcheck:
+      test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:9100/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "com.example.description=Node Exporter (monitoring)"
+      - "com.example.service=node-exporter"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 128m
+    mem_reservation: 64m
+
+  pihole:
+    container_name: pi-pihole
+    image: pihole/pihole:latest
+    hostname: pi-pihole
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:53:53/tcp"
+      - "0.0.0.0:53:53/udp"
+    expose:
+      - 53
+      - 8082
+    environment:
+      TZ: ${TIMEZONE}
+      FTLCONF_webserver_api_password: ${PASSWORD}
+      FTLCONF_dns_listeningMode: 'all'
+      FTLCONF_dns_upstreams: '1.1.1.1;8.8.8.8'
+      FTLCONF_misc_dnsmasq_lines: 'address=/${HOSTNAME}/${IP}'
+      FTLCONF_webserver_port: 8082
+    volumes:
+      - pihole_data:/etc/pihole
+      - ./etc/dnsmasq.d:/etc/dnsmasq.d
+    networks:
+      - frontend
+    labels:
+      - "com.example.description=Pi-hole DNS Ad-Blocker"
+      - "com.example.service=pihole"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.pihole.rule=Host(`pihole.${HOSTNAME}`)"
+      - "traefik.http.routers.pihole.entrypoints=websecure"
+      - "traefik.http.routers.pihole.tls=true"
+      - "traefik.http.routers.pihole.tls.certresolver=letsencrypt"
+      - "traefik.http.services.pihole.loadbalancer.server.port=8082"
+    healthcheck:
+      test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 512m
+    mem_reservation: 256m
+
+  # VPN Service
+
+
   n8n:
     container_name: pi-n8n
     image: n8nio/n8n:latest
@@ -240,7 +292,7 @@ services:
     expose:
       - 5678
     labels:
-      - "com.example.description=n8n (automation)"
+      - "com.example.description=n8n workflow automation"
       - com.example.service=n8n
       - traefik.enable=true
       - traefik.docker.network=frontend
@@ -281,94 +333,6 @@ services:
     mem_limit: 512m
     mem_reservation: 256m
 
-  # VPN Service
-  tailscale:
-    container_name: pi-tailscale
-    image: tailscale/tailscale:latest
-    hostname: pi-tailscale
-    restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    environment:
-      - TS_HOSTNAME=${HOSTNAME}
-      - TS_AUTHKEY=${TAILSCALE_AUTH_KEY}
-      - TS_STATE_DIR=/var/lib/tailscale
-      - TS_USERSPACE=false
-      - TS_ACCEPT_DNS=true
-      - TS_EXTRA_ARGS=--advertise-routes=172.20.0.0/16,172.21.0.0/16
-    volumes:
-      - tailscale_data:/var/lib/tailscale
-      - /dev/net/tun:/dev/net/tun
-    network_mode: host
-    labels:
-      - "com.example.description=Tailscale (VPN)"
-      - "com.example.service=tailscale"
-      - "traefik.enable=false"
-    healthcheck:
-      test: ["CMD", "tailscale", "status"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    mem_limit: 256m
-    mem_reservation: 128m
-
-  # DNS Ad-Blocker Service
-  pihole:
-    container_name: pi-pihole
-    image: pihole/pihole:latest
-    hostname: pi-pihole
-    restart: unless-stopped
-    ports:
-      - "0.0.0.0:53:53/tcp"
-      - "0.0.0.0:53:53/udp"
-    expose:
-      - 53
-      - 8082
-    environment:
-      TZ: ${TIMEZONE}
-      FTLCONF_webserver_api_password: ${PASSWORD}
-      FTLCONF_dns_listeningMode: 'all'
-      FTLCONF_dns_upstreams: '1.1.1.1;8.8.8.8'
-      FTLCONF_misc_dnsmasq_lines: 'address=/${HOSTNAME}/${IP}'
-      FTLCONF_webserver_port: 8082
-    volumes:
-      - pihole_data:/etc/pihole
-      - ./etc/dnsmasq.d:/etc/dnsmasq.d
-    networks:
-      - frontend
-    labels:
-      - "com.example.description=Pi-Hole (DNS/Ad-Blocker)"
-      - "com.example.service=pihole"
-      - "traefik.enable=true"
-      - "traefik.docker.network=frontend"
-      - "traefik.http.routers.pihole.rule=Host(`pihole.${HOSTNAME}`)"
-      - "traefik.http.routers.pihole.entrypoints=websecure"
-      - "traefik.http.routers.pihole.tls=true"
-      - "traefik.http.routers.pihole.tls.certresolver=letsencrypt"
-      - "traefik.http.services.pihole.loadbalancer.server.port=8082"
-    healthcheck:
-      test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    mem_limit: 512m
-    mem_reservation: 256m
-
 volumes:
   grafana-data:
     labels:
@@ -390,10 +354,6 @@ volumes:
     labels:
       - "com.example.description=n8n Persistent Data"
       - "com.example.service=automation"
-  tailscale_data:
-    labels:
-      - "com.example.description=Tailscale VPN Configuration"
-      - "com.example.service=vpn"
 
 networks:
   monitoring:

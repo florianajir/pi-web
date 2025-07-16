@@ -12,7 +12,12 @@ help:
 	@echo "  help               - Show this help message"
 
 install:
-	sudo cp etc/systemd/system/*.service /etc/systemd/system/
+	@echo "📦 Installing Pi-Web service..."
+	@echo "Current directory: $(shell pwd)"
+	sed 's|__PROJECT_PATH__|$(shell pwd)|g' etc/systemd/system/pi-web.service > /tmp/pi-web.service
+	sudo cp /tmp/pi-web.service /etc/systemd/system/
+	sudo cp etc/systemd/system/pi-web-restart.service /etc/systemd/system/
+	sudo cp etc/systemd/system/pi-web-restart.timer /etc/systemd/system/
 	sudo systemctl daemon-reload
 	sudo systemctl enable pi-web.service
 	@echo "✅ Pi-Web service enabled"
@@ -37,7 +42,8 @@ update:
 	@echo "🔄 Updating..."
 	sudo apt update && sudo apt upgrade -y
 	git pull
-	sudo cp -f etc/systemd/system/pi-web.service /etc/systemd/system/
+	sed 's|__PROJECT_PATH__|$(shell pwd)|g' etc/systemd/system/pi-web.service > /tmp/pi-web.service
+	sudo cp -f /tmp/pi-web.service /etc/systemd/system/
 	sudo systemctl daemon-reload
 	make restart
 	@echo "✅ Services updated and restarted"
