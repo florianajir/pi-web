@@ -282,44 +282,33 @@ services:
     mem_reservation: 256m
 
   # VPN Service
-  wireguard:
-    container_name: pi-wireguard
-    image: linuxserver/wireguard:latest
-    hostname: pi-wireguard
+  tailscale:
+    container_name: pi-tailscale
+    image: tailscale/tailscale:latest
+    hostname: pi-tailscale
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
     environment:
-      - PUID=${USER_ID:-1000}
-      - PGID=${GROUP_ID:-1000}
-      - TZ=${TIMEZONE}
-      - SERVERURL=${HOSTNAME}
-      - SERVERPORT=51820
-      - PEERS=1
-      - PEERDNS=172.21.0.1
-      - INTERNAL_SUBNET=10.13.13.0
-      - ALLOWEDIPS=0.0.0.0/0
-      - PERSISTENTKEEPALIVE_PEERS=all
-      - LOG_CONFS=true
+      - TS_HOSTNAME=${HOSTNAME}
+      - TS_AUTHKEY=${TAILSCALE_AUTH_KEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+      - TS_ACCEPT_DNS=true
+      - TS_EXTRA_ARGS=--advertise-routes=172.20.0.0/16,172.21.0.0/16
     volumes:
-      - ./data/wireguard/config:/config
-      - /lib/modules:/lib/modules:ro
-    ports:
-      - 51820:51820/udp
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-      # - net.ipv4.conf.all.rp_filter=1
-      # - net.ipv4.conf.default.rp_filter=1
-      # - net.ipv4.ip_forward=1
-    networks:
-      - frontend
+      - tailscale_data:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    network_mode: host
     labels:
-      - "com.example.description=WireGuard (VPN)"
-      - "com.example.service=wireguard"
+      - "com.example.description=Tailscale (VPN)"
+      - "com.example.service=tailscale"
       - "traefik.enable=false"
     healthcheck:
-      test: ["CMD", "wg", "show"]
+      test: ["CMD", "tailscale", "status"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -401,9 +390,9 @@ volumes:
     labels:
       - "com.example.description=n8n Persistent Data"
       - "com.example.service=automation"
-  wireguard_data:
+  tailscale_data:
     labels:
-      - "com.example.description=WireGuard VPN Configuration"
+      - "com.example.description=Tailscale VPN Configuration"
       - "com.example.service=vpn"
 
 networks:
