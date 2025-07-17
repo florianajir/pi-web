@@ -299,8 +299,6 @@ services:
     mem_limit: 512m
     mem_reservation: 256m
 
-
-
   n8n:
     container_name: pi-n8n
     image: n8nio/n8n:latest

@@ -9,8 +9,7 @@ datasources:
       httpMethod: POST
       manageAlerts: true
       prometheusType: Prometheus
-      cacheLevel: 'High'
+      cacheLevel: "High"
       disableRecordingRules: false
       incrementalQueryOverlapWindow: 10m
     uid: t4f0shgRk
-

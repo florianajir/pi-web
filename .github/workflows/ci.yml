@@ -27,8 +27,7 @@ jobs:
       - name: Lint YAML files
         run: |
           pip install yamllint
-          yamllint -c .yamllint compose.yaml
-          yamllint -c .yamllint .github/workflows/*.yml
+          yamllint -c .yamllint .
 
       - name: Validate Prometheus config
         run: |
@@ -61,17 +60,17 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-results.sarif"
         continue-on-error: true
 
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         if: always() && github.repository_owner == github.actor
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: "trivy-results.sarif"
         continue-on-error: true
 
       - name: Upload Trivy results as artifact
@@ -120,19 +119,16 @@ jobs:
           echo "EMAIL=test@example.com" >> .env
           echo "PASSWORD=testpassword123" >> .env
 
-          docker network create monitoring
-          docker network create frontend
-
           # Use compose.test.yaml to override problematic port bindings
           docker compose -f compose.yaml -f compose.test.yaml up -d
           sleep 15
           docker compose -f compose.yaml -f compose.test.yaml ps
-          
+
           # Verify key services are running
           docker compose -f compose.yaml -f compose.test.yaml exec -T traefik wget -q --spider http://localhost:8080/api/entrypoints || echo "Traefik API not ready"
           docker compose -f compose.yaml -f compose.test.yaml exec -T grafana wget -q --spider http://localhost:3000/api/health || echo "Grafana not ready"
           docker compose -f compose.yaml -f compose.test.yaml exec -T prometheus wget -q --spider http://localhost:9090/-/healthy || echo "Prometheus not ready"
-          
+
           docker compose -f compose.yaml -f compose.test.yaml down
 
   build-and-push:
