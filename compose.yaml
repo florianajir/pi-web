@@ -262,6 +262,7 @@ services:
     expose:
       - 53
       - 8082
+    user: ${USER_ID:-1000}
     environment:
       TZ: ${TIMEZONE}
       FTLCONF_webserver_api_password: ${PASSWORD}

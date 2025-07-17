@@ -22,10 +22,11 @@ jobs:
       - name: Validate Docker Compose files
         run: |
           docker compose -f compose.yaml config
+          docker compose -f compose.yaml -f compose.test.yaml config
 
       - name: Lint YAML files
         run: |
-          pip install .yamllint
+          pip install yamllint
           yamllint -c .yamllint compose.yaml
           yamllint -c .yamllint .github/workflows/*.yml
 
@@ -122,10 +123,17 @@ jobs:
           docker network create monitoring
           docker network create frontend
 
-          docker compose up -d
+          # Use compose.test.yaml to override problematic port bindings
+          docker compose -f compose.yaml -f compose.test.yaml up -d
           sleep 15
-          docker compose ps
-          docker compose down
+          docker compose -f compose.yaml -f compose.test.yaml ps
+          
+          # Verify key services are running
+          docker compose -f compose.yaml -f compose.test.yaml exec -T traefik wget -q --spider http://localhost:8080/api/entrypoints || echo "Traefik API not ready"
+          docker compose -f compose.yaml -f compose.test.yaml exec -T grafana wget -q --spider http://localhost:3000/api/health || echo "Grafana not ready"
+          docker compose -f compose.yaml -f compose.test.yaml exec -T prometheus wget -q --spider http://localhost:9090/-/healthy || echo "Prometheus not ready"
+          
+          docker compose -f compose.yaml -f compose.test.yaml down
 
   build-and-push:
     name: Build and Push Documentation

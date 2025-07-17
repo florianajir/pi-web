@@ -1,0 +1,20 @@
+# Test-specific Docker Compose configuration
+# This file extends compose.yaml and overrides only the parts needed for CI/testing
+# Usage: docker compose -f compose.yaml -f compose.test.yaml up -d
+
+services:
+  pihole:
+    # Override port bindings to avoid conflicts in CI environments
+    # Port 53 is typically already in use by system DNS resolver
+    ports: []
+    # Keep expose directive for internal container communication
+    expose:
+      - 53
+      - 8082
+    # Override healthcheck to use internal container IP instead of host binding
+    healthcheck:
+      test: ["CMD", "nslookup", "cloudflare.com", "127.0.0.1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
