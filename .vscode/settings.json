@@ -6,6 +6,7 @@
 		"cadvisor",
 		"certificatesresolvers",
 		"certresolver",
+		"CHACHA",
 		"cloudflare",
 		"CONFS",
 		"containrrr",
@@ -15,6 +16,9 @@
 		"FTLCONF",
 		"grafana",
 		"healthcheck",
+		"hsts",
+		"httpchallenge",
+		"insecureskipverify",
 		"journalctl",
 		"kmsg",
 		"letsencrypt",
@@ -33,6 +37,7 @@
 		"rootfs",
 		"rslave",
 		"SERVERPORT",
+		"serverstransport",
 		"SERVERURL",
 		"sysctls",
 		"sysfs",
@@ -40,5 +45,8 @@
 		"traefik",
 		"WEBPASSWORD",
 		"websecure"
-	]
+	],
+	"yaml.schemas": {
+		"https://json.schemastore.org/github-workflow.json": "/*.github/workflows/*.yml"
+	}
 }

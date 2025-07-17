@@ -4,7 +4,7 @@
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docker.com/)
 [![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Compatible-red.svg)](https://www.raspberrypi.org/)
 
-Turn your Raspberry Pi into a self-hosted infrastructure with vpn, ad-blocker dns, monitoring, automation.
+Turn your Raspberry Pi into a self-hosted infrastructure with vpn, ad-blocker dns, monitoring and workflow automation.
 
 ## 🏗️ Architecture
 
@@ -86,8 +86,8 @@ PASSWORD=your_secure_password
 
 ### Advanced Configuration
 
-- **Grafana**: Dashboards in `monitoring/grafana/provisioning/`
-- **Prometheus**: Configuration in `monitoring/prometheus/prometheus.yml`
+- **Grafana**: Dashboards in `config/grafana/provisioning/`
+- **Prometheus**: Configuration in `config/prometheus/prometheus.yml`
 - **Traefik**: Auto-configuration via Docker labels
 - **n8n**: Workflow data persisted in `n8n/files/`
 
@@ -96,14 +96,9 @@ PASSWORD=your_secure_password
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Test on a Raspberry Pi
-5. Submit a pull request
+4. Submit a pull request
 
 ## 🐛 Troubleshooting
-
-### Common Issues
-
-**Services won't start:**
 
 ```bash
 # Check service status

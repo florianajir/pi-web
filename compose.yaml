@@ -16,23 +16,40 @@ services:
     hostname: pi-traefik
     restart: always
     command:
+      - "--log.level=INFO"
       - "--api.dashboard=true"
-      - "--api.insecure=false"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
+      # Entry Points
+      - "--entrypoints.web.address=:80/tcp"
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      - "--entrypoints.websecure.address=:443"
-      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--entrypoints.websecure.address=:443/tcp"
+      - "--entrypoints.websecure.http.middlewares=compress@docker,hsts@docker"
+      - "--entrypoints.websecure.http.tls.certresolver=letsencrypt"
+      - "--entrypoints.websecure.http3=true"
+      # Certificate Resolvers
       - "--certificatesresolvers.letsencrypt.acme.email=${EMAIL}"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      # Providers
+      - "--providers.docker=true"
+      - "--providers.docker.watch=true"
+      - "--providers.docker.network=frontend"
+      - "--providers.docker.exposedbydefault=false"
+      # Servers Transport
+      - "--serverstransport.insecureskipverify=true"
+      # TLS Configuration
+      - "--tls.options.default.cipherSuites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256"
+      - "--tls.options.default.sniStrict=true"
     labels:
       - "com.example.description=Traefik reverse proxy"
       - "com.example.service=traefik"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
+      # Middlewares définitions
+      - "traefik.http.middlewares.compress.compress=true"
+      - "traefik.http.middlewares.hsts.headers.stsSeconds=2592000"
       - "traefik.http.middlewares.global-auth.basicauth.users=${BASIC_AUTH}"
+      # Traefik Dashboard Router
       - "traefik.http.routers.traefik.middlewares=global-auth"
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.rule=Host(`traefik.${HOSTNAME}`)"
@@ -71,10 +88,10 @@ services:
     expose:
       - 3000
     env_file:
-      - ./monitoring/grafana/.env
+      - ./config/grafana/.env
     volumes:
       - grafana-data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - prometheus
     healthcheck:
@@ -127,7 +144,7 @@ services:
       - 9090
     volumes:
       - prometheus-data:/prometheus
-      - ./monitoring/prometheus:/etc/prometheus/
+      - ./config/prometheus:/etc/prometheus/
     depends_on:
       - cadvisor
       - node-exporter
@@ -254,7 +271,7 @@ services:
       FTLCONF_webserver_port: 8082
     volumes:
       - pihole_data:/etc/pihole
-      - ./etc/dnsmasq.d:/etc/dnsmasq.d
+      - ./config/pihole/dnsmasq.d:/etc/dnsmasq.d
     networks:
       - frontend
     labels:
@@ -281,7 +298,6 @@ services:
     mem_limit: 512m
     mem_reservation: 256m
 
-  # VPN Service
 
 
   n8n:
