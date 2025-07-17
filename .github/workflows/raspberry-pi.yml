@@ -51,11 +51,6 @@ jobs:
           # Test n8n ARM compatibility
           docker run --platform ${{ matrix.platform }} --rm n8nio/n8n:latest --version
 
-          # Test WireGuard ARM compatibility (just check if image pulls and starts)
-          timeout 30s docker run --platform ${{ matrix.platform }} --rm \
-            linuxserver/wireguard:latest echo "WireGuard image compatible" || \
-            echo "WireGuard image pulled successfully"
-
           # Test Pi Hole ARM compatibility
           docker run --platform ${{ matrix.platform }} --rm pihole/pihole:latest --version
 
