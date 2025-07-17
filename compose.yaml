@@ -1,0 +1,393 @@
+services:
+  watchtower:
+    image: containrrr/watchtower:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_SCHEDULE=0 0 3 * * *
+      - WATCHTOWER_NO_RESTART=true
+      - TZ=${TIMEZONE}
+    restart: unless-stopped
+
+  traefik:
+    image: traefik:v3.4
+    container_name: pi-traefik
+    hostname: pi-traefik
+    restart: always
+    command:
+      - "--log.level=INFO"
+      - "--api.dashboard=true"
+      # Entry Points
+      - "--entrypoints.web.address=:80/tcp"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443/tcp"
+      - "--entrypoints.websecure.http.middlewares=compress@docker,hsts@docker"
+      - "--entrypoints.websecure.http.tls.certresolver=letsencrypt"
+      - "--entrypoints.websecure.http3=true"
+      # Certificate Resolvers
+      - "--certificatesresolvers.letsencrypt.acme.email=${EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      # Providers
+      - "--providers.docker=true"
+      - "--providers.docker.watch=true"
+      - "--providers.docker.network=frontend"
+      - "--providers.docker.exposedbydefault=false"
+      # Servers Transport
+      - "--serverstransport.insecureskipverify=true"
+      # TLS Configuration
+      - "--tls.options.default.cipherSuites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256"
+      - "--tls.options.default.sniStrict=true"
+    labels:
+      - "com.example.description=Traefik reverse proxy"
+      - "com.example.service=traefik"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      # Middlewares définitions
+      - "traefik.http.middlewares.compress.compress=true"
+      - "traefik.http.middlewares.hsts.headers.stsSeconds=2592000"
+      - "traefik.http.middlewares.global-auth.basicauth.users=${BASIC_AUTH}"
+      # Traefik Dashboard Router
+      - "traefik.http.routers.traefik.middlewares=global-auth"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${HOSTNAME}`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.tls=true"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+      - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+    ports:
+      - "80:80"
+      - "443:443"
+    expose:
+      - 8080
+    volumes:
+      - traefik_data:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
+    mem_reservation: 128m
+
+  # Monitoring Stack
+  grafana:
+    container_name: pi-grafana
+    image: grafana/grafana-oss:latest
+    hostname: pi-grafana
+    restart: unless-stopped
+    user: ${USER_ID:-1000}
+    networks:
+      - monitoring
+      - frontend
+    expose:
+      - 3000
+    env_file:
+      - ./config/grafana/.env
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "com.example.description=Grafana dashboard monitoring"
+      - "com.example.service=grafana"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${HOSTNAME}`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls=true"
+      - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      - GF_DEFAULT_INSTANCE_NAME=${HOSTNAME}
+      - GF_SECURITY_ADMIN_EMAIL=${EMAIL}
+      - GF_SECURITY_ADMIN_USER=${USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${PASSWORD}
+      - GF_SERVER_ROOT_URL=https://grafana.${HOSTNAME}/
+    mem_limit: 512m
+    mem_reservation: 256m
+
+  prometheus:
+    container_name: pi-prometheus
+    image: prom/prometheus:latest
+    hostname: pi-prometheus
+    restart: unless-stopped
+    user: "nobody"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=1y'
+      - '--storage.tsdb.retention.size=10GB'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - monitoring
+      - frontend
+    expose:
+      - 9090
+    volumes:
+      - prometheus-data:/prometheus
+      - ./config/prometheus:/etc/prometheus/
+    depends_on:
+      - cadvisor
+      - node-exporter
+    healthcheck:
+      test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "com.example.description=Prometheus Time Series Database"
+      - "com.example.service=prometheus"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.${HOSTNAME}`)"
+      - "traefik.http.routers.prometheus.entrypoints=websecure"
+      - "traefik.http.routers.prometheus.tls=true"
+      - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.prometheus.middlewares=global-auth"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 1g
+    mem_reservation: 512m
+
+  cadvisor:
+    container_name: pi-cadvisor
+    image: gcr.io/cadvisor/cadvisor:latest
+    hostname: pi-cadvisor
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN
+    networks:
+      - monitoring
+      - frontend
+    expose:
+      - 9091
+    command:
+      - '-housekeeping_interval=15s'
+      - '-docker_only=true'
+      - '-store_container_labels=false'
+      - '-port=9091'
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+      - /etc/machine-id:/etc/machine-id:ro
+    healthcheck:
+      test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "com.example.description=cAdvisor container monitoring"
+      - "com.example.service=cadvisor"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
+    mem_reservation: 128m
+
+  node-exporter:
+    container_name: pi-node-exporter
+    image: prom/node-exporter:latest
+    hostname: pi-node-exporter
+    restart: unless-stopped
+    networks:
+      - monitoring
+    expose:
+      - 9100
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host
+      - --collector.filesystem.ignored-mount-points
+      - ^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - /:/host:ro,rslave
+    healthcheck:
+      test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:9100/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "com.example.description=Node Exporter (monitoring)"
+      - "com.example.service=node-exporter"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 128m
+    mem_reservation: 64m
+
+  pihole:
+    container_name: pi-pihole
+    image: pihole/pihole:latest
+    hostname: pi-pihole
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:53:53/tcp"
+      - "0.0.0.0:53:53/udp"
+    expose:
+      - 53
+      - 8082
+    user: ${USER_ID:-1000}
+    environment:
+      TZ: ${TIMEZONE}
+      FTLCONF_webserver_api_password: ${PASSWORD}
+      FTLCONF_dns_listeningMode: 'all'
+      FTLCONF_dns_upstreams: '1.1.1.1;8.8.8.8'
+      FTLCONF_misc_dnsmasq_lines: 'address=/${HOSTNAME}/${IP}'
+      FTLCONF_webserver_port: 8082
+    volumes:
+      - pihole_data:/etc/pihole
+      - ./config/pihole/dnsmasq.d:/etc/dnsmasq.d
+    networks:
+      - frontend
+    labels:
+      - "com.example.description=Pi-hole DNS Ad-Blocker"
+      - "com.example.service=pihole"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.pihole.rule=Host(`pihole.${HOSTNAME}`)"
+      - "traefik.http.routers.pihole.entrypoints=websecure"
+      - "traefik.http.routers.pihole.tls=true"
+      - "traefik.http.routers.pihole.tls.certresolver=letsencrypt"
+      - "traefik.http.services.pihole.loadbalancer.server.port=8082"
+    healthcheck:
+      test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 512m
+    mem_reservation: 256m
+
+  n8n:
+    container_name: pi-n8n
+    image: n8nio/n8n:latest
+    hostname: pi-n8n
+    restart: unless-stopped
+    expose:
+      - 5678
+    labels:
+      - "com.example.description=n8n workflow automation"
+      - com.example.service=n8n
+      - traefik.enable=true
+      - traefik.docker.network=frontend
+      - traefik.http.routers.n8n.rule=Host(`n8n.${HOSTNAME}`)
+      - traefik.http.routers.n8n.entrypoints=websecure
+      - traefik.http.routers.n8n.tls=true
+      - traefik.http.routers.n8n.tls.certresolver=letsencrypt
+      - traefik.http.routers.n8n.middlewares=n8n@docker
+      - traefik.http.middlewares.n8n.headers.SSLRedirect=true
+      - traefik.http.middlewares.n8n.headers.STSSeconds=315360000
+      - traefik.http.middlewares.n8n.headers.browserXSSFilter=true
+      - traefik.http.middlewares.n8n.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.n8n.headers.forceSTSHeader=true
+      - traefik.http.middlewares.n8n.headers.SSLHost=${HOSTNAME}
+      - traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true
+      - traefik.http.middlewares.n8n.headers.STSPreload=true
+      - traefik.http.services.n8n.loadbalancer.server.port=8082
+    environment:
+      - N8N_HOST=n8n.${HOSTNAME}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://n8n.${HOSTNAME}/
+      - GENERIC_TIMEZONE=${TIMEZONE}
+      - TZ=${TIMEZONE}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./data/n8n/files:/files
+    networks:
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      - traefik
+    mem_limit: 512m
+    mem_reservation: 256m
+
+volumes:
+  grafana-data:
+    labels:
+      - "com.example.description=Grafana Persistent Data"
+      - "com.example.service=monitoring"
+  prometheus-data:
+    labels:
+      - "com.example.description=Prometheus Persistent Data"
+      - "com.example.service=monitoring"
+  traefik_data:
+    labels:
+      - "com.example.description=Traefik Persistent Data"
+      - "com.example.service=proxy"
+  pihole_data:
+    labels:
+      - "com.example.description=Pi-hole Configuration Data"
+      - "com.example.service=dns"
+  n8n_data:
+    labels:
+      - "com.example.description=n8n Persistent Data"
+      - "com.example.service=automation"
+
+networks:
+  monitoring:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
+    labels:
+      - "com.example.description=Internal Monitoring Network"
+      - "com.example.service=monitoring"
+  frontend:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.21.0.0/16
+          gateway: 172.21.0.1
+    labels:
+      - "com.example.description=External Web Network"
+      - "com.example.service=proxy"
