@@ -12,9 +12,9 @@ Purpose: Help AI agents contribute effectively to the `pi-web` Raspberry Pi self
 - Systemd wrapper (`config/systemd/system/*.service|*.timer`) provides host-level lifecycle; `Makefile` materializes path placeholders (`__PROJECT_PATH__`).
 
 ## Conventions & Patterns
-- All externally exposed UIs are routed through Traefik using labels `traefik.http.routers.<service>...` with host pattern: `<service>.${LOCAL_DOMAIN}`.
+- All externally exposed UIs are routed through Traefik using labels `traefik.http.routers.<service>...` with host pattern: `<service>.${HOST_NAME}`.
 - Healthchecks: Each service declaring HTTP health uses lightweight `wget` or protocol‑appropriate CLI (`dig` for Pi-hole). Reuse style when adding services.
-- Resource governance: Every service pins `mem_limit` + `mem_reservation`; mirror pattern for new services to preserve Pi constraints.
+- Resource governance: Every service pins `mem_limit`; mirror pattern for new services to preserve Pi constraints.
 - Networks: Public access services attach to `frontend`; pure exporters attach only to `monitoring` unless Traefik routing required.
 - Environment variable source: root `.env` (runtime) + `.env.dist` (template). Never commit secrets; extend `.env.dist` when introducing new required vars.
 - Avoid exposing container ports directly—prefer Traefik unless protocol (DNS :53) or metrics scraping requires otherwise.
@@ -47,6 +47,17 @@ Purpose: Help AI agents contribute effectively to the `pi-web` Raspberry Pi self
 - TLS: ACME HTTP challenge on entrypoint `web` auto-manages certificates stored in `traefik_data` volume.
 - `--serverstransport.insecureskipverify=true` is set intentionally (internal self-signed cases); do not remove without verifying upstream cert chain.
 
+## Network Exposure & Remote Access Policy
+- Policy: All Traefik-routed services are intended to be reachable only from the local LAN; do NOT create Internet-facing port forwards (80/443) to this stack.
+- Remote (outside LAN) access MUST occur exclusively through a WireGuard VPN terminating inside the LAN. Until a WireGuard service is added to `compose.yaml`, use a host-level or separate appliance WireGuard instance—do not bypass by exposing Traefik publicly.
+- When adding a new HTTP service: treat it as private-by-default. Open an issue before proposing any public exposure.
+- Enforce LAN scoping via an ip whitelist middleware chained with auth. Pattern (reuse `ALLOW_IP_RANGES` from `.env`):
+  Example labels snippet for a new service:
+    traefik.http.middlewares.lan-only.ipwhitelist.sourcerange=${ALLOW_IP_RANGES}
+    traefik.http.routers.<service>.middlewares=global-auth,lan-only
+- Do not add global WAN CIDRs (e.g. 0.0.0.0/0) to `ALLOW_IP_RANGES`.
+- If a future WireGuard service is integrated, update docs instead of altering exposure strategy for existing services.
+
 ## Performance / Monitoring Notes
 - Prometheus retention tuned (1y / 10GB). If adjusting, keep both time and size flags paired.
 - cAdvisor restricted (`-docker_only=true`, label storage disabled) to reduce overhead—retain unless higher granularity required.
@@ -61,6 +72,6 @@ Purpose: Help AI agents contribute effectively to the `pi-web` Raspberry Pi self
 - If adding service: include short rationale in PR body (purpose + network exposure + auth decision).
 
 ## Out of Scope
-- WireGuard service is mentioned in README but not yet implemented in `compose.yaml`; do not reference operational steps until added.
+- WireGuard service is mentioned in README but not yet implemented in `compose.yaml`; do not reference operational steps until added. (Remote access expectation remains: use VPN, never direct public Traefik exposure.)
 
 Feedback welcome: highlight unclear conventions or missing workflow details in follow-up.

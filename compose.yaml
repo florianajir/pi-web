@@ -24,14 +24,7 @@ services:
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
       - "--entrypoints.websecure.address=:443/tcp"
       - "--entrypoints.websecure.http.middlewares=compress@docker,hsts@docker"
-      # Enable HTTP3 and configure default certresolver at router-level (flag removed in v3)
       - "--entrypoints.websecure.http3=true"
-      # Certificate Resolvers
-      - "--certificatesresolvers.letsencrypt.acme.email=${EMAIL}"
-      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
-      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
-      # NOTE: If LOCAL_DOMAIN is an internal / non-public suffix (e.g. *.lan) Let's Encrypt will reject ACME requests.
-      # Either point LOCAL_DOMAIN to a publicly resolvable DNS name or remove per-router certresolver labels to avoid log spam.
       # Providers
       - "--providers.docker=true"
       - "--providers.docker.watch=true"
@@ -49,14 +42,13 @@ services:
       - "traefik.http.middlewares.compress.compress=true"
       - "traefik.http.middlewares.hsts.headers.stsSeconds=2592000"
       # IP allowlist middleware (define ALLOW_IP_RANGES in .env, e.g. 192.168.1.0/24,10.8.0.0/24)
-      - "traefik.http.middlewares.internal-allow.ipwhitelist.sourcerange=${ALLOW_IP_RANGES}"
+      - "traefik.http.middlewares.internal-allow.ipwhitelist.sourcerange=${ALLOW_IP_RANGES:-192.168.1.0/24}"
       # Traefik Dashboard Router
       - "traefik.http.routers.traefik.middlewares=internal-allow"
       - "traefik.http.routers.traefik.entrypoints=websecure"
-      - "traefik.http.routers.traefik.rule=Host(`traefik.${LOCAL_DOMAIN}`)"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.traefik.service=api@internal"
       - "traefik.http.routers.traefik.tls=true"
-      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt" # Remove if using internal-only domain
       - "traefik.http.services.traefik.loadbalancer.server.port=8080"
     ports:
       - "80:80"
@@ -64,7 +56,6 @@ services:
     expose:
       - 8080
     volumes:
-      - traefik_data:/letsencrypt
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - frontend
@@ -74,7 +65,6 @@ services:
         max-size: "10m"
         max-file: "3"
     mem_limit: 256m
-    mem_reservation: 128m
 
   # Monitoring Stack
   grafana:
@@ -105,10 +95,10 @@ services:
       - "com.example.service=grafana"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      - "traefik.http.routers.grafana.rule=Host(`grafana.${LOCAL_DOMAIN}`)"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.grafana.entrypoints=websecure"
       - "traefik.http.routers.grafana.tls=true"
-      - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.grafana.middlewares=internal-allow"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
     logging:
       driver: "json-file"
@@ -116,13 +106,12 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      - GF_DEFAULT_INSTANCE_NAME=${LOCAL_DOMAIN}
-      - GF_SECURITY_ADMIN_EMAIL=${EMAIL}
-      - GF_SECURITY_ADMIN_USER=${USER}
-      - GF_SECURITY_ADMIN_PASSWORD=${PASSWORD}
-      - GF_SERVER_ROOT_URL=https://grafana.${LOCAL_DOMAIN}/
+      - GF_DEFAULT_INSTANCE_NAME=${HOST_NAME:-pi.lan}
+      - GF_SECURITY_ADMIN_EMAIL=${EMAIL:-admin@example.com}
+      - GF_SECURITY_ADMIN_USER=${USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${PASSWORD:-admin}
+      - GF_SERVER_ROOT_URL=https://grafana.${HOST_NAME:-pi.lan}/
     mem_limit: 512m
-    mem_reservation: 256m
 
   prometheus:
     container_name: pi-prometheus
@@ -159,10 +148,9 @@ services:
       - "com.example.service=prometheus"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      - "traefik.http.routers.prometheus.rule=Host(`prometheus.${LOCAL_DOMAIN}`)"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.prometheus.entrypoints=websecure"
       - "traefik.http.routers.prometheus.tls=true"
-      - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt" # Remove if internal-only domain
       - "traefik.http.routers.prometheus.middlewares=internal-allow"
       - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
     logging:
@@ -171,7 +159,6 @@ services:
         max-size: "10m"
         max-file: "3"
     mem_limit: 1g
-    mem_reservation: 512m
 
   cadvisor:
     container_name: pi-cadvisor
@@ -213,7 +200,6 @@ services:
         max-size: "10m"
         max-file: "3"
     mem_limit: 256m
-    mem_reservation: 128m
 
   node-exporter:
     container_name: pi-node-exporter
@@ -249,7 +235,6 @@ services:
         max-size: "10m"
         max-file: "3"
     mem_limit: 128m
-    mem_reservation: 64m
 
   pihole:
     container_name: pi-pihole
@@ -263,38 +248,39 @@ services:
       - 8082
     # Pi-hole expects to start some components as root then drop privileges. Remove forced user.
     environment:
-      TZ: ${TIMEZONE}
-      FTLCONF_webserver_api_password: ${PASSWORD}
+      TZ: ${TIMEZONE:-Europe/Paris}
+      FTLCONF_webserver_api_password: ${PASSWORD:-admin}
       FTLCONF_dns_listeningMode: 'all'
       FTLCONF_dns_upstreams: '1.1.1.1;8.8.8.8'
-      FTLCONF_misc_dnsmasq_lines: 'address=/${LOCAL_DOMAIN}/${IP}'
+      # Wildcard all hosts under HOST_NAME to the host (Traefik) IP. Pi-hole still keeps its own macvlan IP (IP var).
+      FTLCONF_misc_dnsmasq_lines: 'address=/${HOST_NAME:-pi.lan}/${HOST_IP:-192.168.1.30}'
       FTLCONF_webserver_port: 8082
       # DHCP configuration
       FTLCONF_dhcp_active: 'true'
-      FTLCONF_dhcp_start: ${DHCP_START}
-      FTLCONF_dhcp_end: ${DHCP_END}
-      FTLCONF_dhcp_router: ${DHCP_ROUTER}
-      FTLCONF_dhcp_leasetime: ${DHCP_LEASE_TIME}
+      FTLCONF_dhcp_start: ${DHCP_START:-192.168.1.100}
+      FTLCONF_dhcp_end: ${DHCP_END:-192.168.1.150}
+      FTLCONF_dhcp_router: ${DHCP_ROUTER:-192.168.1.1}
+      FTLCONF_dhcp_leasetime: ${DHCP_LEASE_TIME:-24}
       FTLCONF_dhcp_ipv6: 'false'
       FTLCONF_dhcp_rapidCommit: 'true'
       FTLCONF_dhcp_announce: 'true'
-      FTLCONF_dhcp_domain: ${LOCAL_DOMAIN}
+      FTLCONF_dhcp_domain: ${HOST_NAME:-pi.lan}
     volumes:
       - pihole_data:/etc/pihole
       - ./config/pihole/dnsmasq.d:/etc/dnsmasq.d
     networks:
       frontend: {}
       lan:
-        ipv4_address: ${IP}
+        ipv4_address: ${PIHOLE_IP:-192.168.1.29}
     labels:
       - "com.example.description=Pi-hole DNS Ad-Blocker"
       - "com.example.service=pihole"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      - "traefik.http.routers.pihole.rule=Host(`pihole.${LOCAL_DOMAIN}`)"
+      - "traefik.http.routers.pihole.rule=Host(`pihole.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.pihole.entrypoints=websecure"
       - "traefik.http.routers.pihole.tls=true"
-      - "traefik.http.routers.pihole.tls.certresolver=letsencrypt" # Remove if internal-only domain
+      - "traefik.http.routers.pihole.middlewares=internal-allow"
       - "traefik.http.services.pihole.loadbalancer.server.port=8082"
     healthcheck:
       test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
@@ -308,7 +294,6 @@ services:
         max-size: "10m"
         max-file: "3"
     mem_limit: 512m
-    mem_reservation: 256m
 
   n8n:
     container_name: pi-n8n
@@ -322,28 +307,27 @@ services:
       - "com.example.service=n8n"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      - "traefik.http.routers.n8n.rule=Host(`n8n.${LOCAL_DOMAIN}`)"
+      - "traefik.http.routers.n8n.rule=Host(`n8n.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.n8n.entrypoints=websecure"
       - "traefik.http.routers.n8n.tls=true"
-      - "traefik.http.routers.n8n.tls.certresolver=letsencrypt" # Remove if internal-only domain
-      - "traefik.http.routers.n8n.middlewares=n8n@docker"
+      - "traefik.http.routers.n8n.middlewares=n8n@docker,internal-allow"
       - "traefik.http.middlewares.n8n.headers.SSLRedirect=true"
       - "traefik.http.middlewares.n8n.headers.STSSeconds=315360000"
       - "traefik.http.middlewares.n8n.headers.browserXSSFilter=true"
       - "traefik.http.middlewares.n8n.headers.contentTypeNosniff=true"
       - "traefik.http.middlewares.n8n.headers.forceSTSHeader=true"
-      - "traefik.http.middlewares.n8n.headers.SSLHost=${LOCAL_DOMAIN}"
+      - "traefik.http.middlewares.n8n.headers.SSLHost=${HOST_NAME:-pi.lan}"
       - "traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true"
       - "traefik.http.middlewares.n8n.headers.STSPreload=true"
       - "traefik.http.services.n8n.loadbalancer.server.port=5678"
     environment:
-      - N8N_HOST=n8n.${LOCAL_DOMAIN}
+      - N8N_HOST=n8n.${HOST_NAME:-pi.lan}
       - N8N_PORT=5678
       - N8N_PROTOCOL=https
       - NODE_ENV=production
-      - WEBHOOK_URL=https://n8n.${LOCAL_DOMAIN}/
-      - GENERIC_TIMEZONE=${TIMEZONE}
-      - TZ=${TIMEZONE}
+      - WEBHOOK_URL=https://n8n.${HOST_NAME:-pi.lan}/
+      - GENERIC_TIMEZONE=${TIMEZONE:-Europe/Paris}
+      - TZ=${TIMEZONE:-Europe/Paris}
       - N8N_RUNNERS_ENABLED=true
       - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
     volumes:
@@ -359,7 +343,6 @@ services:
     depends_on:
       - traefik
     mem_limit: 512m
-    mem_reservation: 256m
 
 volumes:
   grafana-data:
@@ -370,10 +353,6 @@ volumes:
     labels:
       - "com.example.description=Prometheus Persistent Data"
       - "com.example.service=monitoring"
-  traefik_data:
-    labels:
-      - "com.example.description=Traefik Persistent Data"
-      - "com.example.service=proxy"
   pihole_data:
     labels:
       - "com.example.description=Pi-hole Configuration Data"
@@ -411,12 +390,12 @@ networks:
   lan:
     driver: macvlan
     driver_opts:
-      parent: ${LAN_PARENT}
+      parent: ${LAN_PARENT:-eth0}
     ipam:
       driver: default
       config:
-        - subnet: ${LAN_SUBNET}
-          gateway: ${LAN_GATEWAY}
+        - subnet: ${LAN_SUBNET:-192.168.1.0/24}
+          gateway: ${LAN_GATEWAY:-192.168.1.1}
     labels:
       - "com.example.description=Physical LAN macvlan for DHCP"
       - "com.example.service=network"

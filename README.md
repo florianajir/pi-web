@@ -75,14 +75,7 @@ For contributors and developers who want to maintain code quality:
 
 ### Environment Variables
 
-The stack uses encrypted environment variables for security. Basic configuration:
-
-```bash
-LOCAL_DOMAIN=pi.web
-USER=admin
-EMAIL=admin@example.com
-PASSWORD=your_secure_password
-```
+The stack uses encrypted environment variables for security. Basic configuration can be found in `.env.dist` file, just copy the file to `.env` to quickstart.
 
 ### Advanced Configuration
 

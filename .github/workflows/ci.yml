@@ -100,10 +100,12 @@ jobs:
     name: Test Deployment
     runs-on: ubuntu-latest
     env:
-      LOCAL_DOMAIN: test.local
+      HOST_NAME: test.local
       USER: testuser
       EMAIL: test@example.com
       PASSWORD: testpassword123
+      HOST_IP: 192.168.1.100
+      
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -114,7 +116,7 @@ jobs:
       - name: Test all services deployment
         run: |
           # Create test environment
-          echo "LOCAL_DOMAIN=test.local" > .env
+          echo "HOST_NAME=test.local" > .env
           echo "USER=testuser" >> .env
           echo "EMAIL=test@example.com" >> .env
           echo "PASSWORD=testpassword123" >> .env
