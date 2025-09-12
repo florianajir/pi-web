@@ -52,7 +52,7 @@ services:
       # Traefik Dashboard Router
       - "traefik.http.routers.traefik.middlewares=global-auth"
       - "traefik.http.routers.traefik.entrypoints=websecure"
-      - "traefik.http.routers.traefik.rule=Host(`traefik.${HOSTNAME}`)"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${LOCAL_DOMAIN}`)"
       - "traefik.http.routers.traefik.service=api@internal"
       - "traefik.http.routers.traefik.tls=true"
       - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
@@ -105,7 +105,7 @@ services:
       - "com.example.service=grafana"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      - "traefik.http.routers.grafana.rule=Host(`grafana.${HOSTNAME}`)"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${LOCAL_DOMAIN}`)"
       - "traefik.http.routers.grafana.entrypoints=websecure"
       - "traefik.http.routers.grafana.tls=true"
       - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
@@ -116,11 +116,11 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      - GF_DEFAULT_INSTANCE_NAME=${HOSTNAME}
+      - GF_DEFAULT_INSTANCE_NAME=${LOCAL_DOMAIN}
       - GF_SECURITY_ADMIN_EMAIL=${EMAIL}
       - GF_SECURITY_ADMIN_USER=${USER}
       - GF_SECURITY_ADMIN_PASSWORD=${PASSWORD}
-      - GF_SERVER_ROOT_URL=https://grafana.${HOSTNAME}/
+      - GF_SERVER_ROOT_URL=https://grafana.${LOCAL_DOMAIN}/
     mem_limit: 512m
     mem_reservation: 256m
 
@@ -159,7 +159,7 @@ services:
       - "com.example.service=prometheus"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      - "traefik.http.routers.prometheus.rule=Host(`prometheus.${HOSTNAME}`)"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.${LOCAL_DOMAIN}`)"
       - "traefik.http.routers.prometheus.entrypoints=websecure"
       - "traefik.http.routers.prometheus.tls=true"
       - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt"
@@ -256,9 +256,8 @@ services:
     image: pihole/pihole:latest
     hostname: pi-pihole
     restart: unless-stopped
-    ports:
-      - "0.0.0.0:53:53/tcp"
-      - "0.0.0.0:53:53/udp"
+    cap_add:
+      - NET_ADMIN
     expose:
       - 53
       - 8082
@@ -268,19 +267,31 @@ services:
       FTLCONF_webserver_api_password: ${PASSWORD}
       FTLCONF_dns_listeningMode: 'all'
       FTLCONF_dns_upstreams: '1.1.1.1;8.8.8.8'
-      FTLCONF_misc_dnsmasq_lines: 'address=/${HOSTNAME}/${IP}'
+      FTLCONF_misc_dnsmasq_lines: 'address=/${LOCAL_DOMAIN}/${IP}'
       FTLCONF_webserver_port: 8082
+      # DHCP configuration
+      FTLCONF_dhcp_active: 'true'
+      FTLCONF_dhcp_start: ${DHCP_START}
+      FTLCONF_dhcp_end: ${DHCP_END}
+      FTLCONF_dhcp_router: ${DHCP_ROUTER}
+      FTLCONF_dhcp_leasetime: ${DHCP_LEASE_TIME}
+      FTLCONF_dhcp_ipv6: 'false'
+      FTLCONF_dhcp_rapidCommit: 'true'
+      FTLCONF_dhcp_announce: 'true'
+      FTLCONF_dhcp_domain: ${LOCAL_DOMAIN}
     volumes:
       - pihole_data:/etc/pihole
       - ./config/pihole/dnsmasq.d:/etc/dnsmasq.d
     networks:
-      - frontend
+      frontend: {}
+      lan:
+        ipv4_address: ${IP}
     labels:
       - "com.example.description=Pi-hole DNS Ad-Blocker"
       - "com.example.service=pihole"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      - "traefik.http.routers.pihole.rule=Host(`pihole.${HOSTNAME}`)"
+      - "traefik.http.routers.pihole.rule=Host(`pihole.${LOCAL_DOMAIN}`)"
       - "traefik.http.routers.pihole.entrypoints=websecure"
       - "traefik.http.routers.pihole.tls=true"
       - "traefik.http.routers.pihole.tls.certresolver=letsencrypt"
@@ -311,7 +322,7 @@ services:
       - com.example.service=n8n
       - traefik.enable=true
       - traefik.docker.network=frontend
-      - traefik.http.routers.n8n.rule=Host(`n8n.${HOSTNAME}`)
+      - traefik.http.routers.n8n.rule=Host(`n8n.${LOCAL_DOMAIN}`)
       - traefik.http.routers.n8n.entrypoints=websecure
       - traefik.http.routers.n8n.tls=true
       - traefik.http.routers.n8n.tls.certresolver=letsencrypt
@@ -321,16 +332,16 @@ services:
       - traefik.http.middlewares.n8n.headers.browserXSSFilter=true
       - traefik.http.middlewares.n8n.headers.contentTypeNosniff=true
       - traefik.http.middlewares.n8n.headers.forceSTSHeader=true
-      - traefik.http.middlewares.n8n.headers.SSLHost=${HOSTNAME}
+      - traefik.http.middlewares.n8n.headers.SSLHost=${LOCAL_DOMAIN}
       - traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true
       - traefik.http.middlewares.n8n.headers.STSPreload=true
       - traefik.http.services.n8n.loadbalancer.server.port=8082
     environment:
-      - N8N_HOST=n8n.${HOSTNAME}
+      - N8N_HOST=n8n.${LOCAL_DOMAIN}
       - N8N_PORT=5678
       - N8N_PROTOCOL=https
       - NODE_ENV=production
-      - WEBHOOK_URL=https://n8n.${HOSTNAME}/
+      - WEBHOOK_URL=https://n8n.${LOCAL_DOMAIN}/
       - GENERIC_TIMEZONE=${TIMEZONE}
       - TZ=${TIMEZONE}
     volumes:
@@ -391,3 +402,15 @@ networks:
     labels:
       - "com.example.description=External Web Network"
       - "com.example.service=proxy"
+  lan:
+    driver: macvlan
+    driver_opts:
+      parent: ${LAN_PARENT}
+    ipam:
+      driver: default
+      config:
+        - subnet: ${LAN_SUBNET}
+          gateway: ${LAN_GATEWAY}
+    labels:
+      - "com.example.description=Physical LAN macvlan for DHCP"
+      - "com.example.service=network"

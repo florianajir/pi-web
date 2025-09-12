@@ -30,7 +30,7 @@ jobs:
 
       - name: Create test environment
         run: |
-          echo "HOSTNAME=pi.test" > .env
+          echo "LOCAL_DOMAIN=pi.test" > .env
           echo "USER=testuser" >> .env
           echo "EMAIL=test@example.com" >> .env
           echo "PASSWORD=testpass123" >> .env

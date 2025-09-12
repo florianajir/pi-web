@@ -21,7 +21,6 @@ install:
 	sudo systemctl daemon-reload
 	sudo systemctl enable pi-web.service
 	@echo "✅ Pi-Web service enabled"
-	make start
 
 start:
 	@echo "🚀 Starting..."

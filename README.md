@@ -78,7 +78,7 @@ For contributors and developers who want to maintain code quality:
 The stack uses encrypted environment variables for security. Basic configuration:
 
 ```bash
-HOSTNAME=pi.web
+LOCAL_DOMAIN=pi.web
 USER=admin
 EMAIL=admin@example.com
 PASSWORD=your_secure_password

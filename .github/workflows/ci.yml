@@ -100,7 +100,7 @@ jobs:
     name: Test Deployment
     runs-on: ubuntu-latest
     env:
-      HOSTNAME: test.local
+      LOCAL_DOMAIN: test.local
       USER: testuser
       EMAIL: test@example.com
       PASSWORD: testpassword123
@@ -114,7 +114,7 @@ jobs:
       - name: Test all services deployment
         run: |
           # Create test environment
-          echo "HOSTNAME=test.local" > .env
+          echo "LOCAL_DOMAIN=test.local" > .env
           echo "USER=testuser" >> .env
           echo "EMAIL=test@example.com" >> .env
           echo "PASSWORD=testpassword123" >> .env
