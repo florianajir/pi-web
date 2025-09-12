@@ -391,8 +391,8 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: 172.20.0.0/16
-          gateway: 172.20.0.1
+        - subnet: 172.30.10.0/24
+          gateway: 172.30.10.1
     labels:
       - "com.example.description=Internal Monitoring Network"
       - "com.example.service=monitoring"
@@ -403,8 +403,8 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: 172.21.0.0/16
-          gateway: 172.21.0.1
+        - subnet: 172.30.11.0/24
+          gateway: 172.30.11.1
     labels:
       - "com.example.description=External Web Network"
       - "com.example.service=proxy"
