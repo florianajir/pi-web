@@ -15,14 +15,6 @@ install:
 	@echo "📦 Installing Pi-Web service..."
 	@if [ ! -f .env ]; then echo "❌ .env file missing"; exit 1; fi
 	@echo "Current directory: $(shell pwd)"
-	# Generate Traefik basic auth users file from USER + PASSWORD env vars
-	@set -a; . ./.env; set +a; \
-	 mkdir -p config/traefik/auth; \
-	 if ! command -v htpasswd >/dev/null 2>&1; then echo "⚠️  'htpasswd' not found (install apache2-utils or httpd-tools)"; exit 2; fi; \
-	 if [ -z "$$USER" ] || [ -z "$$PASSWORD" ]; then echo "❌ USER or PASSWORD empty in .env"; exit 3; fi; \
-	 echo "🔐 Generating bcrypt hash for '$$USER'"; \
-	 htpasswd -nbBC 12 "$${USER}" "$${PASSWORD}" | sed 's/$$/\n/' > config/traefik/auth/users; \
-	 echo "✅ Auth file written to config/traefik/auth/users";
 	# Install systemd unit files
 	sed 's|__PROJECT_PATH__|$(shell pwd)|g' config/systemd/system/pi-web.service > /tmp/pi-web.service
 	sudo cp /tmp/pi-web.service /etc/systemd/system/

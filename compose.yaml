@@ -48,10 +48,10 @@ services:
       # Middlewares definitions
       - "traefik.http.middlewares.compress.compress=true"
       - "traefik.http.middlewares.hsts.headers.stsSeconds=2592000"
-      # Use external users file for basic auth (generated via Makefile install)
-      - "traefik.http.middlewares.global-auth.basicauth.usersfile=/auth/users"
+      # IP allowlist middleware (define ALLOW_IP_RANGES in .env, e.g. 192.168.1.0/24,10.8.0.0/24)
+      - "traefik.http.middlewares.internal-allow.ipwhitelist.sourcerange=${ALLOW_IP_RANGES}"
       # Traefik Dashboard Router
-      - "traefik.http.routers.traefik.middlewares=global-auth"
+      - "traefik.http.routers.traefik.middlewares=internal-allow"
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.rule=Host(`traefik.${LOCAL_DOMAIN}`)"
       - "traefik.http.routers.traefik.service=api@internal"
@@ -66,7 +66,6 @@ services:
     volumes:
       - traefik_data:/letsencrypt
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./config/traefik/auth:/auth:ro
     networks:
       - frontend
     logging:
@@ -164,7 +163,7 @@ services:
       - "traefik.http.routers.prometheus.entrypoints=websecure"
       - "traefik.http.routers.prometheus.tls=true"
       - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt" # Remove if internal-only domain
-      - "traefik.http.routers.prometheus.middlewares=global-auth"
+      - "traefik.http.routers.prometheus.middlewares=internal-allow"
       - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
     logging:
       driver: "json-file"

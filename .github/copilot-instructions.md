@@ -13,7 +13,6 @@ Purpose: Help AI agents contribute effectively to the `pi-web` Raspberry Pi self
 
 ## Conventions & Patterns
 - All externally exposed UIs are routed through Traefik using labels `traefik.http.routers.<service>...` with host pattern: `<service>.${LOCAL_DOMAIN}`.
-- Sensitive UIs (Prometheus, Traefik) use `global-auth` middleware (basic auth user hash injected via `BASIC_AUTH`). Keep consistency if adding new internal dashboards.
 - Healthchecks: Each service declaring HTTP health uses lightweight `wget` or protocol‑appropriate CLI (`dig` for Pi-hole). Reuse style when adding services.
 - Resource governance: Every service pins `mem_limit` + `mem_reservation`; mirror pattern for new services to preserve Pi constraints.
 - Networks: Public access services attach to `frontend`; pure exporters attach only to `monitoring` unless Traefik routing required.
@@ -45,7 +44,6 @@ Purpose: Help AI agents contribute effectively to the `pi-web` Raspberry Pi self
 7. Add any new required env vars to `.env.dist` (never commit secrets).
 
 ## Basic Auth & Security
-- `BASIC_AUTH` expects Traefik basicauth formatted `user:hashedpassword`. Use `htpasswd -nb <user> <pass>` to generate; store only in real `.env`.
 - TLS: ACME HTTP challenge on entrypoint `web` auto-manages certificates stored in `traefik_data` volume.
 - `--serverstransport.insecureskipverify=true` is set intentionally (internal self-signed cases); do not remove without verifying upstream cert chain.
 
