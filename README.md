@@ -20,14 +20,14 @@ Turn your Raspberry Pi into a self-hosted infrastructure with vpn, ad-blocker dn
 
 | Service | Purpose | Access |
 |---------|---------|--------|
-| **Traefik** | Reverse proxy with SSL termination | `traefik.pi.web` |
-| **n8n** | Workflow automation platform | `n8n.pi.web` |
-| **Grafana** | Analytics and monitoring dashboards | `grafana.pi.web` |
-| **Prometheus** | Metrics collection and storage | `prometheus.pi.web` |
+| **Traefik** | Reverse proxy with SSL termination | `traefik.pi.lan` |
+| **n8n** | Workflow automation platform | `n8n.pi.lan` |
+| **Grafana** | Analytics and monitoring dashboards | `grafana.pi.lan` |
+| **Prometheus** | Metrics collection and storage | `prometheus.pi.lan` |
 | **cAdvisor** | Container resource monitoring | Internal |
 | **Node Exporter** | System metrics collection | Internal |
-| **WireGuard** | VPN server | `pi.web:51820` |
-| **Pi Hole** | DNS server + Ad-Blocker | `pihole.pi.web` (dashboard), `pi.web:53` (DNS) |
+| **WireGuard** | VPN server | `pi.lan:51820` |
+| **Pi Hole** | DNS server + Ad-Blocker | `pihole.pi.lan` (dashboard), `pi.lan:53` (DNS) |
 
 ## 🚀 Quick Start
 
@@ -76,6 +76,8 @@ For contributors and developers who want to maintain code quality:
 ### Environment Variables
 
 The stack uses encrypted environment variables for security. Basic configuration can be found in `.env.dist` file, just copy the file to `.env` to quickstart.
+
+By default domains use the pattern `<service>.pi.lan` because `HOST_NAME=pi.lan` in `.env.dist`. To use a different internal domain (e.g. `pi.web`), set `HOST_NAME=pi.web` (and ensure your LAN DNS or `/etc/hosts` resolves `*.pi.web` to your Raspberry Pi host IP) before running `make start`.
 
 ### Advanced Configuration
 
