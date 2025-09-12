@@ -255,7 +255,7 @@ services:
       FTLCONF_misc_dnsmasq_lines: 'address=/${HOST_NAME:-pi.lan}/${HOST_IP:-192.168.1.30}'
       FTLCONF_webserver_port: 8082
       # DHCP configuration
-      FTLCONF_dhcp_active: 'true'
+      FTLCONF_dhcp_active: ${DHCP_ACTIVE:-false}
       FTLCONF_dhcp_start: ${DHCP_START:-192.168.1.100}
       FTLCONF_dhcp_end: ${DHCP_END:-192.168.1.150}
       FTLCONF_dhcp_router: ${DHCP_ROUTER:-192.168.1.1}
