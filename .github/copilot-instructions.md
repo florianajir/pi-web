@@ -53,7 +53,7 @@ Purpose: Help AI agents contribute effectively to the `pi-web` Raspberry Pi self
 - When adding a new HTTP service: treat it as private-by-default. Open an issue before proposing any public exposure.
 - Enforce LAN scoping via an ip whitelist middleware chained with auth. Pattern (reuse `ALLOW_IP_RANGES` from `.env`):
   Example labels snippet for a new service:
-    traefik.http.middlewares.lan-only.ipwhitelist.sourcerange=${ALLOW_IP_RANGES}
+  traefik.http.middlewares.lan-only.ipallowlist.sourcerange=${ALLOW_IP_RANGES}
     traefik.http.routers.<service>.middlewares=global-auth,lan-only
 - Do not add global WAN CIDRs (e.g. 0.0.0.0/0) to `ALLOW_IP_RANGES`.
 - If a future WireGuard service is integrated, update docs instead of altering exposure strategy for existing services.

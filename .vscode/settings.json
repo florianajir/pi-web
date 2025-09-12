@@ -20,7 +20,7 @@
 		"hsts",
 		"httpchallenge",
 		"insecureskipverify",
-		"ipwhitelist",
+		"ipallowlist",
 		"journalctl",
 		"kmsg",
 		"letsencrypt",

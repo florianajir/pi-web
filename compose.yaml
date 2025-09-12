@@ -42,7 +42,7 @@ services:
       - "traefik.http.middlewares.compress.compress=true"
       - "traefik.http.middlewares.hsts.headers.stsSeconds=2592000"
       # IP allowlist middleware (define ALLOW_IP_RANGES in .env, e.g. 192.168.1.0/24,10.8.0.0/24)
-      - "traefik.http.middlewares.internal-allow.ipwhitelist.sourcerange=${ALLOW_IP_RANGES:-192.168.1.0/24}"
+      - "traefik.http.middlewares.internal-allow.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-192.168.1.0/24}"
       # Traefik Dashboard Router
       - "traefik.http.routers.traefik.middlewares=internal-allow"
       - "traefik.http.routers.traefik.entrypoints=websecure"
