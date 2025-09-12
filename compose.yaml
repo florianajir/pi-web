@@ -41,10 +41,9 @@ services:
       # Middlewares definitions
       - "traefik.http.middlewares.compress.compress=true"
       - "traefik.http.middlewares.hsts.headers.stsSeconds=2592000"
-      # IP allowlist middleware (define ALLOW_IP_RANGES in .env, e.g. 192.168.1.0/24,10.8.0.0/24)
-      - "traefik.http.middlewares.internal-allow.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-192.168.1.0/24}"
+      - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-192.168.1.0/24}"
       # Traefik Dashboard Router
-      - "traefik.http.routers.traefik.middlewares=internal-allow"
+      - "traefik.http.routers.traefik.middlewares=lan@docker"
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.rule=Host(`traefik.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.traefik.service=api@internal"
@@ -98,7 +97,7 @@ services:
       - "traefik.http.routers.grafana.rule=Host(`grafana.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.grafana.entrypoints=websecure"
       - "traefik.http.routers.grafana.tls=true"
-      - "traefik.http.routers.grafana.middlewares=internal-allow"
+      - "traefik.http.routers.grafana.middlewares=lan"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
     logging:
       driver: "json-file"
@@ -151,7 +150,7 @@ services:
       - "traefik.http.routers.prometheus.rule=Host(`prometheus.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.prometheus.entrypoints=websecure"
       - "traefik.http.routers.prometheus.tls=true"
-      - "traefik.http.routers.prometheus.middlewares=internal-allow"
+      - "traefik.http.routers.prometheus.middlewares=lan"
       - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
     logging:
       driver: "json-file"
@@ -280,7 +279,7 @@ services:
       - "traefik.http.routers.pihole.rule=Host(`pihole.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.pihole.entrypoints=websecure"
       - "traefik.http.routers.pihole.tls=true"
-      - "traefik.http.routers.pihole.middlewares=internal-allow"
+      - "traefik.http.routers.pihole.middlewares=lan"
       - "traefik.http.services.pihole.loadbalancer.server.port=8082"
     healthcheck:
       test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
@@ -310,7 +309,7 @@ services:
       - "traefik.http.routers.n8n.rule=Host(`n8n.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.n8n.entrypoints=websecure"
       - "traefik.http.routers.n8n.tls=true"
-      - "traefik.http.routers.n8n.middlewares=n8n@docker,internal-allow"
+      - "traefik.http.routers.n8n.middlewares=n8n@docker,lan@docker"
       - "traefik.http.middlewares.n8n.headers.SSLRedirect=true"
       - "traefik.http.middlewares.n8n.headers.STSSeconds=315360000"
       - "traefik.http.middlewares.n8n.headers.browserXSSFilter=true"
