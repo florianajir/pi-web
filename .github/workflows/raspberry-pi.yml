@@ -34,8 +34,6 @@ jobs:
           echo "USER=testuser" >> .env
           echo "EMAIL=test@example.com" >> .env
           echo "PASSWORD=testpass123" >> .env
-          echo "USER_ID=911" >> .env
-          echo "GROUP_ID=911" >> .env
 
       - name: Test multi-arch image compatibility
         run: |

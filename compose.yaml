@@ -30,6 +30,8 @@ services:
       - "--certificatesresolvers.letsencrypt.acme.email=${EMAIL}"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      # NOTE: If LOCAL_DOMAIN is an internal / non-public suffix (e.g. *.lan) Let's Encrypt will reject ACME requests.
+      # Either point LOCAL_DOMAIN to a publicly resolvable DNS name or remove per-router certresolver labels to avoid log spam.
       # Providers
       - "--providers.docker=true"
       - "--providers.docker.watch=true"
@@ -43,17 +45,18 @@ services:
       - "com.example.service=traefik"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      # Middlewares définitions
+      # Middlewares definitions
       - "traefik.http.middlewares.compress.compress=true"
       - "traefik.http.middlewares.hsts.headers.stsSeconds=2592000"
-      - "traefik.http.middlewares.global-auth.basicauth.users=${BASIC_AUTH}"
+      # Use external users file for basic auth (generated via Makefile install)
+      - "traefik.http.middlewares.global-auth.basicauth.usersfile=/auth/users"
       # Traefik Dashboard Router
       - "traefik.http.routers.traefik.middlewares=global-auth"
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.rule=Host(`traefik.${LOCAL_DOMAIN}`)"
       - "traefik.http.routers.traefik.service=api@internal"
       - "traefik.http.routers.traefik.tls=true"
-      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt" # Remove if using internal-only domain
       - "traefik.http.services.traefik.loadbalancer.server.port=8080"
     ports:
       - "80:80"
@@ -63,6 +66,7 @@ services:
     volumes:
       - traefik_data:/letsencrypt
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config/traefik/auth:/auth:ro
     networks:
       - frontend
     logging:
@@ -79,7 +83,6 @@ services:
     image: grafana/grafana-oss:latest
     hostname: pi-grafana
     restart: unless-stopped
-    # Run as default grafana user inside image (drop explicit user to allow privilege detection & plugin perms)
     networks:
       - monitoring
       - frontend
@@ -160,7 +163,7 @@ services:
       - "traefik.http.routers.prometheus.rule=Host(`prometheus.${LOCAL_DOMAIN}`)"
       - "traefik.http.routers.prometheus.entrypoints=websecure"
       - "traefik.http.routers.prometheus.tls=true"
-      - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt" # Remove if internal-only domain
       - "traefik.http.routers.prometheus.middlewares=global-auth"
       - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
     logging:
@@ -292,7 +295,7 @@ services:
       - "traefik.http.routers.pihole.rule=Host(`pihole.${LOCAL_DOMAIN}`)"
       - "traefik.http.routers.pihole.entrypoints=websecure"
       - "traefik.http.routers.pihole.tls=true"
-      - "traefik.http.routers.pihole.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.pihole.tls.certresolver=letsencrypt" # Remove if internal-only domain
       - "traefik.http.services.pihole.loadbalancer.server.port=8082"
     healthcheck:
       test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
@@ -316,24 +319,24 @@ services:
     expose:
       - 5678
     labels:
-      com.example.description: "n8n workflow automation"
-      com.example.service: "n8n"
-      traefik.enable: "true"
-      traefik.docker.network: "frontend"
-      traefik.http.routers.n8n.rule: "Host(`n8n.${LOCAL_DOMAIN}`)"
-      traefik.http.routers.n8n.entrypoints: "websecure"
-      traefik.http.routers.n8n.tls: "true"
-      traefik.http.routers.n8n.tls.certresolver: "letsencrypt"
-      traefik.http.routers.n8n.middlewares: "n8n@docker"
-      traefik.http.middlewares.n8n.headers.SSLRedirect: "true"
-      traefik.http.middlewares.n8n.headers.STSSeconds: "315360000"
-      traefik.http.middlewares.n8n.headers.browserXSSFilter: "true"
-      traefik.http.middlewares.n8n.headers.contentTypeNosniff: "true"
-      traefik.http.middlewares.n8n.headers.forceSTSHeader: "true"
-      traefik.http.middlewares.n8n.headers.SSLHost: "${LOCAL_DOMAIN}"
-      traefik.http.middlewares.n8n.headers.STSIncludeSubdomains: "true"
-      traefik.http.middlewares.n8n.headers.STSPreload: "true"
-      traefik.http.services.n8n.loadbalancer.server.port: "5678"
+      - "com.example.description=n8n workflow automation"
+      - "com.example.service=n8n"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.n8n.rule=Host(`n8n.${LOCAL_DOMAIN}`)"
+      - "traefik.http.routers.n8n.entrypoints=websecure"
+      - "traefik.http.routers.n8n.tls=true"
+      - "traefik.http.routers.n8n.tls.certresolver=letsencrypt" # Remove if internal-only domain
+      - "traefik.http.routers.n8n.middlewares=n8n@docker"
+      - "traefik.http.middlewares.n8n.headers.SSLRedirect=true"
+      - "traefik.http.middlewares.n8n.headers.STSSeconds=315360000"
+      - "traefik.http.middlewares.n8n.headers.browserXSSFilter=true"
+      - "traefik.http.middlewares.n8n.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.n8n.headers.forceSTSHeader=true"
+      - "traefik.http.middlewares.n8n.headers.SSLHost=${LOCAL_DOMAIN}"
+      - "traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true"
+      - "traefik.http.middlewares.n8n.headers.STSPreload=true"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
     environment:
       - N8N_HOST=n8n.${LOCAL_DOMAIN}
       - N8N_PORT=5678
@@ -384,6 +387,8 @@ volumes:
 networks:
   monitoring:
     driver: bridge
+    # Force stable docker network name (avoid project prefix) so traefik --providers.docker.network lookups remain consistent
+    name: monitoring
     ipam:
       driver: default
       config:
@@ -394,6 +399,8 @@ networks:
       - "com.example.service=monitoring"
   frontend:
     driver: bridge
+    # Force stable docker network name to match labels/traefik provider config (was resolving to <project>_frontend)
+    name: frontend
     ipam:
       driver: default
       config:
