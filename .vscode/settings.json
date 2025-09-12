@@ -24,6 +24,7 @@
 		"kmsg",
 		"letsencrypt",
 		"loadbalancer",
+		"macvlan",
 		"mytlschallenge",
 		"netns",
 		"Nosniff",

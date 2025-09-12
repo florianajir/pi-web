@@ -24,7 +24,7 @@ services:
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
       - "--entrypoints.websecure.address=:443/tcp"
       - "--entrypoints.websecure.http.middlewares=compress@docker,hsts@docker"
-      - "--entrypoints.websecure.http.tls.certresolver=letsencrypt"
+      # Enable HTTP3 and configure default certresolver at router-level (flag removed in v3)
       - "--entrypoints.websecure.http3=true"
       # Certificate Resolvers
       - "--certificatesresolvers.letsencrypt.acme.email=${EMAIL}"
@@ -36,10 +36,8 @@ services:
       - "--providers.docker.network=frontend"
       - "--providers.docker.exposedbydefault=false"
       # Servers Transport
-      - "--serverstransport.insecureskipverify=true"
-      # TLS Configuration
-      - "--tls.options.default.cipherSuites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256"
-      - "--tls.options.default.sniStrict=true"
+      - "--serversTransport.insecureSkipVerify=true" # corrected flag name for v3
+      # (Removed invalid top-level --tls.options.* flags for v3; define via dynamic file if needed)
     labels:
       - "com.example.description=Traefik reverse proxy"
       - "com.example.service=traefik"
@@ -81,7 +79,7 @@ services:
     image: grafana/grafana-oss:latest
     hostname: pi-grafana
     restart: unless-stopped
-    user: ${USER_ID:-1000}
+    # Run as default grafana user inside image (drop explicit user to allow privilege detection & plugin perms)
     networks:
       - monitoring
       - frontend
@@ -261,7 +259,7 @@ services:
     expose:
       - 53
       - 8082
-    user: ${USER_ID:-1000}
+    # Pi-hole expects to start some components as root then drop privileges. Remove forced user.
     environment:
       TZ: ${TIMEZONE}
       FTLCONF_webserver_api_password: ${PASSWORD}
@@ -318,24 +316,24 @@ services:
     expose:
       - 5678
     labels:
-      - "com.example.description=n8n workflow automation"
-      - com.example.service=n8n
-      - traefik.enable=true
-      - traefik.docker.network=frontend
-      - traefik.http.routers.n8n.rule=Host(`n8n.${LOCAL_DOMAIN}`)
-      - traefik.http.routers.n8n.entrypoints=websecure
-      - traefik.http.routers.n8n.tls=true
-      - traefik.http.routers.n8n.tls.certresolver=letsencrypt
-      - traefik.http.routers.n8n.middlewares=n8n@docker
-      - traefik.http.middlewares.n8n.headers.SSLRedirect=true
-      - traefik.http.middlewares.n8n.headers.STSSeconds=315360000
-      - traefik.http.middlewares.n8n.headers.browserXSSFilter=true
-      - traefik.http.middlewares.n8n.headers.contentTypeNosniff=true
-      - traefik.http.middlewares.n8n.headers.forceSTSHeader=true
-      - traefik.http.middlewares.n8n.headers.SSLHost=${LOCAL_DOMAIN}
-      - traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true
-      - traefik.http.middlewares.n8n.headers.STSPreload=true
-      - traefik.http.services.n8n.loadbalancer.server.port=8082
+      com.example.description: "n8n workflow automation"
+      com.example.service: "n8n"
+      traefik.enable: "true"
+      traefik.docker.network: "frontend"
+      traefik.http.routers.n8n.rule: "Host(`n8n.${LOCAL_DOMAIN}`)"
+      traefik.http.routers.n8n.entrypoints: "websecure"
+      traefik.http.routers.n8n.tls: "true"
+      traefik.http.routers.n8n.tls.certresolver: "letsencrypt"
+      traefik.http.routers.n8n.middlewares: "n8n@docker"
+      traefik.http.middlewares.n8n.headers.SSLRedirect: "true"
+      traefik.http.middlewares.n8n.headers.STSSeconds: "315360000"
+      traefik.http.middlewares.n8n.headers.browserXSSFilter: "true"
+      traefik.http.middlewares.n8n.headers.contentTypeNosniff: "true"
+      traefik.http.middlewares.n8n.headers.forceSTSHeader: "true"
+      traefik.http.middlewares.n8n.headers.SSLHost: "${LOCAL_DOMAIN}"
+      traefik.http.middlewares.n8n.headers.STSIncludeSubdomains: "true"
+      traefik.http.middlewares.n8n.headers.STSPreload: "true"
+      traefik.http.services.n8n.loadbalancer.server.port: "5678"
     environment:
       - N8N_HOST=n8n.${LOCAL_DOMAIN}
       - N8N_PORT=5678
@@ -344,6 +342,8 @@ services:
       - WEBHOOK_URL=https://n8n.${LOCAL_DOMAIN}/
       - GENERIC_TIMEZONE=${TIMEZONE}
       - TZ=${TIMEZONE}
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
     volumes:
       - n8n_data:/home/node/.n8n
       - ./data/n8n/files:/files
