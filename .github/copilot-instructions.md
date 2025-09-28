@@ -1,77 +1,69 @@
-# Copilot Project Instructions
+## Copilot Project Instructions
 
-Purpose: Help AI agents contribute effectively to the `pi-web` Raspberry Pi self‑hosting stack (Traefik, Pi-hole, Prometheus, Grafana, n8n) with consistent patterns and safe changes.
+Purpose: Make AI agents immediately productive when extending the `pi-web` Raspberry Pi self‑hosting stack (Traefik, Pi-hole, Prometheus, Grafana, n8n) while keeping changes safe and minimal.
 
-## Core Architecture
-- Single Docker Compose stack (`compose.yaml`) + optional test overlay (`compose.test.yaml` for CI: removes privileged host DNS ports for Pi-hole).
-- Service groups:
-  - Edge / Routing: `traefik` (TLS, HTTP->HTTPS redirect, basic auth middleware for internal UIs like Prometheus dashboard).
-  - Monitoring: `prometheus`, `grafana`, `cadvisor`, `node-exporter` (two logical networks: `monitoring` internal, `frontend` public‑facing).
-  - Infrastructure: `pihole` (DNS + ad-block), `watchtower` (auto image updates), `n8n` (workflow automation).
-- Persistence via named volumes: `grafana-data`, `prometheus-data`, `traefik_data`, `pihole_data`, `n8n_data`.
-- Systemd wrapper (`config/systemd/system/*.service|*.timer`) provides host-level lifecycle; `Makefile` materializes path placeholders (`__PROJECT_PATH__`).
+### 1. Architecture (What Exists Today)
+Single Docker Compose file (`compose.yaml`) plus a tiny CI overlay (`compose.test.yaml`) that only neutralizes Pi-hole host DNS port usage. Service groups:
+- Edge: `traefik` (v3.4) – central TLS / routing (HTTPS only, HTTP redirected). Dashboard exposed via router `traefik`.
+- Monitoring: `prometheus`, `grafana`, `cadvisor`, `node-exporter`.
+- Productivity: `nextcloud` (28-apache) served behind Traefik with private storage, backed by `nextcloud-db` (MariaDB 11.4) and `nextcloud-redis` cache on an internal network.
+- Connectivity: `wireguard` (lscr.io/linuxserver/wireguard) publishes UDP 51820 for remote access and pushes Pi-hole as client DNS.
+- Infra / Utility: `pihole` (DNS + optional DHCP via macvlan `lan` network), `n8n` (automation), `watchtower` (image updates).
+- Networks: `frontend` (routed HTTP services), `monitoring` (internal scrape), `lan` (macvlan for Pi‑hole DHCP/IP). Network names are fixed via `name:` to satisfy Traefik provider lookups.
+- Persistence: Named volumes `grafana-data`, `prometheus-data`, `pihole_data`, `n8n_data`, `wireguard_config`.
 
-## Conventions & Patterns
-- All externally exposed UIs are routed through Traefik using labels `traefik.http.routers.<service>...` with host pattern: `<service>.${HOST_NAME}`.
-- Healthchecks: Each service declaring HTTP health uses lightweight `wget` or protocol‑appropriate CLI (`dig` for Pi-hole). Reuse style when adding services.
-- Resource governance: Every service pins `mem_limit`; mirror pattern for new services to preserve Pi constraints.
-- Networks: Public access services attach to `frontend`; pure exporters attach only to `monitoring` unless Traefik routing required.
-- Environment variable source: root `.env` (runtime) + `.env.dist` (template). Never commit secrets; extend `.env.dist` when introducing new required vars.
-- Avoid exposing container ports directly—prefer Traefik unless protocol (DNS :53) or metrics scraping requires otherwise.
-- CI overlay (`compose.test.yaml`) is minimal; only override exactly what blocks shared runners (e.g., privileged / reserved ports).
+### 2. Key Conventions & Patterns
+- Traefik exposure: Add labels `traefik.enable=true`, host rule `Host(`<service>.${HOST_NAME}`)` and explicit `loadbalancer.server.port=<internal_port>`; do NOT publish container ports (except required external protocols: Pi-hole DNS, Traefik 80/443).
+- Healthchecks: Use lightweight CLI (`wget` for HTTP `/api/health` or service health; `dig`/`nslookup` for DNS). Follow existing intervals (30s) and retry (3) unless strong reason.
+- Memory: Every runtime service sets `mem_limit` (common ranges: 128m–1g). Mirror pattern for new services.
+- Environment: All runtime values come from `.env`; template new required keys in `.env.dist` only (never commit secrets). Prefer bash parameter defaults: `${VAR:-default}` for resiliency.
+- Networks: Only attach what you need. Public UI -> `frontend` (and also `monitoring` if scraped). Pure exporters stay off `frontend`.
+- Labels: Keep them minimal; existing `com.example.*` labels are descriptive only—replicate for consistency when adding volumes / services.
+- Nextcloud specifics: Application joins both `frontend` and internal `nextcloud` network; keep database (`nextcloud-db`) and Redis cache (`nextcloud-redis`) on the internal network. Admin credentials reuse the global `USER` / `PASSWORD`; rotate them before enabling access. Database secrets stay under the Nextcloud section in `.env`.
+- WireGuard specifics: Requires `NET_ADMIN` + `SYS_MODULE`, mounts `/lib/modules`, and maps UDP `${WIREGUARD_SERVER_PORT:-51820}`. Default DNS for peers should match Pi-hole (`WIREGUARD_PEER_DNS` == `PIHOLE_IP`). Persist peer configs under `wireguard_config/` and treat them as secrets.
 
-## Developer & CI Workflow
-- Linting: YAML style enforced via `.yamllint` (120 char width, relaxed rules). Keep new YAML aligned.
-- CI jobs: `lint` validates compose syntax (`docker compose -f compose.yaml -f compose.test.yaml config`), runs yamllint, optional Prometheus config validation (note: path in workflow is legacy—actual config lives at `config/prometheus/prometheus.yml`; adjust if refactoring).
-- ARM compatibility: `raspberry-pi.yml` executes multi-arch image version checks. If adding images, mirror test block with `docker run --platform ${{ matrix.platform }} --rm <image> --version`.
-- Security scan: Trivy file system scan; no custom suppression logic—prefer fixing base image tags.
+### 3. Security & Exposure
+- LAN-only expectation: Do NOT introduce public Internet exposure or open extra host ports. Future remote access should remain VPN-based (WireGuard external or future in-stack implementation).
+- Optional IP allowlist middleware currently commented out; if re‑enabling, pattern (uncomment & adapt):
+  - `traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES}`
+  - Apply via `traefik.http.routers.<service>.middlewares=lan`
+- `--serversTransport.insecureSkipVerify=true` intentionally tolerates self-signed backend certs—don’t remove casually.
 
-## File / Directory Landmarks
-- `compose.yaml`: Source of truth for services; replicate label / memory / healthcheck patterns exactly.
-- `compose.test.yaml`: Only CI-safe overrides; do not duplicate base config.
-- `config/prometheus/prometheus.yml`: Add new scrape targets; keep 15s `scrape_interval` unless justified. Use static_configs; no service discovery here.
-- `config/grafana/provisioning/`: Datasource + dashboards provisioning. Provide fixed `uid` when adding datasources to avoid duplication.
-- `config/systemd/system/pi-web.service`: Contains placeholder path token—do not hardcode absolute paths in repo.
-- `Makefile`: Only declarative orchestration; keep output emojis & messaging style when adding targets.
+### 4. Monitoring Integration
+- Prometheus config: Static targets only in `config/prometheus/prometheus.yml` (15s scrape). To add metrics: append a new `job_name` with a `static_configs.targets` entry using container DNS name + port (e.g. `myservice:9101`). Do NOT enable service discovery mechanisms.
+- Grafana provisioning: Dashboards + datasources live under `config/grafana/provisioning/`. Keep stable datasource UID (`p1w3b`). Commit full JSON dashboards (avoid editing live through the UI without exporting back).
+- Nextcloud monitoring: No native Prometheus metrics shipped—any exporter should be added as a separate service with its own static target.
 
-## Adding a New Service (Example Checklist)
-1. Add service block to `compose.yaml` with: image, `restart: unless-stopped`, memory limits, healthcheck, labels for Traefik (if HTTP UI) or internal only.
-2. Attach correct networks (`frontend` if routed; `monitoring` if scraped).
-3. Add volume for persistent state (named volume + label) if data durability required.
-4. If UI should be gated: append middleware `global-auth` OR define a new middleware if special headers needed.
-5. Update Prometheus config if metrics endpoint exists (static target `service-name:port`).
-6. Extend ARM test workflow with compatibility probe.
-7. Add any new required env vars to `.env.dist` (never commit secrets).
+### 5. CI & Validation
+- Lint / syntax: GitHub Actions (`.github/workflows/ci.yml`) runs `docker compose config` (with and without test overlay) + `yamllint` (config in `.yamllint`). Maintain 2‑space indent, 120 char width.
+- Prometheus validation path in CI references a legacy directory (`monitoring/prometheus/`); actual config is under `config/prometheus/`—if refactoring, align workflow path.
+- ARM check workflow (`raspberry-pi.yml`) pulls images with `--platform linux/arm64`. When adding a new image, replicate a simple `docker run --platform ... --version` probe.
+- Test overlay (`compose.test.yaml`) must stay minimal: override only conflicting host bindings (currently Pi-hole port 53). Don’t duplicate base service specs.
 
-## Basic Auth & Security
-- TLS: ACME HTTP challenge on entrypoint `web` auto-manages certificates stored in `traefik_data` volume.
-- `--serverstransport.insecureskipverify=true` is set intentionally (internal self-signed cases); do not remove without verifying upstream cert chain.
+### 6. Systemd / Operations
+- `make install` renders `config/systemd/system/pi-web.service` (replacing `__PROJECT_PATH__`) into `/etc/systemd/system/`. Never hardcode absolute paths in the repo.
+- Operational commands: `make start|stop|restart|status|logs|update`. Keep emoji + concise log style if adding targets.
 
-## Network Exposure & Remote Access Policy
-- Policy: All Traefik-routed services are intended to be reachable only from the local LAN; do NOT create Internet-facing port forwards (80/443) to this stack.
-- Remote (outside LAN) access MUST occur exclusively through a WireGuard VPN terminating inside the LAN. Until a WireGuard service is added to `compose.yaml`, use a host-level or separate appliance WireGuard instance—do not bypass by exposing Traefik publicly.
-- When adding a new HTTP service: treat it as private-by-default. Open an issue before proposing any public exposure.
-- Enforce LAN scoping via an ip whitelist middleware chained with auth. Pattern (reuse `ALLOW_IP_RANGES` from `.env`):
-  Example labels snippet for a new service:
-  traefik.http.middlewares.lan-only.ipallowlist.sourcerange=${ALLOW_IP_RANGES}
-    traefik.http.routers.<service>.middlewares=global-auth,lan-only
-- Do not add global WAN CIDRs (e.g. 0.0.0.0/0) to `ALLOW_IP_RANGES`.
-- If a future WireGuard service is integrated, update docs instead of altering exposure strategy for existing services.
+### 7. Adding a Service (Practical Checklist)
+1. Define service in `compose.yaml`: image tag (avoid `latest` if upstream offers stable tags), `restart: unless-stopped`, `mem_limit`, `expose` (not `ports`) unless protocol requires host binding.
+2. Healthcheck matching existing cadence (prefer `CMD` array form).
+3. Attach networks: `frontend` only if it needs HTTP routing; add `monitoring` if Prometheus scrapes it.
+4. Traefik labels: host rule + `loadbalancer.server.port`. Add middleware only if already defined (avoid inventing new ones inline).
+5. Metrics: Append Prometheus job (static target) if service exposes metrics.
+6. Persistent data: Add named volume with descriptive labels if stateful.
+7. Update `.env.dist` for any new required vars (document defaults with comments if needed).
+8. Extend ARM test workflow with a one‑line version probe.
+9. Run local validation: `docker compose -f compose.yaml config` (and with overlay) before committing.
 
-## Performance / Monitoring Notes
-- Prometheus retention tuned (1y / 10GB). If adjusting, keep both time and size flags paired.
-- cAdvisor restricted (`-docker_only=true`, label storage disabled) to reduce overhead—retain unless higher granularity required.
+### 8. Common Pitfalls to Avoid
+- Exposing raw container ports instead of routing through Traefik.
+- Forgetting `mem_limit` (causes risk on constrained Pi hardware).
+- Adding dynamic Prometheus service discovery (not used here).
+- Removing macvlan network config needed for Pi‑hole DHCP.
+- Editing Grafana dashboards in-place without re‑exporting JSON to version control.
 
-## When Editing Dashboards
-- Maintain datasource `uid: p1w3b` for Prometheus queries to avoid provisioning duplicates.
-- Large JSON dashboards should stay under version control; avoid manual edits inside container.
+### 9. PR Expectations
+- Keep diffs minimal & scoped. Provide a short rationale (purpose + exposure + metrics) in PR description.
+- No sweeping reformatting or dependency “cleanup” PRs.
 
-## PR Guidance for Agents
-- Keep diffs minimal; do not mass reformat YAML (line length <=120, indentation 2 spaces).
-- Validate with: `docker compose -f compose.yaml config` locally before proposing.
-- If adding service: include short rationale in PR body (purpose + network exposure + auth decision).
-
-## Out of Scope
-- WireGuard service is mentioned in README but not yet implemented in `compose.yaml`; do not reference operational steps until added. (Remote access expectation remains: use VPN, never direct public Traefik exposure.)
-
-Feedback welcome: highlight unclear conventions or missing workflow details in follow-up.
+Questions / unclear areas? Open an issue or request clarifications—update this file after consensus.

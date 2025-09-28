@@ -10,11 +10,12 @@ Turn your Raspberry Pi into a self-hosted infrastructure with vpn, ad-blocker dn
 
 ### Stack Components
 
-- **VPN**: Home vpn using WireGuard
+- **VPN**: WireGuard routes remote clients through Pi-hole DNS for LAN-safe browsing
 - **DNS + Ad-blocker**: Pi-Hole
 - **Reverse Proxy**: Traefik handles routing, SSL certificates, and service discovery
 - **Monitoring**: Complete observability with Grafana dashboards, Prometheus metrics, and system monitoring
 - **Automation**: n8n provides visual workflow automation for connecting various services
+- **Cloud Storage**: Nextcloud offers self-hosted file sync and sharing with calendar/contacts support
 
 ### Services Included
 
@@ -26,6 +27,7 @@ Turn your Raspberry Pi into a self-hosted infrastructure with vpn, ad-blocker dn
 | **Prometheus** | Metrics collection and storage | `prometheus.pi.lan` |
 | **cAdvisor** | Container resource monitoring | Internal |
 | **Node Exporter** | System metrics collection | Internal |
+| **Nextcloud** | Private file sync and collaboration | `nextcloud.pi.lan` |
 | **WireGuard** | VPN server | `pi.lan:51820` |
 | **Pi Hole** | DNS server + Ad-Blocker | `pihole.pi.lan` (dashboard), `pi.lan:53` (DNS) |
 
@@ -85,8 +87,12 @@ By default domains use the pattern `<service>.pi.lan` because `HOST_NAME=pi.lan`
 - **Prometheus**: Configuration in `config/prometheus/prometheus.yml`
 - **Traefik**: Auto-configuration via Docker labels
 - **n8n**: Workflow data persisted in `n8n/files/`
+- **Nextcloud**: Persistent data stored in the `nextcloud_data` volume; admin user/password reuse the global `USER` / `PASSWORD` values while database credentials live under the Nextcloud section of `.env`
+- **WireGuard**: Configuration persisted in the `wireguard_config` volume; VPN clients default to the Pi-hole DNS defined by `WIREGUARD_PEER_DNS`
 
 ### Contributing
+
+Please review the [Repository Guidelines](AGENTS.md) before contributing.
 
 1. Fork the repository
 2. Create a feature branch

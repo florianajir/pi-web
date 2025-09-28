@@ -84,7 +84,8 @@ services:
     depends_on:
       - prometheus
     healthcheck:
-      test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:3000/api/health"]
+      test:
+        ["CMD", "wget", "-O", "/dev/null", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -119,12 +120,12 @@ services:
     restart: unless-stopped
     user: "nobody"
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=1y'
-      - '--storage.tsdb.retention.size=10GB'
-      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
-      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=1y"
+      - "--storage.tsdb.retention.size=10GB"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
     networks:
       - monitoring
       - frontend
@@ -137,7 +138,8 @@ services:
       - cadvisor
       - node-exporter
     healthcheck:
-      test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:9090/-/healthy"]
+      test:
+        ["CMD", "wget", "-O", "/dev/null", "http://localhost:9090/-/healthy"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -172,10 +174,10 @@ services:
     expose:
       - 9091
     command:
-      - '-housekeeping_interval=15s'
-      - '-docker_only=true'
-      - '-store_container_labels=false'
-      - '-port=9091'
+      - "-housekeeping_interval=15s"
+      - "-docker_only=true"
+      - "-store_container_labels=false"
+      - "-port=9091"
     devices:
       - /dev/kmsg
     volumes:
@@ -249,10 +251,10 @@ services:
     environment:
       TZ: ${TIMEZONE:-Europe/Paris}
       FTLCONF_webserver_api_password: ${PASSWORD:-admin}
-      FTLCONF_dns_listeningMode: 'all'
-      FTLCONF_dns_upstreams: '1.1.1.1;8.8.8.8'
+      FTLCONF_dns_listeningMode: "all"
+      FTLCONF_dns_upstreams: "1.1.1.1;8.8.8.8"
       # Wildcard all hosts under HOST_NAME to the host (Traefik) IP. Pi-hole still keeps its own macvlan IP (IP var).
-      FTLCONF_misc_dnsmasq_lines: 'address=/${HOST_NAME:-pi.lan}/${HOST_IP:-192.168.1.30}'
+      FTLCONF_misc_dnsmasq_lines: "address=/${HOST_NAME:-pi.lan}/${HOST_IP:-192.168.1.30}"
       FTLCONF_webserver_port: 8082
       # DHCP configuration
       FTLCONF_dhcp_active: ${DHCP_ACTIVE:-false}
@@ -260,9 +262,9 @@ services:
       FTLCONF_dhcp_end: ${DHCP_END:-192.168.1.150}
       FTLCONF_dhcp_router: ${DHCP_ROUTER:-192.168.1.1}
       FTLCONF_dhcp_leasetime: ${DHCP_LEASE_TIME:-24}
-      FTLCONF_dhcp_ipv6: 'false'
-      FTLCONF_dhcp_rapidCommit: 'true'
-      FTLCONF_dhcp_announce: 'true'
+      FTLCONF_dhcp_ipv6: "false"
+      FTLCONF_dhcp_rapidCommit: "true"
+      FTLCONF_dhcp_announce: "true"
       FTLCONF_dhcp_domain: ${HOST_NAME:-pi.lan}
     volumes:
       - pihole_data:/etc/pihole
@@ -343,6 +345,142 @@ services:
       - traefik
     mem_limit: 512m
 
+  # Productivity Stack
+  nextcloud:
+    container_name: pi-nextcloud
+    image: nextcloud:28-apache
+    hostname: pi-nextcloud
+    restart: unless-stopped
+    environment:
+      - NEXTCLOUD_ADMIN_USER=${USER:-admin}
+      - NEXTCLOUD_ADMIN_PASSWORD=${PASSWORD:-admin}
+      - NEXTCLOUD_ADMIN_EMAIL=${EMAIL:-admin@example.com}
+      - NEXTCLOUD_TRUSTED_DOMAINS=nextcloud.${HOST_NAME:-pi.lan}
+      - NEXTCLOUD_DATA_DIR=/var/www/html/data
+      - OVERWRITEHOST=nextcloud.${HOST_NAME:-pi.lan}
+      - OVERWRITEPROTOCOL=https
+      - TRUSTED_PROXIES=${NEXTCLOUD_TRUSTED_PROXIES:-172.30.11.0/24}
+      - MYSQL_HOST=nextcloud-db
+      - MYSQL_DATABASE=${NEXTCLOUD_DB_NAME:-nextcloud}
+      - MYSQL_USER=${NEXTCLOUD_DB_USER:-nextcloud}
+      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-changeme}
+      - REDIS_HOST=nextcloud-redis
+    volumes:
+      - nextcloud_data:/var/www/html
+    networks:
+      - frontend
+      - nextcloud
+    labels:
+      - "com.example.description=Nextcloud self-hosted storage"
+      - "com.example.service=nextcloud"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.nextcloud.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud.tls=true"
+      - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/status.php"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      - nextcloud-db
+      - nextcloud-redis
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 1g
+
+  nextcloud-db:
+    container_name: pi-nextcloud-db
+    image: mariadb:11.4
+    hostname: pi-nextcloud-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${NEXTCLOUD_DB_ROOT_PASSWORD:-changeme}
+      - MYSQL_DATABASE=${NEXTCLOUD_DB_NAME:-nextcloud}
+      - MYSQL_USER=${NEXTCLOUD_DB_USER:-nextcloud}
+      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-changeme}
+    volumes:
+      - nextcloud_db:/var/lib/mysql
+    networks:
+      - nextcloud
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 512m
+
+  nextcloud-redis:
+    container_name: pi-nextcloud-redis
+    image: redis:7-alpine
+    hostname: pi-nextcloud-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - nextcloud
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 128m
+
+  # Connectivity Stack
+  wireguard:
+    container_name: pi-wireguard
+    image: lscr.io/linuxserver/wireguard:latest
+    hostname: pi-wireguard
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - SERVERURL=${WIREGUARD_SERVER_URL:-pi.lan}
+      - SERVERPORT=${WIREGUARD_SERVER_PORT:-51820}
+      - PEERS=${WIREGUARD_PEERS:-5}
+      - PEERDNS=${WIREGUARD_PEER_DNS:-192.168.1.29}
+      - INTERNAL_SUBNET=${WIREGUARD_INTERNAL_SUBNET:-10.13.13.0/24}
+      - ALLOWEDIPS=${WIREGUARD_ALLOWED_IPS:-0.0.0.0/0,::/0}
+      - LOG_CONFS=true
+    volumes:
+      - wireguard_config:/config
+      - /lib/modules:/lib/modules:ro
+    ports:
+      - "${WIREGUARD_SERVER_PORT:-51820}:51820/udp"
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    healthcheck:
+      test: ["CMD", "bash", "-c", "wg show wg0 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
+
 volumes:
   grafana-data:
     labels:
@@ -360,11 +498,24 @@ volumes:
     labels:
       - "com.example.description=n8n Persistent Data"
       - "com.example.service=automation"
+  nextcloud_data:
+    labels:
+      - "com.example.description=Nextcloud Application Data"
+      - "com.example.service=cloud"
+  nextcloud_db:
+    labels:
+      - "com.example.description=Nextcloud Database Data"
+      - "com.example.service=cloud"
+  wireguard_config:
+    labels:
+      - "com.example.description=WireGuard Persistent Config"
+      - "com.example.service=vpn"
 
 networks:
   monitoring:
     driver: bridge
-    # Force stable docker network name (avoid project prefix) so traefik --providers.docker.network lookups remain consistent
+    # Force stable docker network name (avoid project prefix)
+    # so traefik --providers.docker.network lookups remain consistent
     name: monitoring
     ipam:
       driver: default
@@ -376,7 +527,8 @@ networks:
       - "com.example.service=monitoring"
   frontend:
     driver: bridge
-    # Force stable docker network name to match labels/traefik provider config (was resolving to <project>_frontend)
+    # Force stable docker network name to match traefik provider config
+    # (was resolving to <project>_frontend)
     name: frontend
     ipam:
       driver: default
@@ -398,3 +550,9 @@ networks:
     labels:
       - "com.example.description=Physical LAN macvlan for DHCP"
       - "com.example.service=network"
+  nextcloud:
+    driver: bridge
+    internal: true
+    labels:
+      - "com.example.description=Nextcloud internal network"
+      - "com.example.service=cloud"
