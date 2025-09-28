@@ -21,22 +21,13 @@ jobs:
 
       - name: Validate Docker Compose files
         run: |
-          docker compose -f proxy/compose.yaml config
-          docker compose -f monitoring/compose.yaml config
-          docker compose -f n8n/compose.yaml config
+          docker compose -f compose.yaml config
+          docker compose -f compose.yaml -f compose.test.yaml config
 
       - name: Lint YAML files
         run: |
-          # Install yamllint
           pip install yamllint
-
-          # Lint compose files with custom config
-          yamllint -c .yamllint proxy/compose.yaml
-          yamllint -c .yamllint monitoring/compose.yaml
-          yamllint -c .yamllint n8n/compose.yaml
-
-          # Lint other YAML files
-          yamllint -c .yamllint .github/workflows/*.yml
+          yamllint -c .yamllint .
 
       - name: Validate Prometheus config
         run: |
@@ -69,17 +60,17 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-results.sarif"
         continue-on-error: true
 
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         if: always() && github.repository_owner == github.actor
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: "trivy-results.sarif"
         continue-on-error: true
 
       - name: Upload Trivy results as artifact
@@ -109,11 +100,12 @@ jobs:
     name: Test Deployment
     runs-on: ubuntu-latest
     env:
-      HOSTNAME: test.local
+      HOST_NAME: test.local
       USER: testuser
       EMAIL: test@example.com
       PASSWORD: testpassword123
-      SUBDOMAIN: proxy
+      HOST_IP: 192.168.1.100
+      
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -124,25 +116,22 @@ jobs:
       - name: Test all services deployment
         run: |
           # Create test environment
-          echo "HOSTNAME=test.local" > .env
+          echo "HOST_NAME=test.local" > .env
           echo "USER=testuser" >> .env
           echo "EMAIL=test@example.com" >> .env
           echo "PASSWORD=testpassword123" >> .env
-          echo "SUBDOMAIN=proxy" >> .env
 
-          docker network create web
+          # Use compose.test.yaml to override problematic port bindings
+          docker compose -f compose.yaml -f compose.test.yaml up -d
+          sleep 15
+          docker compose -f compose.yaml -f compose.test.yaml ps
 
-          # Test each service quickly
-          services=("proxy" "monitoring" "n8n")
-          for service in "${services[@]}"; do
-            echo "Testing $service..."
-            cd "$service"
-            docker compose up -d
-            sleep 15
-            docker compose ps
-            docker compose down
-            cd ..
-          done
+          # Verify key services are running
+          docker compose -f compose.yaml -f compose.test.yaml exec -T traefik wget -q --spider http://localhost:8080/api/entrypoints || echo "Traefik API not ready"
+          docker compose -f compose.yaml -f compose.test.yaml exec -T grafana wget -q --spider http://localhost:3000/api/health || echo "Grafana not ready"
+          docker compose -f compose.yaml -f compose.test.yaml exec -T prometheus wget -q --spider http://localhost:9090/-/healthy || echo "Prometheus not ready"
+
+          docker compose -f compose.yaml -f compose.test.yaml down
 
   build-and-push:
     name: Build and Push Documentation
@@ -158,13 +147,9 @@ jobs:
       - name: Generate documentation
         run: |
           cat > docs.md << EOF
-          # pi-web Documentation
+          # pi-web build status
 
-          ## Services Validated
-          - ✅ All services deployment tested
-          - ✅ Security scan completed
-
-          Generated: $(date)
+          Last build: $(date)
           EOF
 
       - name: Deploy documentation to GitHub Pages
@@ -174,25 +159,3 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: .
           destination_dir: docs
-
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]')
-    needs: [lint, security, test-deployment]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Create Release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v$(date +'%Y.%m.%d')
-          release_name: Release v$(date +'%Y.%m.%d')
-          body: "Automated release with validated services"
-          draft: false
-          prerelease: false

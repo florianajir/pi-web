@@ -7,7 +7,7 @@ on:
     branches: [main]
   schedule:
     # Run weekly on Sundays at 2 AM UTC
-    - cron: '0 2 * * 0'
+    - cron: "0 2 * * 0"
 
 jobs:
   test-arm64:
@@ -30,12 +30,10 @@ jobs:
 
       - name: Create test environment
         run: |
-          echo "HOSTNAME=pi.test" > .env
+          echo "HOST_NAME=pi.test" > .env
           echo "USER=testuser" >> .env
           echo "EMAIL=test@example.com" >> .env
           echo "PASSWORD=testpass123" >> .env
-          echo "PROTOCOL=http" >> .env
-          echo "SUBDOMAIN=test" >> .env
 
       - name: Test multi-arch image compatibility
         run: |
@@ -51,25 +49,18 @@ jobs:
           # Test n8n ARM compatibility
           docker run --platform ${{ matrix.platform }} --rm n8nio/n8n:latest --version
 
+          # Test Pi Hole ARM compatibility
+          docker run --platform ${{ matrix.platform }} --rm pihole/pihole:latest --version
+
       - name: Build and test on ARM
         run: |
-          # Create network
-          docker network create web || true
-
-          # Test proxy service
-          cd proxy
+          # Create networks
+          docker network create monitoring || true
+          docker network create frontend || true
           docker compose build
 
-          # Test monitoring service
-          cd ../monitoring
-          docker compose build
-
-          # Test n8n service
-          cd ../n8n
-          docker compose build
-
-  validate-systemd:
-    name: Validate Systemd Services
+  install:
+    name: Validate install and systemd
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -80,23 +71,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y systemd
 
-      - name: Validate systemd service files
+      - name: Test Makefile install systemd
         run: |
-          # Check syntax of service files
-          sudo systemd-analyze verify etc/systemd/system/proxy.service
-          sudo systemd-analyze verify etc/systemd/system/monitoring.service
-          sudo systemd-analyze verify etc/systemd/system/n8n.service
-
-      - name: Test Makefile systemd commands
-        run: |
-          # Test that systemd-related make targets work
-          make help
-
-          # Simulate systemd installation (without actually installing)
-          echo "Testing systemd file installation paths..."
-          test -f etc/systemd/system/proxy.service
-          test -f etc/systemd/system/monitoring.service
-          test -f etc/systemd/system/n8n.service
+          make install
+          test -f /etc/systemd/system/pi-web.service
+          sudo systemd-analyze verify /etc/systemd/system/pi-web.service
+          test -f /etc/systemd/system/pi-web-restart.service
+          sudo systemd-analyze verify /etc/systemd/system/pi-web-restart.service
+          test -f /etc/systemd/system/pi-web-restart.timer
+          sudo systemd-analyze verify /etc/systemd/system/pi-web-restart.timer
 
   dependency-check:
     name: Check Dependencies
@@ -116,22 +99,3 @@ jobs:
 
           # Test git availability (for make update)
           git --version
-
-      - name: Simulate SOPS installation
-        run: |
-          # Download and test SOPS
-          wget https://github.com/mozilla/sops/releases/download/v3.8.1/sops-v3.8.1.linux.amd64
-          chmod +x sops-v3.8.1.linux.amd64
-          ./sops-v3.8.1.linux.amd64 --version
-
-      - name: Test age key generation
-        run: |
-          # Install age for testing
-          sudo apt-get update
-          sudo apt-get install -y age
-
-          # Generate test key
-          age-keygen -o test.key
-
-          # Test that age works
-          age --version

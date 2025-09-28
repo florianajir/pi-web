@@ -1,111 +1,71 @@
-.PHONY: help dependencies decrypt install_systemd install enable start stop restart update status setup-lint lint lint-fix
+################################################################################
+# Minimal Makefile for pi-web
+# Keeps only essential operational commands.
+################################################################################
 
-# Default target
+.PHONY: help install start stop restart update status logs preflight
+
+PROJECT_PATH := $(shell pwd)
+UNIT         := pi-web.service
+COMPOSE      := docker compose
+
 help:
-	@echo "Available commands:"
-	@echo "  dependencies       - Install required dependencies"
-	@echo "  decrypt            - Decrypt environment variables from .env.enc"
-	@echo "  install_systemd    - Install systemd service files"
-	@echo "  install            - Install dependencies, decrypt env, and setup systemd services"
-	@echo "  update             - Update the repository and restart services"
-	@echo "  enable             - Enable systemd services"
-	@echo "  start              - Start all systemd services"
-	@echo "  stop               - Stop all systemd services"
-	@echo "  restart            - Restart all systemd services"
-	@echo "  status             - Show the status of all systemd services"
-	@echo "  setup-lint         - Install yamllint for YAML validation"
-	@echo "  lint               - Run YAML and Docker Compose validation"
-	@echo "  lint-fix           - Auto-fix common YAML formatting issues"
-	@echo "  help               - Show this help message"
+	@echo "Commands:"
+	@echo "  install   Install & enable systemd unit"
+	@echo "  start     Start stack"
+	@echo "  stop      Stop stack"
+	@echo "  restart   Restart stack"
+	@echo "  status    Show systemd status"
+	@echo "  logs      Follow compose logs"
+	@echo "  update    Git pull + restart"
+	@echo "  preflight Quick env readiness check"
+	@echo "  help      This help"
 
-dependencies:
-	@echo "📦 Installing dependencies..."
-	sudo apt-get update
-	sudo apt-get install -y sops
-	@echo "✅ Dependencies installed"
+preflight:
+	@echo "🔍 Preflight...";
+	@if ! docker info >/dev/null 2>&1; then echo "❌ Docker not reachable"; exit 1; fi
+	@echo "✔ Docker OK"
+	@if mount | grep -q ' type cgroup2 '; then echo "✔ cgroup v2"; else echo "ℹ legacy cgroup"; fi
+	@if docker run --rm -m 32m busybox sh -c 'cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null' | grep -qE '33554432|32'; then echo "✔ memory limits enforced"; else echo "⚠ memory limits NOT enforced"; fi
+	@echo "Done"
 
-decrypt:
-	@echo "🔐 Decrypting environment variables..."
-	sops -d .env.enc > .env
-
-install_systemd:
-	@echo "📁 Installing system service..."
-	sudo cp etc/systemd/system/*.service /etc/systemd/system/
+install:
+	@echo "📦 Installing..."
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/pi-web.service > /tmp/$(UNIT)
+	sudo cp /tmp/$(UNIT) /etc/systemd/system/
+	sudo cp config/systemd/system/pi-web-restart.service /etc/systemd/system/
+	sudo cp config/systemd/system/pi-web-restart.timer /etc/systemd/system/
 	sudo systemctl daemon-reload
-	@echo "✅ systemd service files installed and daemon reloaded"
-
-install: dependencies decrypt install_systemd enable start
-
-enable:
-	@echo "🔧 Enabling..."
-	sudo systemctl enable monitoring.service
-	sudo systemctl enable n8n.service
-	sudo systemctl enable proxy.service
-	@echo "✅ All services enabled"
+	sudo systemctl enable $(UNIT)
+	@echo "✅ Installed"
 
 start:
-	@echo "🚀 Starting..."
-	sudo systemctl start proxy.service
-	sudo systemctl start monitoring.service
-	sudo systemctl start n8n.service
-	@echo "✅ All services started"
+	@echo "🚀 Start"
+	sudo systemctl start $(UNIT)
+	@echo "✅ Started"
 
 stop:
-	@echo "🛑 Stopping..."
-	sudo systemctl stop n8n.service
-	sudo systemctl stop monitoring.service
-	sudo systemctl stop proxy.service
-	@echo "✅ All services stopped"
+	@echo "🛑 Stop"
+	sudo systemctl stop $(UNIT)
+	@echo "✅ Stopped"
 
 restart:
-	@echo "🔄 Restarting..."
-	sudo systemctl restart proxy.service
-	sudo systemctl restart monitoring.service
-	sudo systemctl restart n8n.service
-	@echo "✅ All services restarted"
+	@echo "🔄 Restart"
+	sudo systemctl restart $(UNIT)
+	@echo "✅ Restarted"
 
 update:
-	@echo "🔄 Updating..."
-	git pull
-	make install_systemd
-	make restart
-	@echo "✅ Services updated and restarted"
+	@echo "🔄 Update (git pull + restart)"
+	@git pull --ff-only
+	$(MAKE) restart
+	@echo "✅ Update complete"
 
 status:
-	@echo "📊 Status:"
-	sudo systemctl status proxy.service --no-pager -l
-	sudo systemctl status monitoring.service --no-pager -l
-	sudo systemctl status n8n.service --no-pager -l
+	@echo "📊 Status"
+	sudo systemctl status $(UNIT) --no-pager -l
 
-setup-lint:
-	@echo "🔧 Installing YAML linting tools..."
-	sudo apt update && sudo apt install -y yamllint
-	@echo "✅ YAML linting tools installed successfully"
+logs:
+	@echo "📝 Logs (Ctrl+C to exit)"
+	$(COMPOSE) logs -f --tail=100
 
-lint:
-	@echo "🔍 Running validation checks..."
-	@echo "Checking YAML files..."
-	@if command -v yamllint >/dev/null 2>&1; then \
-		yamllint -c .yamllint */compose.yaml .github/workflows/*.yml || true; \
-	else \
-		echo "installing yamllint..."; \
-		sudo apt-get update \
-		sudo apt-get install -y yamllint \
-		yamllint -c .yamllint */compose.yaml .github/workflows/*.yml || true; \
-	fi
-	@echo "Checking Docker Compose files..."
-	@for file in */compose.yaml; do \
-		echo "Validating $$file..."; \
-		docker compose -f "$$file" config >/dev/null 2>&1 && echo "✅ $$file is valid" || echo "❌ $$file has issues"; \
-	done
-	@echo "✅ Validation completed"
-
-lint-fix:
-	@echo "🔧 Fixing common YAML formatting issues..."
-	@echo "Removing trailing spaces..."
-	@sed -i 's/[[:space:]]*$$//' */compose.yaml 2>/dev/null || true
-	@sed -i 's/[[:space:]]*$$//' .github/workflows/*.yml 2>/dev/null || true
-	@echo "Fixing bracket spacing..."
-	@sed -i 's/\[ */[/g; s/ *\]/]/g' .github/workflows/*.yml 2>/dev/null || true
-	@echo "✅ YAML formatting fixes applied"
-	@echo "Run 'make lint' to check for remaining issues"

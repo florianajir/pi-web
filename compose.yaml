@@ -1,0 +1,587 @@
+services:
+  watchtower:
+    image: containrrr/watchtower:1.7.1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_SCHEDULE=0 0 3 * * *
+      - WATCHTOWER_NO_RESTART=true
+      - TZ=${TIMEZONE}
+    restart: unless-stopped
+
+  traefik:
+    image: traefik:v3.4
+    container_name: pi-traefik
+    hostname: pi-traefik
+    restart: always
+    command:
+      - "--log.level=INFO"
+      - "--api.dashboard=true"
+      # Entry Points
+      - "--entrypoints.web.address=:80/tcp"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443/tcp"
+      - "--entrypoints.websecure.http.middlewares=compress@docker,hsts@docker"
+      - "--entrypoints.websecure.http3=true"
+      # Providers
+      - "--providers.docker=true"
+      - "--providers.docker.watch=true"
+      - "--providers.docker.network=frontend"
+      - "--providers.docker.exposedbydefault=false"
+      # Servers Transport
+      - "--serversTransport.insecureSkipVerify=true" # corrected flag name for v3
+      # (Removed invalid top-level --tls.options.* flags for v3; define via dynamic file if needed)
+    labels:
+      - "com.example.description=Traefik reverse proxy"
+      - "com.example.service=traefik"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      # Middlewares definitions
+      - "traefik.http.middlewares.compress.compress=true"
+      - "traefik.http.middlewares.hsts.headers.stsSeconds=2592000"
+      # - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-192.168.1.0/24}"
+      # Traefik Dashboard Router
+      # - "traefik.http.routers.traefik.middlewares=lan@docker"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.tls=true"
+      - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+    ports:
+      - "80:80"
+      - "443:443"
+    expose:
+      - 8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
+
+  # Monitoring Stack
+  grafana:
+    container_name: pi-grafana
+    image: grafana/grafana-oss:11.1.0
+    hostname: pi-grafana
+    restart: unless-stopped
+    networks:
+      - monitoring
+      - frontend
+    expose:
+      - 3000
+    env_file:
+      - ./config/grafana/.env
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    healthcheck:
+      test:
+        ["CMD", "wget", "-O", "/dev/null", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "com.example.description=Grafana dashboard monitoring"
+      - "com.example.service=grafana"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls=true"
+      # - "traefik.http.routers.grafana.middlewares=lan"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      - GF_DEFAULT_INSTANCE_NAME=${HOST_NAME:-pi.lan}
+      - GF_SECURITY_ADMIN_EMAIL=${EMAIL:-admin@example.com}
+      - GF_SECURITY_ADMIN_USER=${USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${PASSWORD:-admin}
+      - GF_SERVER_ROOT_URL=https://grafana.${HOST_NAME:-pi.lan}/
+    mem_limit: 512m
+
+  prometheus:
+    container_name: pi-prometheus
+    image: prom/prometheus:v2.51.0
+    hostname: pi-prometheus
+    restart: unless-stopped
+    user: "nobody"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=1y"
+      - "--storage.tsdb.retention.size=10GB"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    networks:
+      - monitoring
+      - frontend
+    expose:
+      - 9090
+    volumes:
+      - prometheus-data:/prometheus
+      - ./config/prometheus:/etc/prometheus/
+    depends_on:
+      - cadvisor
+      - node-exporter
+    healthcheck:
+      test:
+        ["CMD", "wget", "-O", "/dev/null", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "com.example.description=Prometheus Time Series Database"
+      - "com.example.service=prometheus"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.prometheus.entrypoints=websecure"
+      - "traefik.http.routers.prometheus.tls=true"
+      # - "traefik.http.routers.prometheus.middlewares=lan"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 1g
+
+  cadvisor:
+    container_name: pi-cadvisor
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    hostname: pi-cadvisor
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN
+    networks:
+      - monitoring
+      - frontend
+    expose:
+      - 9091
+    command:
+      - "--housekeeping_interval=15s"
+      - "--docker_only=true"
+      - "--store_container_labels=false"
+      - "--port=9091"
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+      - /etc/machine-id:/etc/machine-id:ro
+    healthcheck:
+      test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "com.example.description=cAdvisor container monitoring"
+      - "com.example.service=cadvisor"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
+
+  node-exporter:
+    container_name: pi-node-exporter
+    image: prom/node-exporter:v1.7.0
+    hostname: pi-node-exporter
+    restart: unless-stopped
+    networks:
+      - monitoring
+    expose:
+      - 9100
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host
+      - --collector.filesystem.ignored-mount-points
+      - ^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - /:/host:ro,rslave
+    healthcheck:
+      test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:9100/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "com.example.description=Node Exporter (monitoring)"
+      - "com.example.service=node-exporter"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 128m
+
+  pihole:
+    container_name: pi-pihole
+    image: pihole/pihole:latest
+    hostname: pi-pihole
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+    expose:
+      - 53
+      - 8082
+    # Pi-hole expects to start some components as root then drop privileges. Remove forced user.
+    environment:
+      TZ: ${TIMEZONE:-Europe/Paris}
+      FTLCONF_webserver_api_password: ${PASSWORD:-admin}
+      FTLCONF_dns_listeningMode: "all"
+      FTLCONF_dns_upstreams: "1.1.1.1;8.8.8.8"
+      # Wildcard all hosts under HOST_NAME to the host (Traefik) IP. Pi-hole still keeps its own macvlan IP (IP var).
+      FTLCONF_misc_dnsmasq_lines: "address=/${HOST_NAME:-pi.lan}/${HOST_IP:-192.168.1.30}"
+      FTLCONF_webserver_port: 8082
+      # DHCP configuration
+      FTLCONF_dhcp_active: ${DHCP_ACTIVE:-false}
+      FTLCONF_dhcp_start: ${DHCP_START:-192.168.1.100}
+      FTLCONF_dhcp_end: ${DHCP_END:-192.168.1.150}
+      FTLCONF_dhcp_router: ${DHCP_ROUTER:-192.168.1.1}
+      FTLCONF_dhcp_leasetime: ${DHCP_LEASE_TIME:-24}
+      FTLCONF_dhcp_ipv6: "false"
+      FTLCONF_dhcp_rapidCommit: "true"
+      FTLCONF_dns_domain: ${HOST_NAME:-pi.lan}
+    volumes:
+      - pihole_data:/etc/pihole
+      - ./config/pihole/dnsmasq.d:/etc/dnsmasq.d
+    networks:
+      frontend: {}
+      lan:
+        ipv4_address: ${PIHOLE_IP:-192.168.1.29}
+    labels:
+      - "com.example.description=Pi-hole DNS Ad-Blocker"
+      - "com.example.service=pihole"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.pihole.rule=Host(`pihole.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.pihole.entrypoints=websecure"
+      - "traefik.http.routers.pihole.tls=true"
+      # - "traefik.http.routers.pihole.middlewares=lan"
+      - "traefik.http.services.pihole.loadbalancer.server.port=8082"
+    healthcheck:
+      test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 512m
+
+  n8n:
+    container_name: pi-n8n
+    image: n8nio/n8n:1.50.0
+    hostname: pi-n8n
+    restart: unless-stopped
+    expose:
+      - 5678
+    labels:
+      - "com.example.description=n8n workflow automation"
+      - "com.example.service=n8n"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.n8n.rule=Host(`n8n.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.n8n.entrypoints=websecure"
+      - "traefik.http.routers.n8n.tls=true"
+      - "traefik.http.routers.n8n.middlewares=n8n@docker"
+      - "traefik.http.middlewares.n8n.headers.SSLRedirect=true"
+      - "traefik.http.middlewares.n8n.headers.STSSeconds=315360000"
+      - "traefik.http.middlewares.n8n.headers.browserXSSFilter=true"
+      - "traefik.http.middlewares.n8n.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.n8n.headers.forceSTSHeader=true"
+      - "traefik.http.middlewares.n8n.headers.SSLHost=${HOST_NAME:-pi.lan}"
+      - "traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true"
+      - "traefik.http.middlewares.n8n.headers.STSPreload=true"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+    environment:
+      - N8N_HOST=${N8N_HOST:-n8n.${HOST_NAME:-pi.lan}}
+      - N8N_PORT=${N8N_PORT:-5678}
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-https}
+      - NODE_ENV=${NODE_ENV:-production}
+      - WEBHOOK_URL=${WEBHOOK_URL:-https://n8n.${HOST_NAME:-pi.lan}/}
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-${TIMEZONE:-Europe/Paris}}
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - N8N_RUNNERS_ENABLED=${N8N_RUNNERS_ENABLED:-true}
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=${N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS:-true}
+      - DB_TYPE=${DB_TYPE:-sqlite}
+      - DB_SQLITE_POOL_SIZE=${DB_SQLITE_POOL_SIZE:-2}
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=${N8N_BLOCK_ENV_ACCESS_IN_NODE:-false}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./data/n8n/files:/files
+    networks:
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      - traefik
+    healthcheck:
+      # n8n listens internally on plain HTTP. Use explicit IPv4 loopback to avoid IPv6 (::1) resolution issues.
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:5678/healthz",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    mem_limit: 512m
+
+  # Productivity Stack
+  nextcloud:
+    container_name: pi-nextcloud
+    image: nextcloud:28-apache
+    hostname: pi-nextcloud
+    restart: unless-stopped
+    environment:
+      - NEXTCLOUD_ADMIN_USER=${USER:-admin}
+      - NEXTCLOUD_ADMIN_PASSWORD=${PASSWORD:-admin}
+      - NEXTCLOUD_ADMIN_EMAIL=${EMAIL:-admin@example.com}
+      - NEXTCLOUD_TRUSTED_DOMAINS=nextcloud.${HOST_NAME:-pi.lan}
+      - NEXTCLOUD_DATA_DIR=/var/www/html/data
+      - OVERWRITEHOST=nextcloud.${HOST_NAME:-pi.lan}
+      - OVERWRITEPROTOCOL=https
+      - TRUSTED_PROXIES=${NEXTCLOUD_TRUSTED_PROXIES:-172.30.11.0/24}
+      - MYSQL_HOST=nextcloud-db
+      - MYSQL_DATABASE=${NEXTCLOUD_DB_NAME:-nextcloud}
+      - MYSQL_USER=${NEXTCLOUD_DB_USER:-pi-web}
+      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-pi-web}
+      - REDIS_HOST=nextcloud-redis
+    volumes:
+      - nextcloud_data:/var/www/html
+    networks:
+      - frontend
+      - nextcloud
+    labels:
+      - "com.example.description=Nextcloud self-hosted storage"
+      - "com.example.service=nextcloud"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.nextcloud.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud.tls=true"
+      - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/status.php"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      - nextcloud-db
+      - nextcloud-redis
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 1g
+
+  nextcloud-db:
+    container_name: pi-nextcloud-db
+    image: mariadb:11.4
+    hostname: pi-nextcloud-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${NEXTCLOUD_DB_ROOT_PASSWORD:-pi-web-root}
+      - MYSQL_DATABASE=${NEXTCLOUD_DB_NAME:-nextcloud}
+      # Use same default user as Nextcloud app service to avoid mismatch after wiping volume
+      - MYSQL_USER=${NEXTCLOUD_DB_USER:-nextcloud}
+      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-pi-web}
+    volumes:
+      - nextcloud_db:/var/lib/mysql
+    networks:
+      - nextcloud
+    healthcheck:
+      # SQL-level readiness check using root credentials (env-substituted at compose render time).
+      # Uses a simple SELECT 1 which will fail until the server completed initialization.
+      test:
+        [
+          "CMD",
+          "mariadb",
+          "-uroot",
+          "-p${NEXTCLOUD_DB_ROOT_PASSWORD:-pi-web-root}",
+          "-e",
+          "SELECT 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 512m
+
+  nextcloud-redis:
+    container_name: pi-nextcloud-redis
+    image: redis:7-alpine
+    hostname: pi-nextcloud-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - nextcloud
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 128m
+
+  # Connectivity Stack
+  wireguard:
+    container_name: pi-wireguard
+    image: linuxserver/wireguard:latest
+    hostname: pi-wireguard
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - SERVERURL=${WIREGUARD_SERVER_URL:-pi.lan}
+      - SERVERPORT=${WIREGUARD_SERVER_PORT:-51820}
+      - PEERS=${WIREGUARD_PEERS:-5}
+      - PEERDNS=${WIREGUARD_PEER_DNS:-192.168.1.29}
+      - INTERNAL_SUBNET=${WIREGUARD_INTERNAL_SUBNET:-10.13.13.0/24}
+      - ALLOWEDIPS=${WIREGUARD_ALLOWED_IPS:-0.0.0.0/0,::/0}
+      - LOG_CONFS=true
+    volumes:
+      - wireguard_config:/config
+      - /lib/modules:/lib/modules:ro
+    ports:
+      - "${WIREGUARD_SERVER_PORT:-51820}:51820/udp"
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    healthcheck:
+      test: ["CMD", "bash", "-c", "wg show wg0 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
+
+volumes:
+  grafana-data:
+    labels:
+      - "com.example.description=Grafana Persistent Data"
+      - "com.example.service=monitoring"
+  prometheus-data:
+    labels:
+      - "com.example.description=Prometheus Persistent Data"
+      - "com.example.service=monitoring"
+  pihole_data:
+    labels:
+      - "com.example.description=Pi-hole Configuration Data"
+      - "com.example.service=dns"
+  n8n_data:
+    labels:
+      - "com.example.description=n8n Persistent Data"
+      - "com.example.service=automation"
+  nextcloud_data:
+    labels:
+      - "com.example.description=Nextcloud Application Data"
+      - "com.example.service=cloud"
+  nextcloud_db:
+    labels:
+      - "com.example.description=Nextcloud Database Data"
+      - "com.example.service=cloud"
+  wireguard_config:
+    labels:
+      - "com.example.description=WireGuard Persistent Config"
+      - "com.example.service=vpn"
+
+networks:
+  monitoring:
+    driver: bridge
+    # Force stable docker network name (avoid project prefix)
+    # so traefik --providers.docker.network lookups remain consistent
+    name: monitoring
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.10.0/24
+          gateway: 172.30.10.1
+    labels:
+      - "com.example.description=Internal Monitoring Network"
+      - "com.example.service=monitoring"
+  frontend:
+    driver: bridge
+    # Force stable docker network name to match traefik provider config
+    name: frontend
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.11.0/24
+          gateway: 172.30.11.1
+    labels:
+      - "com.example.description=External Web Network"
+      - "com.example.service=proxy"
+  lan:
+    driver: macvlan
+    driver_opts:
+      parent: ${LAN_PARENT:-eth0}
+    ipam:
+      driver: default
+      config:
+        - subnet: ${LAN_SUBNET:-192.168.1.0/24}
+          gateway: ${LAN_GATEWAY:-192.168.1.1}
+    labels:
+      - "com.example.description=Physical LAN macvlan for DHCP"
+      - "com.example.service=network"
+  nextcloud:
+    driver: bridge
+    internal: true
+    labels:
+      - "com.example.description=Nextcloud internal network"
+      - "com.example.service=cloud"
