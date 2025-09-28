@@ -170,7 +170,7 @@ If any of these were previously committed, rotate them immediately:
 4. Recreate `wg0.conf` from templates and restart the WireGuard service.
 5. Distribute new peer configs via a secure channel (vault, encrypted message) – never by committing them.
 
-Templates under `data/wireguard/config/templates/` are the only WireGuard files that should be versioned; they reference secrets at runtime via subshell reads so that no raw key material lives inside git.
+No WireGuard config templates are tracked anymore; all peer/server configuration is managed directly within the container and sensitive material stays out of git.
 
 ##### Adding a New WireGuard Peer (Manual)
 

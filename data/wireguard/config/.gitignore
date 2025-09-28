@@ -20,10 +20,11 @@ peer*.png
 # Aggregated runtime config directory
 wg_confs/
 
+# Original environment snapshot file created by container
+.donoteditthisfile
+
 # Allow tracked templates
-!templates/
-!templates/peer.conf
-!templates/server.conf
+# (Templates removed; section retained for historical clarity)
 
 # Keep this file
 !.gitignore
