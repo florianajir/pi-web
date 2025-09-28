@@ -1,6 +1,7 @@
 {
 	"cSpell.words": [
 		"ALLOWEDIPS",
+		"appendonly",
 		"aufs",
 		"basicauth",
 		"cadvisor",
@@ -10,6 +11,7 @@
 		"cloudflare",
 		"CONFS",
 		"containrrr",
+		"coredns",
 		"datasource",
 		"dnsmasq",
 		"DNSSEC",
@@ -23,6 +25,7 @@
 		"ipallowlist",
 		"journalctl",
 		"kmsg",
+		"leasetime",
 		"letsencrypt",
 		"loadbalancer",
 		"macvlan",
@@ -32,6 +35,8 @@
 		"Nosniff",
 		"nslookup",
 		"oneshot",
+		"OVERWRITEHOST",
+		"OVERWRITEPROTOCOL",
 		"PEERDNS",
 		"PERSISTENTKEEPALIVE",
 		"PGID",

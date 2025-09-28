@@ -1,30 +1,14 @@
 ###############################
 # WireGuard Config Ignore File
-# Keeps secrets & generated artifacts out of git.
 ###############################
 
-# Key material & preshared keys
-privatekey*
-publickey*
-presharedkey*
-*/privatekey*
-*/publickey*
-*/presharedkey*
+# 1. Ignore everything in this directory
+*
+*/
 
-# Per-peer client configs & exported QR codes
-peer*.conf
-peer*.png
-*/peer*.conf
-*/peer*.png
-
-# Aggregated runtime config directory
-wg_confs/
-
-# Original environment snapshot file created by container
-.donoteditthisfile
-
-# Allow tracked templates
-# (Templates removed; section retained for historical clarity)
-
-# Keep this file
+# 2. Whitelist .gitignore so this rule set is kept
 !.gitignore
+
+# 3. Whitelist the coredns directory and all its contents
+!coredns/
+!coredns/**

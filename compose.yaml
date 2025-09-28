@@ -363,7 +363,7 @@ services:
       - MYSQL_HOST=nextcloud-db
       - MYSQL_DATABASE=${NEXTCLOUD_DB_NAME:-nextcloud}
       - MYSQL_USER=${NEXTCLOUD_DB_USER:-nextcloud}
-      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-changeme}
+      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-pi-web}
       - REDIS_HOST=nextcloud-redis
     volumes:
       - nextcloud_data:/var/www/html
@@ -401,10 +401,10 @@ services:
     hostname: pi-nextcloud-db
     restart: unless-stopped
     environment:
-      - MYSQL_ROOT_PASSWORD=${NEXTCLOUD_DB_ROOT_PASSWORD:-changeme}
+      - MYSQL_ROOT_PASSWORD=${NEXTCLOUD_DB_ROOT_PASSWORD:-pi-web-root}
       - MYSQL_DATABASE=${NEXTCLOUD_DB_NAME:-nextcloud}
-      - MYSQL_USER=${NEXTCLOUD_DB_USER:-nextcloud}
-      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-changeme}
+      - MYSQL_USER=${NEXTCLOUD_DB_USER:-pi-web}
+      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-pi-web}
     volumes:
       - nextcloud_db:/var/lib/mysql
     networks:
@@ -416,7 +416,7 @@ services:
           "mariadb",
           "-u",
           "root",
-          "-p${NEXTCLOUD_DB_ROOT_PASSWORD:-changeme}",
+          "-p${NEXTCLOUD_DB_ROOT_PASSWORD:-pi-web-root}",
           "-e",
           "SELECT 1",
         ]
@@ -453,7 +453,7 @@ services:
   # Connectivity Stack
   wireguard:
     container_name: pi-wireguard
-    image: lscr.io/linuxserver/wireguard:latest
+    image: linuxserver/wireguard:latest
     hostname: pi-wireguard
     restart: unless-stopped
     cap_add:

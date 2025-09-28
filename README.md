@@ -130,7 +130,7 @@ Domain convention: `<service>.${HOST_NAME}`. Override by changing `HOST_NAME` (e
 | HOST_NAME | Base internal domain suffix |
 | TIMEZONE | TZ for logs & scheduling |
 | EMAIL | Admin contact / Nextcloud & Grafana bootstrap |
-| USER / PASSWORD | Initial admin creds (rotate after bootstrap) |
+| USER / PASSWORD | Initial admin credentials (rotate after bootstrap) |
 | PUID / PGID | Filesystem UID/GID mapping for compatible images |
 | ALLOW_IP_RANGES | Optional IP allowlist (Traefik middleware) |
 
