@@ -65,5 +65,6 @@ Single Docker Compose file (`compose.yaml`) plus a tiny CI overlay (`compose.tes
 ### 9. PR Expectations
 - Keep diffs minimal & scoped. Provide a short rationale (purpose + exposure + metrics) in PR description.
 - No sweeping reformatting or dependency “cleanup” PRs.
+- Avoid adding narrative or redundant inline comments that merely describe the change (the diff is sufficient). Only introduce or retain comments that convey lasting operational, architectural, or configuration intent.
 
 Questions / unclear areas? Open an issue or request clarifications—update this file after consensus.

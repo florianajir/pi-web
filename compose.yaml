@@ -1,6 +1,6 @@
 services:
   watchtower:
-    image: containrrr/watchtower:latest
+    image: containrrr/watchtower:1.7.1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -68,7 +68,7 @@ services:
   # Monitoring Stack
   grafana:
     container_name: pi-grafana
-    image: grafana/grafana-oss:latest
+    image: grafana/grafana-oss:11.1.0
     hostname: pi-grafana
     restart: unless-stopped
     networks:
@@ -115,7 +115,7 @@ services:
 
   prometheus:
     container_name: pi-prometheus
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.51.0
     hostname: pi-prometheus
     restart: unless-stopped
     user: "nobody"
@@ -163,7 +163,7 @@ services:
 
   cadvisor:
     container_name: pi-cadvisor
-    image: gcr.io/cadvisor/cadvisor:latest
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
     hostname: pi-cadvisor
     restart: unless-stopped
     cap_add:
@@ -174,10 +174,10 @@ services:
     expose:
       - 9091
     command:
-      - "-housekeeping_interval=15s"
-      - "-docker_only=true"
-      - "-store_container_labels=false"
-      - "-port=9091"
+      - "--housekeeping_interval=15s"
+      - "--docker_only=true"
+      - "--store_container_labels=false"
+      - "--port=9091"
     devices:
       - /dev/kmsg
     volumes:
@@ -204,7 +204,7 @@ services:
 
   node-exporter:
     container_name: pi-node-exporter
-    image: prom/node-exporter:latest
+    image: prom/node-exporter:v1.7.0
     hostname: pi-node-exporter
     restart: unless-stopped
     networks:
@@ -244,6 +244,7 @@ services:
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
+      - SYS_NICE
     expose:
       - 53
       - 8082
@@ -264,8 +265,7 @@ services:
       FTLCONF_dhcp_leasetime: ${DHCP_LEASE_TIME:-24}
       FTLCONF_dhcp_ipv6: "false"
       FTLCONF_dhcp_rapidCommit: "true"
-      FTLCONF_dhcp_announce: "true"
-      FTLCONF_dhcp_domain: ${HOST_NAME:-pi.lan}
+      FTLCONF_dns_domain: ${HOST_NAME:-pi.lan}
     volumes:
       - pihole_data:/etc/pihole
       - ./config/pihole/dnsmasq.d:/etc/dnsmasq.d
@@ -298,7 +298,7 @@ services:
 
   n8n:
     container_name: pi-n8n
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:1.50.0
     hostname: pi-n8n
     restart: unless-stopped
     expose:
@@ -322,15 +322,18 @@ services:
       - "traefik.http.middlewares.n8n.headers.STSPreload=true"
       - "traefik.http.services.n8n.loadbalancer.server.port=5678"
     environment:
-      - N8N_HOST=n8n.${HOST_NAME:-pi.lan}
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=https
-      - NODE_ENV=production
-      - WEBHOOK_URL=https://n8n.${HOST_NAME:-pi.lan}/
-      - GENERIC_TIMEZONE=${TIMEZONE:-Europe/Paris}
+      - N8N_HOST=${N8N_HOST:-n8n.${HOST_NAME:-pi.lan}}
+      - N8N_PORT=${N8N_PORT:-5678}
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-https}
+      - NODE_ENV=${NODE_ENV:-production}
+      - WEBHOOK_URL=${WEBHOOK_URL:-https://n8n.${HOST_NAME:-pi.lan}/}
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-${TIMEZONE:-Europe/Paris}}
       - TZ=${TIMEZONE:-Europe/Paris}
-      - N8N_RUNNERS_ENABLED=true
-      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - N8N_RUNNERS_ENABLED=${N8N_RUNNERS_ENABLED:-true}
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=${N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS:-true}
+      - DB_TYPE=${DB_TYPE:-sqlite}
+      - DB_SQLITE_POOL_SIZE=${DB_SQLITE_POOL_SIZE:-2}
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=${N8N_BLOCK_ENV_ACCESS_IN_NODE:-false}
     volumes:
       - n8n_data:/home/node/.n8n
       - ./data/n8n/files:/files
@@ -343,6 +346,21 @@ services:
         max-file: "3"
     depends_on:
       - traefik
+    healthcheck:
+      # n8n listens internally on plain HTTP. Use explicit IPv4 loopback to avoid IPv6 (::1) resolution issues.
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:5678/healthz",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     mem_limit: 512m
 
   # Productivity Stack
@@ -362,7 +380,7 @@ services:
       - TRUSTED_PROXIES=${NEXTCLOUD_TRUSTED_PROXIES:-172.30.11.0/24}
       - MYSQL_HOST=nextcloud-db
       - MYSQL_DATABASE=${NEXTCLOUD_DB_NAME:-nextcloud}
-      - MYSQL_USER=${NEXTCLOUD_DB_USER:-nextcloud}
+      - MYSQL_USER=${NEXTCLOUD_DB_USER:-pi-web}
       - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-pi-web}
       - REDIS_HOST=nextcloud-redis
     volumes:
@@ -403,19 +421,21 @@ services:
     environment:
       - MYSQL_ROOT_PASSWORD=${NEXTCLOUD_DB_ROOT_PASSWORD:-pi-web-root}
       - MYSQL_DATABASE=${NEXTCLOUD_DB_NAME:-nextcloud}
-      - MYSQL_USER=${NEXTCLOUD_DB_USER:-pi-web}
+      # Use same default user as Nextcloud app service to avoid mismatch after wiping volume
+      - MYSQL_USER=${NEXTCLOUD_DB_USER:-nextcloud}
       - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-pi-web}
     volumes:
       - nextcloud_db:/var/lib/mysql
     networks:
       - nextcloud
     healthcheck:
+      # SQL-level readiness check using root credentials (env-substituted at compose render time).
+      # Uses a simple SELECT 1 which will fail until the server completed initialization.
       test:
         [
           "CMD",
           "mariadb",
-          "-u",
-          "root",
+          "-uroot",
           "-p${NEXTCLOUD_DB_ROOT_PASSWORD:-pi-web-root}",
           "-e",
           "SELECT 1",
@@ -423,6 +443,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 40s
     logging:
       driver: "json-file"
       options:
@@ -537,7 +558,6 @@ networks:
   frontend:
     driver: bridge
     # Force stable docker network name to match traefik provider config
-    # (was resolving to <project>_frontend)
     name: frontend
     ipam:
       driver: default

@@ -44,3 +44,4 @@
 - PRs must link issues, summarize stack impact, and attach evidence (`docker compose config`, screenshots of dashboards, or log snippets).
 - Replace TODOs with issue references; document remaining risks in the PR body.
 - Request review when the stack runs via `make status` and `docker compose ps` without errors.
+- Do NOT add inline “explanatory” comments whose only purpose is to restate what the diff already shows (e.g. `# updated memory limit`). Only keep comments that provide enduring operational or configuration context.
