@@ -66,6 +66,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Create minimal .env for install
+        run: |
+          # The Makefile install target hard-fails if .env is absent.
+          # Provide just the required baseline variables for template rendering.
+          cat > .env <<'EOF'
+          HOST_NAME=ci.test
+          USER=testuser
+          PASSWORD=testpassword123
+          EMAIL=test@example.com
+          TIMEZONE=UTC
+          EOF
+
       - name: Install systemd
         run: |
           sudo apt-get update

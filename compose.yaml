@@ -14,7 +14,7 @@ services:
     image: traefik:v3.4
     container_name: pi-traefik
     hostname: pi-traefik
-    restart: always
+    restart: unless-stopped
     command:
       - "--log.level=INFO"
       - "--api.dashboard=true"
