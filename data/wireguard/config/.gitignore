@@ -1,0 +1,29 @@
+###############################
+# WireGuard Config Ignore File
+# Keeps secrets & generated artifacts out of git.
+###############################
+
+# Key material & preshared keys
+privatekey*
+publickey*
+presharedkey*
+*/privatekey*
+*/publickey*
+*/presharedkey*
+
+# Per-peer client configs & exported QR codes
+peer*.conf
+peer*.png
+*/peer*.conf
+*/peer*.png
+
+# Aggregated runtime config directory
+wg_confs/
+
+# Allow tracked templates
+!templates/
+!templates/peer.conf
+!templates/server.conf
+
+# Keep this file
+!.gitignore
