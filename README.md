@@ -4,248 +4,337 @@
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docker.com/)
 [![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Compatible-red.svg)](https://www.raspberrypi.org/)
 
-Turn your Raspberry Pi into a self-hosted infrastructure with vpn, ad-blocker dns, monitoring and workflow automation.
+Turn your Raspberry Pi into a compact self‑hosted platform: VPN, DNS-level ad blocking, reverse proxy with TLS, file sync, automation, and full monitoring — all declaratively managed with one `docker compose` stack.
 
-## 🏗️ Architecture
+---
 
-### Stack Components
+## Table of Contents
+- [Overview & Goals](#overview--goals)
+- [Architecture](#architecture)
+- [Feature Matrix](#feature-matrix)
+- [Hardware & Prerequisites](#hardware--prerequisites)
+- [Quick Start](#quick-start)
+- [Directory Layout](#directory-layout)
+- [Configuration Model](#configuration-model)
+- [Service Deep Dive](#service-deep-dive)
+- [Operations (Make Targets)](#operations-make-targets)
+- [Monitoring & Observability](#monitoring--observability)
+- [Security & Hardening](#security--hardening)
+- [Backups & Recovery](#backups--recovery)
+- [Updating & Upgrading](#updating--upgrading)
+- [Adding a New Service](#adding-a-new-service)
+- [Troubleshooting](#troubleshooting)
+- [FAQ](#faq)
+- [Contributing](#contributing)
+- [License & Acknowledgments](#license--acknowledgments)
 
-- **VPN**: WireGuard routes remote clients through Pi-hole DNS for LAN-safe browsing
-- **DNS + Ad-blocker**: Pi-Hole
-- **Reverse Proxy**: Traefik handles routing, SSL certificates, and service discovery
-- **Monitoring**: Complete observability with Grafana dashboards, Prometheus metrics, and system monitoring
-- **Automation**: n8n provides visual workflow automation for connecting various services
-- **Cloud Storage**: Nextcloud offers self-hosted file sync and sharing with calendar/contacts support
+---
 
-### Services Included
+## Overview & Goals
+Provide a reliable, reproducible, low‑touch self‑hosting baseline optimized for constrained ARM boards (Raspberry Pi). Core design principles:
+- Single source of truth (`compose.yaml` + `.env`)
+- Minimum privileged exposure (only required host ports published)
+- Memory limits everywhere to prevent host exhaustion
+- Static, explicit monitoring targets (no surprise discovery)
+- Easy rollback (git + volumes)
 
-| Service | Purpose | Access |
-|---------|---------|--------|
-| **Traefik** | Reverse proxy with SSL termination | `traefik.pi.lan` |
-| **n8n** | Workflow automation platform | `n8n.pi.lan` |
-| **Grafana** | Analytics and monitoring dashboards | `grafana.pi.lan` |
-| **Prometheus** | Metrics collection and storage | `prometheus.pi.lan` |
-| **cAdvisor** | Container resource monitoring | Internal |
-| **Node Exporter** | System metrics collection | Internal |
-| **Nextcloud** | Private file sync and collaboration | `nextcloud.pi.lan` |
-| **WireGuard** | VPN server | `pi.lan:51820` |
-| **Pi Hole** | DNS server + Ad-Blocker | `pihole.pi.lan` (dashboard), `pi.lan:53` (DNS) |
+## Architecture
 
-## 🚀 Quick Start
+Logical groups:
+- Edge: Traefik (HTTPS termination, routing)
+- Connectivity: WireGuard (remote VPN), Pi-hole (DNS, optional DHCP)
+- Productivity: Nextcloud, n8n
+- Monitoring: Prometheus, Grafana, cAdvisor, Node Exporter
+- Maintenance: Watchtower (optional image housekeeping)
 
-### Prerequisites
+Network layout:
+- `frontend` (bridge) – Public HTTP(S) routed services
+- `monitoring` (bridge) – Internal scrape network
+- `lan` (macvlan) – Pi-hole obtains a LAN IP for DHCP/DNS
+- `nextcloud` (internal bridge) – App ↔ DB/Redis isolation
 
-- Docker and Docker Compose installed
+Data persistence via named volumes (e.g. `nextcloud_data`, `prometheus-data`, `wireguard_config`).
 
-#### (Recommended) Enable cgroup memory & cpuset controllers
+## Feature Matrix
+| Capability | Implemented | Notes |
+|------------|-------------|-------|
+| Reverse proxy & TLS | ✔ | Traefik v3 (HTTP→HTTPS redirect) |
+| VPN remote access | ✔ | WireGuard (auto peers) |
+| DNS filtering | ✔ | Pi-hole (macvlan) |
+| File sync & collaboration | ✔ | Nextcloud 28-apache |
+| Automation workflows | ✔ | n8n |
+| Metrics & dashboards | ✔ | Prometheus + Grafana provisioning |
+| Container metrics | ✔ | cAdvisor + Node Exporter |
+| Automatic image updates | ✔ | Watchtower (no auto restarts) |
+| Memory safeguarding | ✔ | `mem_limit` on each container |
 
-The stack sets `mem_limit` for every container to protect your Raspberry Pi from memory exhaustion. If you see warnings like:
+## Hardware & Prerequisites
+Minimum tested baseline: Raspberry Pi 4 (4GB RAM) + 32GB SD (or SSD). Recommended: SSD storage and 4GB+ RAM.
 
-```
-Your kernel does not support memory limit capabilities or the cgroup is not mounted. Limitation discarded.
-```
+Requirements:
+- Linux with Docker & Docker Compose plugin
+- Outbound internet for image pulls
+- (Optional) Control of LAN DNS or ability to edit `/etc/hosts` for `*.${HOST_NAME}` resolution
 
-it means the kernel memory cgroup controller is not enabled/mounted, so the limits in `compose.yaml` are ignored.
+Kernel / cgroup memory enforcement strongly advised (see Section 5 – Quick Start → Memory Enablement).
 
-Quick verification:
-
-```bash
-docker info | grep -i cgroup
-grep memory /proc/cgroups || echo "memory controller missing"
-test -f /sys/fs/cgroup/memory.max && echo "cgroup v2 memory present" || ls /sys/fs/cgroup/memory 2>/dev/null || echo "legacy memory cgroup not mounted"
-```
-
-Enable memory cgroups depending on your OS:
-
-1. Raspberry Pi OS / Debian:
-	 - If `/boot/cmdline.txt` contains a notice like `DO NOT EDIT THIS FILE` and references `/boot/firmware/cmdline.txt`, edit the latter instead.
-	 - Append (space separated) on that single existing line:
-		 `cgroup_enable=cpuset cgroup_enable=memory cgroup_memory=1`
-2. Ubuntu Server for Raspberry Pi: typically already uses `/boot/firmware/cmdline.txt`; append the same flags there.
-
-Example (Raspberry Pi OS legacy layout):
-```bash
-TARGET_CMDLINE="/boot/firmware/cmdline.txt"; [ -f /boot/firmware/cmdline.txt ] || TARGET_CMDLINE="/boot/cmdline.txt"
-sudo cp "$TARGET_CMDLINE" "$TARGET_CMDLINE.backup"
-sudo sed -i 's/$/ cgroup_enable=cpuset cgroup_enable=memory cgroup_memory=1/' "$TARGET_CMDLINE"
-sudo reboot
-```
-
-After reboot run:
-```bash
-docker run --rm -m 64m busybox sh -c 'cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes'
-```
-If you get `67108864` (64 * 1024 * 1024) or similar, limits work.
-
-If you're on a modern distro using unified cgroup v2 and still see the warning, ensure Docker uses the systemd cgroup driver. Create or edit `/etc/docker/daemon.json`:
-```json
-{
-	"exec-opts": ["native.cgroupdriver=systemd"]
-}
-```
-Then:
-```bash
-sudo systemctl restart docker
-```
-
-Optional: run `make preflight` (added target) to check cgroup memory readiness.
-
-### Installation
-
-Clone and create your `.env`:
-
+## Quick Start
 ```bash
 git clone https://github.com/florianajir/pi-web.git
 cd pi-web
-cp .env.dist .env
-make install
+cp .env.dist .env   # Edit values (HOST_NAME, IPs, credentials, etc.)
+make install        # Installs systemd unit
+make start          # Launch stack
+make status         # Verify health
 ```
 
-## 📋 Management Commands
+Access services at: `https://<service>.${HOST_NAME}` (Traefik, Grafana, Nextcloud, n8n, Pi-hole dashboard, Prometheus).
 
-| Command | Description |
-|---------|-------------|
-| `make help` | Show all available commands |
-| `make install` | Install and enable the systemd unit + timers |
-| `make preflight` | Environment readiness check (Docker reachable, cgroup mode, memory limits) |
-| `make start` | Start all services (via systemd) |
-| `make stop` | Stop all services |
-| `make restart` | Restart all services |
-| `make status` | Show systemd status for the stack unit |
-| `make logs` | Follow combined Docker compose logs (Ctrl+C to exit) |
-| `make update` | Fast-forward git pull then restart the stack |
-
-### Service Management Examples
-
+### Memory / cgroup Readiness
+Run:
 ```bash
-# Verify environment (memory limits, cgroup mode, docker access)
 make preflight
+```
+Follow emitted guidance if memory limits are not enforced (enable cgroup flags or systemd driver as needed).
 
-# Check status of all services
-make status
+## Directory Layout
+High‑level relevant paths:
+```
+compose.yaml                # Core stack definition
+compose.test.yaml           # CI overlay (neutralizes conflicting host bindings)
+.env.dist                   # Template environment (copy to .env)
+config/prometheus/          # Prometheus static config
+config/grafana/provisioning # Grafana datasources & dashboards
+config/pihole/              # Pi-hole dnsmasq snippets
+config/systemd/system/      # Systemd unit templates (rendered by make install)
+data/                       # Persistent volumes (bind-mounted or named)
+scripts/                    # Utility scripts / helpers
+AGENTS.md                   # Contribution & repo guidelines
+```
 
-# Tail logs (aggregated)
+## Configuration Model
+All operational knobs live in `.env` (copy from `.env.dist`). Anything not in `.env.dist` is intentionally opinionated and set in `compose.yaml`.
+
+Patterns:
+- Use `${VAR:-default}` fallbacks in compose to permit safe omission
+- Avoid adding variables unless end users must regularly change them
+- Secrets never live in git (only sample defaults in `.env.dist`)
+
+Domain convention: `<service>.${HOST_NAME}`. Override by changing `HOST_NAME` (ensure DNS/Wildcard mapping to host IP or add entries to local resolvers).
+
+## Service Deep Dive
+
+### 7.1 Global / Shared Variables
+| Var | Purpose |
+|-----|---------|
+| HOST_NAME | Base internal domain suffix |
+| TIMEZONE | TZ for logs & scheduling |
+| EMAIL | Admin contact / Nextcloud & Grafana bootstrap |
+| USER / PASSWORD | Initial admin creds (rotate after bootstrap) |
+| PUID / PGID | Filesystem UID/GID mapping for compatible images |
+| ALLOW_IP_RANGES | Optional IP allowlist (Traefik middleware) |
+
+### 7.2 Network & LAN
+| Var | Purpose |
+|-----|---------|
+| PIHOLE_IP | Macvlan IP for Pi-hole (DNS/DHCP) |
+| HOST_IP | Host LAN IP (wildcard resolves here for reverse proxy) |
+| LAN_PARENT | Physical NIC used by macvlan |
+| LAN_SUBNET | CIDR for macvlan |
+| LAN_GATEWAY | Default gateway inside macvlan |
+
+### 7.3 DHCP (Pi-hole)
+| Var | Purpose |
+|-----|---------|
+| DHCP_ACTIVE | Enable built-in DHCP |
+| DHCP_START / DHCP_END | Lease range |
+| DHCP_ROUTER | Router advertised |
+| DHCP_LEASE_TIME | Lease (hours) |
+
+### 7.4 Nextcloud
+| Var | Purpose |
+|-----|---------|
+| NEXTCLOUD_DB_NAME | DB name |
+| NEXTCLOUD_DB_USER | DB user |
+| NEXTCLOUD_DB_PASSWORD | DB password |
+| NEXTCLOUD_DB_ROOT_PASSWORD | Root password (admin ops only) |
+| NEXTCLOUD_TRUSTED_PROXIES | Trusted proxy CIDR(s) |
+
+### 7.5 WireGuard (Runtime Provisioning)
+On first start the container:
+1. Generates server keys
+2. Creates `WIREGUARD_PEERS` client configs
+3. Allocates from `WIREGUARD_INTERNAL_SUBNET` (server `.1`)
+4. Applies `WIREGUARD_PEER_DNS` and `WIREGUARD_ALLOWED_IPS`
+
+| Var | Purpose |
+|-----|---------|
+| WIREGUARD_SERVER_URL | DNS / public endpoint |
+| WIREGUARD_SERVER_PORT | UDP port |
+| WIREGUARD_PEERS | Initial peer count |
+| WIREGUARD_PEER_DNS | DNS pushed to clients |
+| WIREGUARD_INTERNAL_SUBNET | VPN subnet (CIDR) |
+| WIREGUARD_ALLOWED_IPS | AllowedIPs per peer |
+
+Add peers later: stop stack, raise `WIREGUARD_PEERS`, start again (image appends new peers only). Revocation via `wg set wg0 peer <PUBKEY> remove` inside container.
+
+### 7.6 Observability Stack
+Prometheus: Static config (`config/prometheus/prometheus.yml`) – add new scrape jobs manually.  
+Grafana: Provisioned dashboards + datasource under `config/grafana/provisioning/`.  
+cAdvisor & Node Exporter: Provide container & host metrics over internal ports; scraped by Prometheus.
+
+### 7.7 Traefik
+Configured via command flags + per‑service labels:
+- HTTP→HTTPS redirect
+- Optional IP allowlist (commented middleware)
+- `--serversTransport.insecureSkipVerify=true` to tolerate self‑signed upstreams
+
+### 7.8 n8n
+Runs with persistent volume; environment includes host, protocol, timezone. Extend via additional `N8N_*` variables in compose if needed.
+
+### 7.9 Pi-hole
+Uses macvlan IP; wildcard DNS maps all `<anything>.${HOST_NAME}` to `HOST_IP` enabling Traefik SNI routing. DHCP optional via env toggles.
+
+### 7.10 Watchtower
+Scheduled cleanup & image checks (`WATCHTOWER_*` env in compose). Restart control set to “no auto restart” to prevent surprise downtime; manual `make update` remains authoritative.
+
+## Operations (Make Targets)
+| Target | Action |
+|--------|--------|
+| make install | Render & install systemd unit/timers |
+| make start | Start stack (systemd) |
+| make stop | Stop stack |
+| make restart | Restart stack |
+| make status | Show systemd unit status |
+| make logs | Follow aggregated container logs |
+| make update | Git fast‑forward + restart |
+| make preflight | Environment readiness (Docker, cgroups) |
+
+Examples:
+```bash
+make preflight
+make start
 make logs
-
-# Restart services after configuration changes
-make restart
-
-# Update to latest version (git pull + restart)
 make update
 ```
 
-## 🧪 Development Setup
+## Monitoring & Observability
+Prometheus scrapes every 15s (static). To add a target:
+1. Edit `config/prometheus/prometheus.yml`
+2. Append a new `job_name` with `static_configs.targets: ['host:port']`
+3. Restart only Prometheus container (optional; config reload occurs on container restart)
 
-For contributors and developers who want to maintain code quality:
+Grafana dashboards are committed JSON for immutability. After UI edits: export & overwrite the JSON before committing.
 
-## ⚙️ Configuration
+## Security & Hardening
+Principles:
+- No public HTTP (HTTPS only; HTTP redirected)
+- Minimal published ports: 80/443 (Traefik) + UDP WireGuard + Pi-hole DNS (when enabled)
+- Per‑service memory limits reduce blast radius
+- Secrets stay outside git (volumes + local `.env`)
 
-### Environment Variables
+Recommendations:
+- Rotate `USER` / `PASSWORD` after initial bootstrap
+- Consider enabling Traefik allowlist middleware for admin UIs
+- Keep WireGuard keys private; regenerate if exposed
+- Regularly apply upstream image updates (`make update` then check change logs)
 
-All runtime configuration is driven from `.env`. Start by copying `.env.dist` to `.env` and adjusting values. (Never commit your filled `.env`).
+## Backups & Recovery
+What to back up (volumes / data paths):
+- Nextcloud (`nextcloud_data`) – files + app code + config
+- MariaDB (`nextcloud_db`) – use `mariadb-dump` periodically
+- Prometheus (`prometheus-data`) – optional if dashboards are sufficient
+- Grafana (`grafana-data`) – provisioning reduces need; backup for auth & preferences
+- n8n (`n8n_data`) – workflows & credentials
+- WireGuard (`wireguard_config`) – server/peer keys & configs
+- Pi-hole (`pihole_data`) – settings, gravity list, DHCP leases
 
-By default domains use the pattern `<service>.pi.lan` because `HOST_NAME=pi.lan` in `.env.dist`. To use a different internal domain (e.g. `pi.web`), set `HOST_NAME=pi.web` (and ensure your LAN DNS or `/etc/hosts` resolves `*.pi.web` to your Raspberry Pi host IP) before running `make start`.
+Suggested approach: stop stack (or quiesce), snapshot volumes (bind-mount and tar, or use volume backup plugin). Store encrypted off‑device.
 
-### Advanced Configuration
-
-- **Grafana**: Dashboards in `config/grafana/provisioning/`
-- **Prometheus**: Configuration in `config/prometheus/prometheus.yml`
-- **Traefik**: Auto-configuration via Docker labels
-- **n8n**: Workflow data persisted in `n8n/files/`
-- **Nextcloud**: Persistent data stored in the `nextcloud_data` volume; admin user/password reuse the global `USER` / `PASSWORD` values while database credentials live under the Nextcloud section of `.env`
-- **WireGuard**: Configuration persisted in the `wireguard_config` volume; VPN clients default to the Pi-hole DNS defined by `WIREGUARD_PEER_DNS`
-
-#### WireGuard Key & Peer Config Hygiene
-
-The repository should never contain generated WireGuard keys or per‑peer configuration files. All of the following are treated as secrets and are git‑ignored:
-
-- `privatekey-*`, `presharedkey-*`, `publickey-*` (public keys are harmless alone but are ignored to avoid accidental correlation)  
-- `peer*.conf` and exported QR images (`peer*.png`)  
-- `wg_confs/wg0.conf` (final assembled runtime config)
-
-If any of these were previously committed, rotate them immediately:
-1. Purge them from git history (e.g. using `git filter-repo`).
-2. Regenerate server key pair: `wg genkey | tee privatekey-server | wg pubkey > publickey-server`.
-3. Regenerate each peer key + preshared key.
-4. Recreate `wg0.conf` from templates and restart the WireGuard service.
-5. Distribute new peer configs via a secure channel (vault, encrypted message) – never by committing them.
-
-No WireGuard config templates are tracked anymore; all peer/server configuration is managed directly within the container and sensitive material stays out of git.
-
-##### Adding a New WireGuard Peer (Manual)
-
-1. Exec into container: `docker exec -it pi-wireguard bash`
-2. Generate keys:
-	```bash
-	PEER=alice; umask 077; mkdir -p /config/$PEER; \
-	wg genkey | tee /config/$PEER/privatekey-$PEER | wg pubkey > /config/$PEER/publickey-$PEER; \
-	wg genpsk > /config/$PEER/presharedkey-$PEER
-	```
-3. Pick next free IP in the internal subnet (server is .1). Example: `10.13.13.2/32`.
-4. Add live:
-	```bash
-	PUB=$(cat /config/$PEER/publickey-$PEER); PSK=$(cat /config/$PEER/presharedkey-$PEER); \
-	wg set wg0 peer $PUB preshared-key <(echo $PSK) allowed-ips 10.13.13.2/32
-	```
-5. Append to `/config/wg_confs/wg0.conf` for persistence:
-	```bash
-	cat >> /config/wg_confs/wg0.conf <<EOF
-	# Peer $PEER
-	[Peer]
-	PublicKey = $(cat /config/$PEER/publickey-$PEER)
-	PresharedKey = $(cat /config/$PEER/presharedkey-$PEER)
-	AllowedIPs = 10.13.13.2/32
-	EOF
-	```
-6. Build client file locally (substitute values):
-	```bash
-	cat > $PEER.conf <<EOF
-	[Interface]
-	PrivateKey = $(cat /config/$PEER/privatekey-$PEER)
-	Address = 10.13.13.2/32
-	DNS = ${WIREGUARD_PEER_DNS}
-
-	[Peer]
-	PublicKey = $(cat /config/server/publickey-server)
-	PresharedKey = $(cat /config/$PEER/presharedkey-$PEER)
-	AllowedIPs = 0.0.0.0/0,::/0
-	Endpoint = ${WIREGUARD_SERVER_URL}:${WIREGUARD_SERVER_PORT}
-	PersistentKeepalive = 25
-	EOF
-	```
-7. Copy the resulting file off the host securely; never commit it.
-
-Revoke: `docker exec -it pi-wireguard wg set wg0 peer <PUBLIC_KEY> remove` then delete its stanza and directory.
-
-### Contributing
-
-Please review the [Repository Guidelines](AGENTS.md) before contributing.
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## 🐛 Troubleshooting
-
+## Updating & Upgrading
+Routine update:
 ```bash
-# Check service status
-make status
+make update
+```
+This performs `git pull --ff-only` then restarts the stack (containers pull newer images if tags moved). For image refresh without repo changes rely on Watchtower schedule or manually `docker compose pull && make restart`.
 
-# Check logs
-journalctl -u pi-web.service -f
+Breaking changes:
+- Review release notes (Traefik major, Nextcloud major jumps)
+- Backup volumes first (Section 11)
+- Apply updates, verify health, roll back by `git reset --hard <prev>` + `make restart` if needed
+
+## Adding a New Service
+Checklist:
+1. Define service in `compose.yaml` (pinned version, `restart: unless-stopped`, `mem_limit`)  
+2. Expose internal port only (`expose:`) unless protocol requires host binding  
+3. Add healthcheck (HTTP endpoint or simple CLI)  
+4. Attach required networks; add `frontend` only if routed by Traefik  
+5. Add Traefik labels (Host rule, `loadbalancer.server.port`)  
+6. Persist data via a named volume (label it)  
+7. Add Prometheus job (static) if metrics are exposed  
+8. Add any new env vars to `.env.dist` (with sane defaults)  
+9. Validate with `docker compose -f compose.yaml config`  
+10. Update README Service Section if user-facing  
+
+## Troubleshooting
+Common checks:
+```bash
+make status              # Systemd unit status
+make logs                # Aggregate logs
+docker compose ps        # Per-container state
+docker compose logs <svc>
+```
+DNS resolution failing? Test Pi-hole:
+```bash
+dig @${PIHOLE_IP} grafana.${HOST_NAME}
+```
+Traefik routing issue? Inspect dashboard (`traefik.<HOST_NAME>`) or:
+```bash
+docker compose logs traefik | grep -i error
+```
+WireGuard peer not connecting:
+```bash
+docker exec -it pi-wireguard wg show
+```
+Prometheus health:
+```bash
+docker exec pi-prometheus wget -qO- http://localhost:9090/-/healthy
 ```
 
-## 📄 License
+## FAQ
+**Q: Can I expose a service directly without Traefik?**  
+A: Prefer not. Route HTTP(S) through Traefik; non-HTTP protocols (WireGuard, DNS) are the exceptions.
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+**Q: How do I add more WireGuard peers later?**  
+A: Stop the stack, bump `WIREGUARD_PEERS` in `.env`, start again. Only new peers are generated.
 
-## ⭐ Acknowledgments
+**Q: Why static Prometheus targets instead of discovery?**  
+A: Determinism and minimal footprint—no watchers or label relabeling overhead.
 
-- [Grafana](https://grafana.com/) Analytics & monitoring solution
-- [Prometheus](https://prometheus.io/) Monitoring system & time series database
-- [cAdvisor](https://github.com/google/cadvisor) resource usage and performance characteristics of running containers
-- [Traefik](https://traefik.io/) Application Proxy
-- [n8n](https://n8n.io/) Workflow Automation Software & Tools
-- [WireGuard](https://www.wireguard.com/) Fast, modern, secure VPN tunnel
-- [Pi-hole](https://pi-hole.net/) Network-wide Ad Blocking
+**Q: Can I change memory limits dynamically?**  
+A: Edit `compose.yaml` and run `make restart`. Keep limits conservative to protect the host.
+
+**Q: Is Watchtower safe in production?**  
+A: It fetches and cleans images but does not restart automatically (policy here is manual validation before restart). Adjust if you accept auto restarts.
+
+## Contributing
+See [AGENTS.md](AGENTS.md) for repository guidelines.
+Workflow:
+1. Fork
+2. Feature branch
+3. Minimal focused changes
+4. Run validation (`docker compose config`, `yamllint`)  
+5. Open PR with rationale (exposure, metrics, persistence)
+
+## License & Acknowledgments
+Licensed under MIT – see [LICENSE](LICENSE).
+
+Acknowledgments:
+- Grafana, Prometheus, cAdvisor, Node Exporter
+- Traefik reverse proxy
+- n8n workflow automation
+- WireGuard VPN
+- Pi-hole DNS filtering
+
+---
+Happy self‑hosting! 🚀
