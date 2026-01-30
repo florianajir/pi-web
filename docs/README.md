@@ -4,227 +4,344 @@
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docker.com/)
 [![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Compatible-red.svg)](https://www.raspberrypi.org/)
 
-A comprehensive, production-ready Docker Compose stack for Raspberry Pi that provides monitoring, reverse proxy, and automation services. Turn your Raspberry Pi into a powerful self-hosted infrastructure with web-based dashboards and automated service management.
+Turn your Raspberry Pi into a compact self‑hosted platform: VPN, DNS-level ad blocking, reverse proxy with TLS, file sync, automation, and full monitoring — all declaratively managed with one `docker compose` stack.
 
-## ✨ Features
+---
 
-- 🚀 **One-command deployment** with automated Makefile setup
-- 🔍 **Complete monitoring stack** with Grafana, Prometheus, and system metrics
-- 🌐 **Smart reverse proxy** with Traefik for automatic service discovery
-- 🤖 **Workflow automation** with n8n for connecting services and APIs
-- 🔐 **Secure secrets management** with SOPS encryption
-- ⚙️ **Systemd integration** for production-grade service management
-- 🏠 **Local subdomain routing** for easy service access
+## Table of Contents
+- [Overview & Goals](#overview--goals)
+- [Architecture](#architecture)
+- [Feature Matrix](#feature-matrix)
+- [Hardware & Prerequisites](#hardware--prerequisites)
+- [Quick Start](#quick-start)
+- [Directory Layout](#directory-layout)
+- [Configuration Model](#configuration-model)
+- [Service Deep Dive](#service-deep-dive)
+- [Operations (Make Targets)](#operations-make-targets)
+- [Monitoring & Observability](#monitoring--observability)
+- [Security & Hardening](#security--hardening)
+- [Backups & Recovery](#backups--recovery)
+- [Updating & Upgrading](#updating--upgrading)
+- [Adding a New Service](#adding-a-new-service)
+- [Troubleshooting](#troubleshooting)
+- [FAQ](#faq)
+- [Contributing](#contributing)
+- [License & Acknowledgments](#license--acknowledgments)
 
-## 🏗️ Architecture
+---
 
-### Services Included
+## Overview & Goals
+Provide a reliable, reproducible, low‑touch self‑hosting baseline optimized for constrained ARM boards (Raspberry Pi). Core design principles:
+- Single source of truth (`compose.yaml` + `.env`)
+- Minimum privileged exposure (only required host ports published)
+- Memory limits everywhere to prevent host exhaustion
+- Static, explicit monitoring targets (no surprise discovery)
+- Easy rollback (git + volumes)
 
-| Service | Purpose | Access |
-|---------|---------|--------|
-| **Grafana** | Analytics and monitoring dashboards | `monitoring.pi.home` |
-| **Prometheus** | Metrics collection and storage | Internal |
-| **cAdvisor** | Container resource monitoring | Internal |
-| **Node Exporter** | System metrics collection | Internal |
-| **Traefik** | Reverse proxy with SSL termination | `proxy.pi.home` |
-| **n8n** | Workflow automation platform | `n8n.pi.home` |
+## Architecture
 
-### Stack Components
+Logical groups:
+- Edge: Traefik (HTTPS termination, routing)
+- Connectivity: WireGuard (remote VPN), Pi-hole (DNS, optional DHCP)
+- Productivity: Nextcloud, n8n
+- Monitoring: Netdata (real-time metrics), Portainer (container management)
+- Maintenance: Watchtower (optional image housekeeping)
 
-- **🔍 Monitoring Stack**: Complete observability with Grafana dashboards, Prometheus metrics, and system monitoring
-- **🌐 Reverse Proxy**: Traefik handles routing, SSL certificates, and service discovery
-- **🤖 Automation**: n8n provides visual workflow automation for connecting various services
+Network layout:
+- `frontend` (bridge) – Public HTTP(S) routed services
+- `lan` (macvlan) – Pi-hole obtains a LAN IP for DHCP/DNS
+- `nextcloud` (internal bridge) – App ↔ DB/Redis isolation
 
-## 🚀 Quick Start
+Data persistence via named volumes (e.g. `nextcloud_data`, `netdata_lib`, `portainer_data`, `wireguard_config`).
 
-### Prerequisites
+## Feature Matrix
+| Capability | Implemented | Notes |
+|------------|-------------|-------|
+| Reverse proxy & TLS | ✔ | Traefik v3 (HTTP→HTTPS redirect) |
+| VPN remote access | ✔ | WireGuard (auto peers) |
+| DNS filtering | ✔ | Pi-hole (macvlan) |
+| File sync & collaboration | ✔ | Nextcloud 28-apache |
+| Automation workflows | ✔ | n8n |
+| Real-time monitoring | ✔ | Netdata (host + containers) |
+| Container management | ✔ | Portainer CE |
+| Automatic image updates | ✔ | Watchtower (no auto restarts) |
+| Memory safeguarding | ✔ | `mem_limit` on each container |
 
-- Raspberry Pi with Raspbian/Ubuntu
-- Docker and Docker Compose installed
-- `sudo` access for systemd service management
+## Hardware & Prerequisites
+Minimum tested baseline: Raspberry Pi 4 (4GB RAM) + 32GB SD (or SSD). Recommended: SSD storage and 4GB+ RAM.
 
-### Installation
+Requirements:
+- Linux with Docker & Docker Compose plugin
+- Outbound internet for image pulls
+- (Optional) Control of LAN DNS or ability to edit `/etc/hosts` for `*.${HOST_NAME}` resolution
 
-1. **Clone the repository**:
-   ```bash
-   sudo git clone https://github.com/yourusername/pi-web.git /opt/web
-   cd /opt/web
-   ```
+Kernel / cgroup memory enforcement strongly advised (see Section 5 – Quick Start → Memory Enablement).
 
-2. **One-command setup**:
-   ```bash
-   make install
-   ```
-
-That's it! The installation will:
-- Install dependencies (SOPS for encryption)
-- Configure environment variables
-- Set up systemd services
-- Start all services automatically
-
-### Access Your Services
-
-Configure your local machine's `/etc/hosts` file with your Pi's IP address:
-
+## Quick Start
 ```bash
-# Add this line to /etc/hosts on your local machine
-192.168.1.45    pi.home proxy.pi.home monitoring.pi.home n8n.pi.home
+git clone https://github.com/florianajir/pi-web.git
+cd pi-web
+cp .env.dist .env   # Edit values (HOST_NAME, IPs, credentials, etc.)
+make install        # Installs systemd unit
+make start          # Launch stack
+make status         # Verify health
 ```
 
-Then access:
-- **Grafana Dashboard**: `http://monitoring.pi.home`
-- **Traefik Dashboard**: `http://proxy.pi.home`
-- **n8n Automation**: `http://n8n.pi.home`
+Access services at: `https://<service>.${HOST_NAME}` (Traefik, Portainer, Nextcloud, n8n, Pi-hole dashboard). Netdata is available at `http://<HOST_IP>:19999`.
 
-## 📋 Management Commands
-
-| Command | Description |
-|---------|-------------|
-| `make help` | Show all available commands |
-| `make install` | Complete installation and setup |
-| `make start` | Start all services |
-| `make stop` | Stop all services |
-| `make restart` | Restart all services |
-| `make status` | Check service status |
-| `make update` | Update from git and restart |
-
-### Service Management Examples
-
+### Memory / cgroup Readiness
+Run:
 ```bash
-# Check status of all services
-make status
+make preflight
+```
+Follow emitted guidance if memory limits are not enforced (enable cgroup flags or systemd driver as needed).
 
-# Restart services after configuration changes
-make restart
+## Directory Layout
+High‑level relevant paths:
+```
+compose.yaml                # Core stack definition
+compose.test.yaml           # CI overlay (neutralizes conflicting host bindings)
+.env.dist                   # Template environment (copy to .env)
+config/pihole/              # Pi-hole dnsmasq snippets
+config/systemd/system/      # Systemd unit templates (rendered by make install)
+data/                       # Persistent volumes (bind-mounted or named)
+scripts/                    # Utility scripts / helpers
+AGENTS.md                   # Contribution & repo guidelines
+```
 
-# Update to latest version
+## Configuration Model
+All operational knobs live in `.env` (copy from `.env.dist`). Anything not in `.env.dist` is intentionally opinionated and set in `compose.yaml`.
+
+Patterns:
+- Use `${VAR:-default}` fallbacks in compose to permit safe omission
+- Avoid adding variables unless end users must regularly change them
+- Secrets never live in git (only sample defaults in `.env.dist`)
+
+Domain convention: `<service>.${HOST_NAME}`. Override by changing `HOST_NAME` (ensure DNS/Wildcard mapping to host IP or add entries to local resolvers).
+
+## Service Deep Dive
+
+### 7.1 Global / Shared Variables
+| Var | Purpose |
+|-----|---------|
+| HOST_NAME | Base internal domain suffix |
+| TIMEZONE | TZ for logs & scheduling |
+| EMAIL | Admin contact / Nextcloud & Grafana bootstrap |
+| USER / PASSWORD | Initial admin credentials (rotate after bootstrap) |
+| PUID / PGID | Filesystem UID/GID mapping for compatible images |
+| ALLOW_IP_RANGES | Optional IP allowlist (Traefik middleware) |
+
+### 7.2 Network & LAN
+| Var | Purpose |
+|-----|---------|
+| PIHOLE_IP | Macvlan IP for Pi-hole (DNS/DHCP) |
+| HOST_IP | Host LAN IP (wildcard resolves here for reverse proxy) |
+| LAN_PARENT | Physical NIC used by macvlan |
+| LAN_SUBNET | CIDR for macvlan |
+| LAN_GATEWAY | Default gateway inside macvlan |
+
+### 7.3 DHCP (Pi-hole)
+| Var | Purpose |
+|-----|---------|
+| DHCP_ACTIVE | Enable built-in DHCP |
+| DHCP_START / DHCP_END | Lease range |
+| DHCP_ROUTER | Router advertised |
+| DHCP_LEASE_TIME | Lease (hours) |
+
+### 7.4 Nextcloud
+| Var | Purpose |
+|-----|---------|
+| NEXTCLOUD_DB_NAME | DB name |
+| NEXTCLOUD_DB_USER | DB user |
+| NEXTCLOUD_DB_PASSWORD | DB password |
+| NEXTCLOUD_DB_ROOT_PASSWORD | Root password (admin ops only) |
+| NEXTCLOUD_TRUSTED_PROXIES | Trusted proxy CIDR(s) |
+
+### 7.5 WireGuard (Runtime Provisioning)
+On first start the container:
+1. Generates server keys
+2. Creates `WIREGUARD_PEERS` client configs
+3. Allocates from `WIREGUARD_INTERNAL_SUBNET` (server `.1`)
+4. Applies `WIREGUARD_PEER_DNS` and `WIREGUARD_ALLOWED_IPS`
+
+| Var | Purpose |
+|-----|---------|
+| WIREGUARD_SERVER_URL | DNS / public endpoint |
+| WIREGUARD_SERVER_PORT | UDP port |
+| WIREGUARD_PEERS | Initial peer count |
+| WIREGUARD_PEER_DNS | DNS pushed to clients |
+| WIREGUARD_INTERNAL_SUBNET | VPN subnet (CIDR) |
+| WIREGUARD_ALLOWED_IPS | AllowedIPs per peer |
+
+Add peers later: stop stack, raise `WIREGUARD_PEERS`, start again (image appends new peers only). Revocation via `wg set wg0 peer <PUBKEY> remove` inside container.
+
+### 7.6 Observability Stack
+Netdata: Lightweight real-time monitoring agent running with host network mode on port 19999. Provides host metrics (CPU, RAM, disk, network) and Docker container metrics via socket access. Optional Netdata Cloud connection via claim tokens.  
+Portainer: Container management UI routed through Traefik at `portainer.${HOST_NAME}`. Provides Docker environment visibility, container logs, and management capabilities.
+
+### 7.7 Traefik
+Configured via command flags + per‑service labels:
+- HTTP→HTTPS redirect
+- Optional IP allowlist (commented middleware)
+- `--serversTransport.insecureSkipVerify=true` to tolerate self‑signed upstreams
+
+### 7.8 n8n
+Runs with persistent volume; environment includes host, protocol, timezone. Extend via additional `N8N_*` variables in compose if needed.
+
+### 7.9 Pi-hole
+Uses macvlan IP; wildcard DNS maps all `<anything>.${HOST_NAME}` to `HOST_IP` enabling Traefik SNI routing. DHCP optional via env toggles.
+
+### 7.10 Watchtower
+Scheduled cleanup & image checks (`WATCHTOWER_*` env in compose). Restart control set to “no auto restart” to prevent surprise downtime; manual `make update` remains authoritative.
+
+## Operations (Make Targets)
+| Target | Action |
+|--------|--------|
+| make install | Render & install systemd unit/timers |
+| make start | Start stack (systemd) |
+| make stop | Stop stack |
+| make restart | Restart stack |
+| make status | Show systemd unit status |
+| make logs | Follow aggregated container logs |
+| make update | Git fast‑forward + restart |
+| make preflight | Environment readiness (Docker, cgroups) |
+
+Examples:
+```bash
+make preflight
+make start
+make logs
 make update
-
-# Start/stop individual components
-sudo systemctl start monitoring.service
-sudo systemctl stop n8n.service
 ```
 
-## 🧪 Development Setup
+## Monitoring & Observability
+Netdata provides real-time monitoring out of the box:
+- Access at `http://<HOST_IP>:19999`
+- Auto-discovers and monitors all Docker containers
+- Collects host metrics (CPU, memory, disk I/O, network)
+- Optional: Connect to Netdata Cloud for centralized dashboards (set `NETDATA_CLAIM_TOKEN` in `.env`)
 
-For contributors and developers who want to maintain code quality:
+Portainer provides container management:
+- Access at `https://portainer.${HOST_NAME}`
+- View container logs, stats, and configurations
+- Manage Docker volumes and networks
 
-### Linting Setup
+## Security & Hardening
+Principles:
+- No public HTTP (HTTPS only; HTTP redirected)
+- Minimal published ports: 80/443 (Traefik) + UDP WireGuard + Pi-hole DNS (when enabled)
+- Per‑service memory limits reduce blast radius
+- Secrets stay outside git (volumes + local `.env`)
 
-Install linting tools for validation:
+Recommendations:
+- Rotate `USER` / `PASSWORD` after initial bootstrap
+- Consider enabling Traefik allowlist middleware for admin UIs
+- Keep WireGuard keys private; regenerate if exposed
+- Regularly apply upstream image updates (`make update` then check change logs)
 
+## Backups & Recovery
+What to back up (volumes / data paths):
+- Nextcloud (`nextcloud_data`) – files + app code + config
+- MariaDB (`nextcloud_db`) – use `mariadb-dump` periodically
+- Netdata (`netdata_config`, `netdata_lib`) – optional, regenerated on start
+- Portainer (`portainer_data`) – settings, users, stacks
+- n8n (`n8n_data`) – workflows & credentials
+- WireGuard (`wireguard_config`) – server/peer keys & configs
+- Pi-hole (`pihole_data`) – settings, gravity list, DHCP leases
+
+Suggested approach: stop stack (or quiesce), snapshot volumes (bind-mount and tar, or use volume backup plugin). Store encrypted off‑device.
+
+## Updating & Upgrading
+Routine update:
 ```bash
-make setup-lint
+make update
 ```
+This performs `git pull --ff-only` then restarts the stack (containers pull newer images if tags moved). For image refresh without repo changes rely on Watchtower schedule or manually `docker compose pull && make restart`.
 
-This installs:
-- ✅ yamllint for YAML syntax and formatting
-- ✅ Git pre-commit hook for automatic validation
+Breaking changes:
+- Review release notes (Traefik major, Nextcloud major jumps)
+- Backup volumes first (Section 11)
+- Apply updates, verify health, roll back by `git reset --hard <prev>` + `make restart` if needed
 
-### Manual Linting
+## Adding a New Service
+Checklist:
+1. Define service in `compose.yaml` (pinned version, `restart: unless-stopped`, `mem_limit`)  
+2. Expose internal port only (`expose:`) unless protocol requires host binding  
+3. Add healthcheck (HTTP endpoint or simple CLI)  
+4. Attach required networks; add `frontend` only if routed by Traefik  
+5. Add Traefik labels (Host rule, `loadbalancer.server.port`)  
+6. Persist data via a named volume (label it)  
+7. Add any new env vars to `.env.dist` (with sane defaults)  
+8. Validate with `docker compose -f compose.yaml config`  
+9. Update README Service Section if user-facing  
 
-Run quality checks manually:
-
+## Troubleshooting
+Common checks:
 ```bash
-make lint
+make status              # Systemd unit status
+make logs                # Aggregate logs
+docker compose ps        # Per-container state
+docker compose logs <svc>
 ```
-
-This checks:
-- YAML syntax and formatting in compose files
-- Dockerfile best practices (if present)
-- Docker Compose configuration validation
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-The stack uses encrypted environment variables for security. Basic configuration:
-
+DNS resolution failing? Test Pi-hole:
 ```bash
-HOSTNAME=pi.home
-USER=admin
-EMAIL=admin@example.com
-PASSWORD=your_secure_password
+dig @${PIHOLE_IP} nextcloud.${HOST_NAME}
 ```
-
-### SOPS Encryption
-
-This project uses [SOPS](https://github.com/mozilla/sops) for secure environment management:
-
+Traefik routing issue? Inspect dashboard (`traefik.<HOST_NAME>`) or:
 ```bash
-# Decrypt environment file (automatically done by make install)
-sops -d .env.enc > .env
-
-# Encrypt new environment file
-sops -e .env > .env.enc
-
-# Edit encrypted file directly
-sops .env.enc
+docker compose logs traefik | grep -i error
 ```
-
-### Advanced Configuration
-
-- **Grafana**: Dashboards in `monitoring/grafana/provisioning/`
-- **Prometheus**: Configuration in `monitoring/prometheus/prometheus.yml`
-- **Traefik**: Auto-configuration via Docker labels
-- **n8n**: Workflow data persisted in `n8n/files/`
-
-## 🔧 Development
-
-### Project Structure
-
-```
-pi-web/
-├── Makefile              # Management commands
-├── monitoring/           # Grafana, Prometheus, exporters
-├── proxy/               # Traefik reverse proxy
-├── n8n/                 # Workflow automation
-└── etc/systemd/system/  # Service definitions
-```
-
-### Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test on a Raspberry Pi
-5. Submit a pull request
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**Services won't start:**
+WireGuard peer not connecting:
 ```bash
-# Check service status
-make status
-
-# Check logs
-journalctl -u monitoring.service -f
+docker exec -it pi-wireguard wg show
+```
+Netdata health:
+```bash
+curl -sf http://localhost:19999/api/v1/info
+```
+Portainer health:
+```bash
+docker exec pi-portainer wget -qO- http://localhost:9000/api/system/status
 ```
 
-**Can't access web interfaces:**
-- Verify `/etc/hosts` configuration on your local machine
-- Check that services are running: `make status`
-- Ensure firewall allows access to ports 80, 443, 8080
+## FAQ
+**Q: Can I expose a service directly without Traefik?**  
+A: Prefer not. Route HTTP(S) through Traefik; non-HTTP protocols (WireGuard, DNS, Netdata) are the exceptions.
 
-**Environment decryption fails:**
-- Ensure SOPS and age are installed: `make dependencies`
-- Verify age key file exists and is configured
+**Q: How do I add more WireGuard peers later?**  
+A: Stop the stack, bump `WIREGUARD_PEERS` in `.env`, start again. Only new peers are generated.
 
-## 📄 License
+**Q: Why Netdata instead of Prometheus+Grafana?**  
+A: Lighter footprint, zero-config monitoring, and real-time dashboards out of the box—ideal for constrained Raspberry Pi hardware.
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+**Q: Can I change memory limits dynamically?**  
+A: Edit `compose.yaml` and run `make restart`. Keep limits conservative to protect the host.
 
-## 🤝 Support
+**Q: Is Watchtower safe in production?**  
+A: It fetches and cleans images but does not restart automatically (policy here is manual validation before restart). Adjust if you accept auto restarts.
 
-- 📖 [Wiki](../../wiki) for detailed documentation
-- 🐛 [Issues](../../issues) for bug reports and feature requests
-- 💬 [Discussions](../../discussions) for questions and community support
+**Q: How do I connect Netdata to Netdata Cloud?**  
+A: Set `NETDATA_CLAIM_TOKEN` and `NETDATA_CLAIM_ROOMS` in `.env`, then restart the stack.
 
-## ⭐ Acknowledgments
+## Contributing
+See [AGENTS.md](AGENTS.md) for repository guidelines.
+Workflow:
+1. Fork
+2. Feature branch
+3. Minimal focused changes
+4. Run validation (`docker compose config`, `yamllint`)  
+5. Open PR with rationale (exposure, metrics, persistence)
 
-- [Grafana](https://grafana.com/) for monitoring dashboards
-- [Prometheus](https://prometheus.io/) for metrics collection
-- [Traefik](https://traefik.io/) for reverse proxy
-- [n8n](https://n8n.io/) for workflow automation
+## License & Acknowledgments
+Licensed under MIT – see [LICENSE](LICENSE).
+
+Acknowledgments:
+- Netdata real-time monitoring
+- Portainer container management
+- Traefik reverse proxy
+- n8n workflow automation
+- WireGuard VPN
+- Pi-hole DNS filtering
+
+---
+Happy self‑hosting! 🚀

@@ -1,7 +1,3 @@
-# pi-web Documentation
+# pi-web build status
 
-## Services Validated
-- ✅ All services deployment tested
-- ✅ Security scan completed
-
-Generated: Wed Jun 11 16:39:46 UTC 2025
+Last build: Fri Jan 30 12:05:16 UTC 2026
