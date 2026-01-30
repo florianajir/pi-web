@@ -40,11 +40,11 @@ jobs:
           # Test Traefik ARM compatibility
           docker run --platform ${{ matrix.platform }} --rm traefik:v3.4 version
 
-          # Test Grafana ARM compatibility
-          docker run --platform ${{ matrix.platform }} --rm grafana/grafana:latest --version
+          # Test Netdata ARM compatibility
+          docker run --platform ${{ matrix.platform }} --rm netdata/netdata:v2.2 /bin/sh -c "netdata -v"
 
-          # Test Prometheus ARM compatibility
-          docker run --platform ${{ matrix.platform }} --rm prom/prometheus:latest --version
+          # Test Portainer ARM compatibility
+          docker run --platform ${{ matrix.platform }} --rm portainer/portainer-ce:2.21.5 --version
 
           # Test n8n ARM compatibility
           docker run --platform ${{ matrix.platform }} --rm n8nio/n8n:latest --version

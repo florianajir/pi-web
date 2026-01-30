@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 
 - `compose.yaml` runs the production stack; extend with `compose.test.yaml` for CI-safe overrides.
-- `config/` stores service configs: `grafana/` provisioning, `prometheus/` scrape rules, `pihole/` dnsmasq, `systemd/` templates, `traefik/` middleware.
+- `config/` stores service configs: `pihole/` dnsmasq, `systemd/` templates.
 - `data/` keeps persistent volumes such as `data/n8n/`; avoid committing large exports or secrets.
 - `etc/systemd/` mirrors units already installed on hosts; edit sources under `config/systemd/` instead.
 - `.env.dist` lists required variables; copy to `.env` before invoking any Make target.
@@ -25,18 +25,20 @@
 ## Testing Guidelines
 
 - Smoke-test with `docker compose ps` and targeted `docker compose logs <service>`; confirm every healthcheck reaches `healthy`.
-- For DNS or proxy changes, validate locally using `nslookup grafana.$HOST_NAME` and `curl -Ik https://traefik.$HOST_NAME`.
-- When editing monitoring rules, run `docker exec pi-prometheus wget -O- http://localhost:9090/-/healthy` to ensure Prometheus loads cleanly.
+- For DNS or proxy changes, validate locally using `nslookup nextcloud.$HOST_NAME` and `curl -Ik https://traefik.$HOST_NAME`.
 - After Nextcloud updates, confirm the UI through Traefik with `curl -Ik https://nextcloud.$HOST_NAME` and complete the first-run wizard if admin credentials changed.
-- For WireGuard, confirm the tunnel and DNS path with `docker exec pi-wireguard wg show` and, from a connected client, `nslookup grafana.$HOST_NAME 10.13.13.1` (or the assigned VPN gateway).
+- For WireGuard, confirm the tunnel and DNS path with `docker exec pi-wireguard wg show` and, from a connected client, `nslookup nextcloud.$HOST_NAME 10.13.13.1` (or the assigned VPN gateway).
+- For Netdata, verify metrics collection with `curl -sf http://localhost:19999/api/v1/info`.
+- For Portainer, confirm the UI through Traefik with `curl -Ik https://portainer.$HOST_NAME`.
 
 ## Configuration & Secrets
 
 - Keep `.env` and service credentials out of Git; share them through the team vault and rotate when roles change.
-- Back up Grafana provisioning JSON under `config/grafana/provisioning/`; store n8n exports outside `data/` to avoid credential leakage.
+- Store n8n exports outside `data/` to avoid credential leakage.
 - Rotate the default Nextcloud admin and database secrets immediately after bootstrapping; document updated values in the vault.
   * Admin login reuses the global `USER` / `PASSWORD` pair—update them before exposing the stack.
 - Treat WireGuard peer configs as secrets—export them from the container and store in the vault rather than the repo.
+- Netdata Cloud tokens (`NETDATA_CLAIM_TOKEN`) are optional; if used, treat them as secrets.
 
 ## Commit & Pull Request Guidelines
 

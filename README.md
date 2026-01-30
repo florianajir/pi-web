@@ -44,16 +44,15 @@ Logical groups:
 - Edge: Traefik (HTTPS termination, routing)
 - Connectivity: WireGuard (remote VPN), Pi-hole (DNS, optional DHCP)
 - Productivity: Nextcloud, n8n
-- Monitoring: Prometheus, Grafana, cAdvisor, Node Exporter
+- Monitoring: Netdata (real-time metrics), Portainer (container management)
 - Maintenance: Watchtower (optional image housekeeping)
 
 Network layout:
 - `frontend` (bridge) – Public HTTP(S) routed services
-- `monitoring` (bridge) – Internal scrape network
 - `lan` (macvlan) – Pi-hole obtains a LAN IP for DHCP/DNS
 - `nextcloud` (internal bridge) – App ↔ DB/Redis isolation
 
-Data persistence via named volumes (e.g. `nextcloud_data`, `prometheus-data`, `wireguard_config`).
+Data persistence via named volumes (e.g. `nextcloud_data`, `netdata_lib`, `portainer_data`, `wireguard_config`).
 
 ## Feature Matrix
 | Capability | Implemented | Notes |
@@ -63,8 +62,8 @@ Data persistence via named volumes (e.g. `nextcloud_data`, `prometheus-data`, `w
 | DNS filtering | ✔ | Pi-hole (macvlan) |
 | File sync & collaboration | ✔ | Nextcloud 28-apache |
 | Automation workflows | ✔ | n8n |
-| Metrics & dashboards | ✔ | Prometheus + Grafana provisioning |
-| Container metrics | ✔ | cAdvisor + Node Exporter |
+| Real-time monitoring | ✔ | Netdata (host + containers) |
+| Container management | ✔ | Portainer CE |
 | Automatic image updates | ✔ | Watchtower (no auto restarts) |
 | Memory safeguarding | ✔ | `mem_limit` on each container |
 
@@ -88,7 +87,7 @@ make start          # Launch stack
 make status         # Verify health
 ```
 
-Access services at: `https://<service>.${HOST_NAME}` (Traefik, Grafana, Nextcloud, n8n, Pi-hole dashboard, Prometheus).
+Access services at: `https://<service>.${HOST_NAME}` (Traefik, Portainer, Nextcloud, n8n, Pi-hole dashboard). Netdata is available at `http://<HOST_IP>:19999`.
 
 ### Memory / cgroup Readiness
 Run:
@@ -103,8 +102,6 @@ High‑level relevant paths:
 compose.yaml                # Core stack definition
 compose.test.yaml           # CI overlay (neutralizes conflicting host bindings)
 .env.dist                   # Template environment (copy to .env)
-config/prometheus/          # Prometheus static config
-config/grafana/provisioning # Grafana datasources & dashboards
 config/pihole/              # Pi-hole dnsmasq snippets
 config/systemd/system/      # Systemd unit templates (rendered by make install)
 data/                       # Persistent volumes (bind-mounted or named)
@@ -179,9 +176,8 @@ On first start the container:
 Add peers later: stop stack, raise `WIREGUARD_PEERS`, start again (image appends new peers only). Revocation via `wg set wg0 peer <PUBKEY> remove` inside container.
 
 ### 7.6 Observability Stack
-Prometheus: Static config (`config/prometheus/prometheus.yml`) – add new scrape jobs manually.  
-Grafana: Provisioned dashboards + datasource under `config/grafana/provisioning/`.  
-cAdvisor & Node Exporter: Provide container & host metrics over internal ports; scraped by Prometheus.
+Netdata: Lightweight real-time monitoring agent running with host network mode on port 19999. Provides host metrics (CPU, RAM, disk, network) and Docker container metrics via socket access. Optional Netdata Cloud connection via claim tokens.  
+Portainer: Container management UI routed through Traefik at `portainer.${HOST_NAME}`. Provides Docker environment visibility, container logs, and management capabilities.
 
 ### 7.7 Traefik
 Configured via command flags + per‑service labels:
@@ -219,12 +215,16 @@ make update
 ```
 
 ## Monitoring & Observability
-Prometheus scrapes every 15s (static). To add a target:
-1. Edit `config/prometheus/prometheus.yml`
-2. Append a new `job_name` with `static_configs.targets: ['host:port']`
-3. Restart only Prometheus container (optional; config reload occurs on container restart)
+Netdata provides real-time monitoring out of the box:
+- Access at `http://<HOST_IP>:19999`
+- Auto-discovers and monitors all Docker containers
+- Collects host metrics (CPU, memory, disk I/O, network)
+- Optional: Connect to Netdata Cloud for centralized dashboards (set `NETDATA_CLAIM_TOKEN` in `.env`)
 
-Grafana dashboards are committed JSON for immutability. After UI edits: export & overwrite the JSON before committing.
+Portainer provides container management:
+- Access at `https://portainer.${HOST_NAME}`
+- View container logs, stats, and configurations
+- Manage Docker volumes and networks
 
 ## Security & Hardening
 Principles:
@@ -243,8 +243,8 @@ Recommendations:
 What to back up (volumes / data paths):
 - Nextcloud (`nextcloud_data`) – files + app code + config
 - MariaDB (`nextcloud_db`) – use `mariadb-dump` periodically
-- Prometheus (`prometheus-data`) – optional if dashboards are sufficient
-- Grafana (`grafana-data`) – provisioning reduces need; backup for auth & preferences
+- Netdata (`netdata_config`, `netdata_lib`) – optional, regenerated on start
+- Portainer (`portainer_data`) – settings, users, stacks
 - n8n (`n8n_data`) – workflows & credentials
 - WireGuard (`wireguard_config`) – server/peer keys & configs
 - Pi-hole (`pihole_data`) – settings, gravity list, DHCP leases
@@ -271,10 +271,9 @@ Checklist:
 4. Attach required networks; add `frontend` only if routed by Traefik  
 5. Add Traefik labels (Host rule, `loadbalancer.server.port`)  
 6. Persist data via a named volume (label it)  
-7. Add Prometheus job (static) if metrics are exposed  
-8. Add any new env vars to `.env.dist` (with sane defaults)  
-9. Validate with `docker compose -f compose.yaml config`  
-10. Update README Service Section if user-facing  
+7. Add any new env vars to `.env.dist` (with sane defaults)  
+8. Validate with `docker compose -f compose.yaml config`  
+9. Update README Service Section if user-facing  
 
 ## Troubleshooting
 Common checks:
@@ -286,7 +285,7 @@ docker compose logs <svc>
 ```
 DNS resolution failing? Test Pi-hole:
 ```bash
-dig @${PIHOLE_IP} grafana.${HOST_NAME}
+dig @${PIHOLE_IP} nextcloud.${HOST_NAME}
 ```
 Traefik routing issue? Inspect dashboard (`traefik.<HOST_NAME>`) or:
 ```bash
@@ -296,26 +295,33 @@ WireGuard peer not connecting:
 ```bash
 docker exec -it pi-wireguard wg show
 ```
-Prometheus health:
+Netdata health:
 ```bash
-docker exec pi-prometheus wget -qO- http://localhost:9090/-/healthy
+curl -sf http://localhost:19999/api/v1/info
+```
+Portainer health:
+```bash
+docker exec pi-portainer wget -qO- http://localhost:9000/api/system/status
 ```
 
 ## FAQ
 **Q: Can I expose a service directly without Traefik?**  
-A: Prefer not. Route HTTP(S) through Traefik; non-HTTP protocols (WireGuard, DNS) are the exceptions.
+A: Prefer not. Route HTTP(S) through Traefik; non-HTTP protocols (WireGuard, DNS, Netdata) are the exceptions.
 
 **Q: How do I add more WireGuard peers later?**  
 A: Stop the stack, bump `WIREGUARD_PEERS` in `.env`, start again. Only new peers are generated.
 
-**Q: Why static Prometheus targets instead of discovery?**  
-A: Determinism and minimal footprint—no watchers or label relabeling overhead.
+**Q: Why Netdata instead of Prometheus+Grafana?**  
+A: Lighter footprint, zero-config monitoring, and real-time dashboards out of the box—ideal for constrained Raspberry Pi hardware.
 
 **Q: Can I change memory limits dynamically?**  
 A: Edit `compose.yaml` and run `make restart`. Keep limits conservative to protect the host.
 
 **Q: Is Watchtower safe in production?**  
 A: It fetches and cleans images but does not restart automatically (policy here is manual validation before restart). Adjust if you accept auto restarts.
+
+**Q: How do I connect Netdata to Netdata Cloud?**  
+A: Set `NETDATA_CLAIM_TOKEN` and `NETDATA_CLAIM_ROOMS` in `.env`, then restart the stack.
 
 ## Contributing
 See [AGENTS.md](AGENTS.md) for repository guidelines.
@@ -330,7 +336,8 @@ Workflow:
 Licensed under MIT – see [LICENSE](LICENSE).
 
 Acknowledgments:
-- Grafana, Prometheus, cAdvisor, Node Exporter
+- Netdata real-time monitoring
+- Portainer container management
 - Traefik reverse proxy
 - n8n workflow automation
 - WireGuard VPN
