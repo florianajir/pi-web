@@ -29,39 +29,6 @@ jobs:
           pip install yamllint
           yamllint -c .yamllint .
 
-      - name: Validate Prometheus config
-        run: |
-          # Align path with repository layout (see config/prometheus/)
-          if [ -f config/prometheus/prometheus.yml ]; then
-            PROM_DIR=config/prometheus
-          else
-            echo "❌ prometheus.yml not found in expected paths" >&2
-            exit 1
-          fi
-          # Use pinned Prometheus image version to ensure deterministic promtool
-          docker run --rm \
-            -v "$PWD/$PROM_DIR":/etc/prometheus:ro \
-            --entrypoint=promtool \
-            prom/prometheus:v2.51.0 \
-            check config /etc/prometheus/prometheus.yml
-
-      - name: Validate Prometheus rule files (if any)
-        run: |
-          set -e
-          if ls config/prometheus/*rules*.yml >/dev/null 2>&1; then
-            echo "🔍 Validating rule files"
-            for f in config/prometheus/*rules*.yml; do
-              echo " - $f";
-              docker run --rm \
-                -v "$PWD/config/prometheus":/etc/prometheus:ro \
-                --entrypoint=promtool \
-                prom/prometheus:v2.51.0 \
-                check rules "/etc/prometheus/$(basename "$f")";
-            done
-          else
-            echo "(No Prometheus rule files present to validate)"
-          fi
-
       - name: Check Makefile syntax
         run: |
           make help > /dev/null
@@ -147,8 +114,8 @@ jobs:
 
           # Verify key services are running
           docker compose -f compose.yaml -f compose.test.yaml exec -T traefik wget -q --spider http://localhost:8080/api/entrypoints || echo "Traefik API not ready"
-          docker compose -f compose.yaml -f compose.test.yaml exec -T grafana wget -q --spider http://localhost:3000/api/health || echo "Grafana not ready"
-          docker compose -f compose.yaml -f compose.test.yaml exec -T prometheus wget -q --spider http://localhost:9090/-/healthy || echo "Prometheus not ready"
+          docker compose -f compose.yaml -f compose.test.yaml exec -T pi-portainer wget -q --spider http://localhost:9000/api/system/status || echo "Portainer not ready"
+          curl -sf http://localhost:19999/api/v1/info || echo "Netdata not ready"
 
           # Lightweight HTTPS smoke test against Traefik (self-signed / internal). Skips certificate validation.
           # Uses --resolve to map host to loopback since we don't have DNS in CI.
