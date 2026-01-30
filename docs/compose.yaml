@@ -96,7 +96,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - NETDATA_CLAIM_TOKEN=${NETDATA_CLAIM_TOKEN:-}
-      - NETDATA_CLAIM_URL=${NETDATA_CLAIM_URL:-https://app.netdata.cloud}
+      - NETDATA_CLAIM_URL=${NETDATA_CLAIM_URL:-}
       - NETDATA_CLAIM_ROOMS=${NETDATA_CLAIM_ROOMS:-}
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:19999/api/v1/info"]
