@@ -3,7 +3,7 @@
 # Keeps only essential operational commands.
 ################################################################################
 
-.PHONY: help install start stop restart update status logs preflight
+.PHONY: help install uninstall start stop restart update status logs preflight init
 
 PROJECT_PATH := $(shell pwd)
 UNIT         := pi-web.service
@@ -11,7 +11,8 @@ COMPOSE      := docker compose
 
 help:
 	@echo "Commands:"
-	@echo "  install   Install & enable systemd unit"
+	@echo "  install   Install & enable systemd unit, start stack and initialize"
+	@echo "  uninstall Stop stack, remove all data/volumes and uninstall systemd units"
 	@echo "  start     Start stack"
 	@echo "  stop      Stop stack"
 	@echo "  restart   Restart stack"
@@ -19,6 +20,7 @@ help:
 	@echo "  logs      Follow compose logs"
 	@echo "  update    Git pull + restart"
 	@echo "  preflight Quick env readiness check"
+	@echo "  init      Re-run Headscale initialization"
 	@echo "  help      This help"
 
 preflight:
@@ -38,12 +40,42 @@ install:
 	sudo cp config/systemd/system/pi-web-restart.timer /etc/systemd/system/
 	sudo systemctl daemon-reload
 	sudo systemctl enable $(UNIT)
-	@echo "✅ Installed"
+	@echo "✅ Systemd units installed"
+	@echo "🚀 Starting stack..."
+	sudo systemctl start $(UNIT)
+	@echo "🔧 Initializing Headscale..."
+	@./scripts/headscale-init.sh
+	@echo "✅ Installation complete"
+
+uninstall:
+	@echo "🗑️  Uninstalling Pi-Web..."
+	@echo ""
+	@echo "⚠️  WARNING: This will remove ALL data including:"
+	@echo "   - Docker volumes (Nextcloud, Pi-hole, n8n, Headscale, etc.)"
+	@echo "   - Systemd service units"
+	@echo ""
+	@read -p "Are you sure? Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
+	@echo ""
+	@echo "🛑 Stopping services..."
+	-sudo systemctl stop $(UNIT) 2>/dev/null || true
+	-sudo systemctl stop pi-web-restart.timer 2>/dev/null || true
+	@echo "🐳 Removing containers and volumes..."
+	-$(COMPOSE) down -v --remove-orphans 2>/dev/null || true
+	@echo "🧹 Removing systemd units..."
+	-sudo systemctl disable $(UNIT) 2>/dev/null || true
+	-sudo systemctl disable pi-web-restart.timer 2>/dev/null || true
+	-sudo rm -f /etc/systemd/system/$(UNIT)
+	-sudo rm -f /etc/systemd/system/pi-web-restart.service
+	-sudo rm -f /etc/systemd/system/pi-web-restart.timer
+	sudo systemctl daemon-reload
+	@echo "✅ Uninstall complete"
+	@echo ""
+	@echo "ℹ️  Note: .env file preserved. Remove manually if needed."
 
 start:
-	@echo "🚀 Start"
+	@echo "🚀 Starting Pi-Web stack..."
 	sudo systemctl start $(UNIT)
-	@echo "✅ Started"
+	@echo "✅ Stack started"
 
 stop:
 	@echo "🛑 Stop"
@@ -54,6 +86,11 @@ restart:
 	@echo "🔄 Restart"
 	sudo systemctl restart $(UNIT)
 	@echo "✅ Restarted"
+
+init:
+	@echo "🔧 Running Headscale initialization..."
+	@./scripts/headscale-init.sh
+	@echo "✅ Init complete"
 
 update:
 	@echo "🔄 Update (git pull + restart)"
