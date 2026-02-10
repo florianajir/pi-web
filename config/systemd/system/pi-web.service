@@ -8,6 +8,7 @@ Type=oneshot
 WorkingDirectory=__PROJECT_PATH__
 EnvironmentFile=__PROJECT_PATH__/.env
 ExecStart=/usr/bin/docker compose up -d
+ExecStartPost=-/bin/bash __PROJECT_PATH__/scripts/headscale-init.sh
 ExecStop=/usr/bin/docker compose down
 RemainAfterExit=true
 

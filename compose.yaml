@@ -8,6 +8,12 @@ services:
       - WATCHTOWER_SCHEDULE=0 0 3 * * *
       - WATCHTOWER_NO_RESTART=true
       - TZ=${TIMEZONE}
+    healthcheck:
+      test: ["CMD", "/watchtower", "--health-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   traefik:
@@ -18,6 +24,7 @@ services:
     command:
       - "--log.level=INFO"
       - "--api.dashboard=true"
+      - "--ping=true"
       # Entry Points
       - "--entrypoints.web.address=:80/tcp"
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
@@ -63,12 +70,18 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    healthcheck:
+      test:
+        ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     mem_limit: 256m
 
-  # Monitoring Stack
   netdata:
+    image: netdata/netdata:v2.8
     container_name: pi-netdata
-    image: netdata/netdata:v2.2
     hostname: pi-netdata
     restart: unless-stopped
     pid: host
@@ -121,8 +134,8 @@ services:
     mem_limit: 512m
 
   portainer:
+    image: portainer/portainer-ce:latest
     container_name: pi-portainer
-    image: portainer/portainer-ce:2.21.5
     hostname: pi-portainer
     restart: unless-stopped
     networks:
@@ -132,19 +145,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - portainer_data:/data
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "wget",
-          "-q",
-          "--spider",
-          "http://localhost:9000/api/system/status",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
     labels:
       - "com.example.description=Portainer container management"
       - "com.example.service=monitoring"
@@ -159,11 +159,17 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    healthcheck:
+      test: ["CMD", "/portainer", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     mem_limit: 256m
 
   pihole:
-    container_name: pi-pihole
     image: pihole/pihole:latest
+    container_name: pi-pihole
     hostname: pi-pihole
     restart: unless-stopped
     cap_add:
@@ -221,8 +227,8 @@ services:
     mem_limit: 512m
 
   n8n:
+    image: n8nio/n8n:stable
     container_name: pi-n8n
-    image: n8nio/n8n:1.50.0
     hostname: pi-n8n
     restart: unless-stopped
     expose:
@@ -246,11 +252,11 @@ services:
       - "traefik.http.middlewares.n8n.headers.STSPreload=true"
       - "traefik.http.services.n8n.loadbalancer.server.port=5678"
     environment:
-      - N8N_HOST=${N8N_HOST:-n8n.${HOST_NAME:-pi.lan}}
-      - N8N_PORT=${N8N_PORT:-5678}
-      - N8N_PROTOCOL=${N8N_PROTOCOL:-https}
-      - NODE_ENV=${NODE_ENV:-production}
-      - WEBHOOK_URL=${WEBHOOK_URL:-https://n8n.${HOST_NAME:-pi.lan}/}
+      - N8N_HOST=n8n.${HOST_NAME:-pi.lan}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://n8n.${HOST_NAME:-pi.lan}/
       - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-${TIMEZONE:-Europe/Paris}}
       - TZ=${TIMEZONE:-Europe/Paris}
       - N8N_RUNNERS_ENABLED=${N8N_RUNNERS_ENABLED:-true}
@@ -287,10 +293,9 @@ services:
       start_period: 60s
     mem_limit: 512m
 
-  # Productivity Stack
   nextcloud:
-    container_name: pi-nextcloud
     image: nextcloud:28-apache
+    container_name: pi-nextcloud
     hostname: pi-nextcloud
     restart: unless-stopped
     environment:
@@ -338,8 +343,8 @@ services:
     mem_limit: 1g
 
   nextcloud-db:
-    container_name: pi-nextcloud-db
     image: mariadb:11.4
+    container_name: pi-nextcloud-db
     hostname: pi-nextcloud-db
     restart: unless-stopped
     environment:
@@ -376,8 +381,8 @@ services:
     mem_limit: 512m
 
   nextcloud-redis:
-    container_name: pi-nextcloud-redis
     image: redis:7-alpine
+    container_name: pi-nextcloud-redis
     hostname: pi-nextcloud-redis
     restart: unless-stopped
     command: ["redis-server", "--save", "", "--appendonly", "no"]
@@ -396,38 +401,81 @@ services:
     mem_limit: 128m
 
   # Connectivity Stack
-  wireguard:
-    container_name: pi-wireguard
-    image: linuxserver/wireguard:latest
-    hostname: pi-wireguard
+  headscale:
+    image: headscale/headscale:stable
+    container_name: pi-headscale
+    hostname: pi-headscale
+    restart: unless-stopped
+    command: serve
+    environment:
+      - HEADSCALE_SERVER_URL=https://headscale.${HOST_NAME:-pi.lan}
+      - HEADSCALE_LISTEN_ADDR=0.0.0.0:8080
+      - HEADSCALE_DNS_BASE_DOMAIN=vpn.${HOST_NAME:-pi.lan}
+    networks:
+      - frontend
+    expose:
+      - 8080
+      - 9090
+      - 50443
+    ports:
+      - "8080:8080"
+      - "3478:3478/udp"
+    volumes:
+      - ./config/headscale:/etc/headscale:ro
+      - headscale_data:/var/lib/headscale
+      - headscale_run:/var/run/headscale
+    labels:
+      - "com.example.description=Headscale coordination server"
+      - "com.example.service=vpn"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.headscale.rule=Host(`headscale.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.headscale.entrypoints=websecure"
+      - "traefik.http.routers.headscale.tls=true"
+      - "traefik.http.services.headscale.loadbalancer.server.port=8080"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "/ko-app/headscale", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    mem_limit: 256m
+
+  tailscale:
+    image: tailscale/tailscale:stable
+    container_name: pi-tailscale
+    hostname: pi-tailscale
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
     environment:
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - TZ=${TIMEZONE:-Europe/Paris}
-      - SERVERURL=${WIREGUARD_SERVER_URL:-pi.lan}
-      - SERVERPORT=${WIREGUARD_SERVER_PORT:-51820}
-      - PEERS=${WIREGUARD_PEERS:-5}
-      - PEERDNS=${WIREGUARD_PEER_DNS:-192.168.1.29}
-      - INTERNAL_SUBNET=${WIREGUARD_INTERNAL_SUBNET:-10.13.13.0/24}
-      - ALLOWEDIPS=${WIREGUARD_ALLOWED_IPS:-0.0.0.0/0,::/0}
-      - LOG_CONFS=true
+      - TS_AUTHKEY=${TS_AUTHKEY:-}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=${TS_USERSPACE:-false}
+      - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:---login-server=https://headscale:8080 --accept-dns=false --advertise-exit-node --accept-routes}
+      - TS_HOSTNAME=tailscale.${HOST_NAME:-pi.lan}
     volumes:
-      - wireguard_config:/config
-      - /lib/modules:/lib/modules:ro
-    ports:
-      - "${WIREGUARD_SERVER_PORT:-51820}:51820/udp"
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
+      - tailscale_state:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      - frontend
+    depends_on:
+      - headscale
     healthcheck:
-      test: ["CMD", "bash", "-c", "wg show wg0 >/dev/null 2>&1"]
+      test: ["CMD", "tailscale", "status", "--peers=false"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 120s
+    labels:
+      - "com.example.description=Tailscale VPN client (Headscale)"
+      - "com.example.service=vpn"
     logging:
       driver: "json-file"
       options:
@@ -468,9 +516,17 @@ volumes:
     labels:
       - "com.example.description=Nextcloud Database Data"
       - "com.example.service=cloud"
-  wireguard_config:
+  headscale_data:
     labels:
-      - "com.example.description=WireGuard Persistent Config"
+      - "com.example.description=Headscale Database and Keys"
+      - "com.example.service=vpn"
+  headscale_run:
+    labels:
+      - "com.example.description=Headscale Runtime Socket"
+      - "com.example.service=vpn"
+  tailscale_state:
+    labels:
+      - "com.example.description=Tailscale Persistent State"
       - "com.example.service=vpn"
 
 networks:
