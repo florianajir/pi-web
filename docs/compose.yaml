@@ -1,4 +1,30 @@
 services:
+  ddns-updater:
+    image: ghcr.io/qdm12/ddns-updater@sha256:ee16ab4f6203bf9e5b0925d38a0b4ebf2d9f23771f933cfb2f5a2dbd5f9a2f88
+    container_name: pi-ddns-updater
+    hostname: pi-ddns-updater
+    restart: unless-stopped
+    environment:
+      CONFIG: >-
+        {"settings":[
+        {"provider":"cloudflare","zone_identifier":"${CF_ZONE_ID}","domain":"${HOST_NAME}","token":"${CF_DNS_API_TOKEN}","ttl":1,"proxied":false},
+        {"provider":"cloudflare","zone_identifier":"${CF_ZONE_ID}","domain":"*.${HOST_NAME}","token":"${CF_DNS_API_TOKEN}","ttl":1,"proxied":false}
+        ]}
+    volumes:
+      - ddns_data:/updater/data
+    healthcheck:
+      test: ["CMD", "/updater/ddns-updater", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 128m
+
   watchtower:
     image: containrrr/watchtower:1.7.1
     volumes:
@@ -21,6 +47,8 @@ services:
     container_name: pi-traefik
     hostname: pi-traefik
     restart: unless-stopped
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN:-}
     command:
       - "--log.level=INFO"
       - "--api.dashboard=true"
@@ -31,26 +59,29 @@ services:
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
       - "--entrypoints.websecure.address=:443/tcp"
       - "--entrypoints.websecure.http.middlewares=compress@docker,hsts@docker"
+      - "--entrypoints.websecure.http.tls.certresolver=cloudflare"
       - "--entrypoints.websecure.http3=true"
       # Providers
       - "--providers.docker=true"
       - "--providers.docker.watch=true"
       - "--providers.docker.network=frontend"
       - "--providers.docker.exposedbydefault=false"
+      # ACME (Cloudflare DNS-01)
+      - "--certificatesresolvers.cloudflare.acme.email=${EMAIL}"
+      - "--certificatesresolvers.cloudflare.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.cloudflare.acme.dnschallenge.delaybeforecheck=10"
       # Servers Transport
-      - "--serversTransport.insecureSkipVerify=true" # corrected flag name for v3
-      # (Removed invalid top-level --tls.options.* flags for v3; define via dynamic file if needed)
+      # - "--serversTransport.insecureSkipVerify=true" # corrected flag name for v3
     labels:
       - "com.example.description=Traefik reverse proxy"
       - "com.example.service=traefik"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      # Middlewares definitions
       - "traefik.http.middlewares.compress.compress=true"
       - "traefik.http.middlewares.hsts.headers.stsSeconds=2592000"
-      # - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-192.168.1.0/24}"
-      # Traefik Dashboard Router
-      # - "traefik.http.routers.traefik.middlewares=lan@docker"
+      - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-192.168.1.0/24}"
+      - "traefik.http.routers.traefik.middlewares=lan@docker"
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.rule=Host(`traefik.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.traefik.service=api@internal"
@@ -63,6 +94,7 @@ services:
       - 8080
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
     networks:
       - frontend
     logging:
@@ -124,6 +156,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.netdata.rule=Host(`netdata.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.netdata.entrypoints=websecure"
+      - "traefik.http.routers.netdata.middlewares=lan@docker"
       - "traefik.http.routers.netdata.tls=true"
       - "traefik.http.services.netdata.loadbalancer.server.port=19999"
     logging:
@@ -152,6 +185,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.portainer.rule=Host(`portainer.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.portainer.entrypoints=websecure"
+      - "traefik.http.routers.portainer.middlewares=lan@docker"
       - "traefik.http.routers.portainer.tls=true"
       - "traefik.http.services.portainer.loadbalancer.server.port=9000"
     logging:
@@ -211,7 +245,7 @@ services:
       - "traefik.http.routers.pihole.rule=Host(`pihole.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.pihole.entrypoints=websecure"
       - "traefik.http.routers.pihole.tls=true"
-      # - "traefik.http.routers.pihole.middlewares=lan"
+      - "traefik.http.routers.pihole.middlewares=lan@docker"
       - "traefik.http.services.pihole.loadbalancer.server.port=8082"
     healthcheck:
       test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
@@ -241,7 +275,7 @@ services:
       - "traefik.http.routers.n8n.rule=Host(`n8n.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.n8n.entrypoints=websecure"
       - "traefik.http.routers.n8n.tls=true"
-      - "traefik.http.routers.n8n.middlewares=n8n@docker"
+      - "traefik.http.routers.n8n.middlewares=lan@docker,n8n@docker"
       - "traefik.http.middlewares.n8n.headers.SSLRedirect=true"
       - "traefik.http.middlewares.n8n.headers.STSSeconds=315360000"
       - "traefik.http.middlewares.n8n.headers.browserXSSFilter=true"
@@ -324,6 +358,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.nextcloud.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud.middlewares=lan@docker"
       - "traefik.http.routers.nextcloud.tls=true"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
     healthcheck:
@@ -432,6 +467,9 @@ services:
       - "traefik.http.routers.headscale.rule=Host(`headscale.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.headscale.entrypoints=websecure"
       - "traefik.http.routers.headscale.tls=true"
+      - "traefik.http.routers.headscale.tls.certresolver=cloudflare"
+      - "traefik.http.routers.headscale.tls.domains[0].main=${HOST_NAME:-pi.lan}"
+      - "traefik.http.routers.headscale.tls.domains[0].sans=*.${HOST_NAME:-pi.lan}"
       - "traefik.http.services.headscale.loadbalancer.server.port=8080"
     logging:
       driver: "json-file"
@@ -457,8 +495,8 @@ services:
     environment:
       - TS_AUTHKEY=${TS_AUTHKEY:-}
       - TS_STATE_DIR=/var/lib/tailscale
-      - TS_USERSPACE=${TS_USERSPACE:-false}
-      - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:---login-server=https://headscale:8080 --accept-dns=false --advertise-exit-node --accept-routes}
+      - TS_USERSPACE=false
+      - TS_EXTRA_ARGS=--reset --login-server=https://headscale.${HOST_NAME:-pi.lan} --accept-dns=true --advertise-exit-node --advertise-routes=192.168.1.0/24 --accept-routes
       - TS_HOSTNAME=tailscale.${HOST_NAME:-pi.lan}
     volumes:
       - tailscale_state:/var/lib/tailscale
@@ -484,6 +522,14 @@ services:
     mem_limit: 256m
 
 volumes:
+  ddns_data:
+    labels:
+      - "com.example.description=DDNS updater state"
+      - "com.example.service=network"
+  traefik_letsencrypt:
+    labels:
+      - "com.example.description=Traefik ACME certificates"
+      - "com.example.service=proxy"
   netdata_config:
     labels:
       - "com.example.description=Netdata Configuration"

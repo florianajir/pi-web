@@ -3,11 +3,16 @@
 # Keeps only essential operational commands.
 ################################################################################
 
-.PHONY: help install uninstall start stop restart update status logs preflight init
+.PHONY: help install uninstall start stop restart update status logs preflight headscale-register
 
 PROJECT_PATH := $(shell pwd)
 UNIT         := pi-web.service
 COMPOSE      := docker compose
+
+ifeq (headscale-register,$(firstword $(MAKECMDGOALS)))
+HEADSCALE_KEY := $(word 2,$(MAKECMDGOALS))
+$(eval $(HEADSCALE_KEY):;@:)
+endif
 
 help:
 	@echo "Commands:"
@@ -20,7 +25,7 @@ help:
 	@echo "  logs      Follow compose logs"
 	@echo "  update    Git pull + restart"
 	@echo "  preflight Quick env readiness check"
-	@echo "  init      Re-run Headscale initialization"
+	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  help      This help"
 
 preflight:
@@ -43,8 +48,6 @@ install:
 	@echo "✅ Systemd units installed"
 	@echo "🚀 Starting stack..."
 	sudo systemctl start $(UNIT)
-	@echo "🔧 Initializing Headscale..."
-	@./scripts/headscale-init.sh
 	@echo "✅ Installation complete"
 
 uninstall:
@@ -67,7 +70,7 @@ uninstall:
 	-sudo rm -f /etc/systemd/system/$(UNIT)
 	-sudo rm -f /etc/systemd/system/pi-web-restart.service
 	-sudo rm -f /etc/systemd/system/pi-web-restart.timer
-	sudo systemctl daemon-reload
+	-sudo systemctl daemon-reload
 	@echo "✅ Uninstall complete"
 	@echo ""
 	@echo "ℹ️  Note: .env file preserved. Remove manually if needed."
@@ -79,18 +82,13 @@ start:
 
 stop:
 	@echo "🛑 Stop"
-	sudo systemctl stop $(UNIT)
+	-sudo systemctl stop $(UNIT)
 	@echo "✅ Stopped"
 
 restart:
 	@echo "🔄 Restart"
-	sudo systemctl restart $(UNIT)
+	-sudo systemctl restart $(UNIT)
 	@echo "✅ Restarted"
-
-init:
-	@echo "🔧 Running Headscale initialization..."
-	@./scripts/headscale-init.sh
-	@echo "✅ Init complete"
 
 update:
 	@echo "🔄 Update (git pull + restart)"
@@ -105,4 +103,12 @@ status:
 logs:
 	@echo "📝 Logs (Ctrl+C to exit)"
 	$(COMPOSE) logs -f --tail=100
+
+headscale-register:
+	@echo "🔐 Registering headscale node..."
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	@if [ -z "$(HEADSCALE_KEY)" ]; then echo "❌ Key missing (use: make headscale-register <key>)"; exit 1; fi
+	@EMAIL_FROM_ENV="$${EMAIL:-$$(grep -E '^EMAIL=' .env | tail -n1 | cut -d= -f2-)}"; \
+	if [ -z "$$EMAIL_FROM_ENV" ]; then echo "❌ EMAIL not set in .env"; exit 1; fi; \
+	$(COMPOSE) run --rm headscale nodes register --key "$(HEADSCALE_KEY)" --user "$$EMAIL_FROM_ENV"
 

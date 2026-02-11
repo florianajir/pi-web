@@ -1,21 +1,22 @@
-#!/bin/bash
+#!/bin/sh
 # Auto-initialization script for Headscale + Tailscale
 # Runs automatically on first start, creates user and preauthkey
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="${PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}" 
 ENV_FILE="$PROJECT_DIR/.env"
 MAX_RETRIES=60
 RETRY_INTERVAL=2
+HEADSCALE_BIN="/ko-app/headscale"
 
 log() {
     echo "[headscale-init] $(date '+%H:%M:%S') $*" >&2
 }
 
 check_headscale_ready() {
-    docker exec pi-headscale headscale users list >/dev/null 2>&1
+    docker exec pi-headscale "$HEADSCALE_BIN" users list >/dev/null 2>&1
 }
 
 wait_for_headscale_container() {
@@ -45,21 +46,22 @@ wait_for_headscale() {
 }
 
 user_exists() {
-    docker exec pi-headscale headscale users list 2>/dev/null | grep -q "default"
+    docker exec pi-headscale "$HEADSCALE_BIN" users list --output json 2>/dev/null | \
+        grep -q "\"name\": \"${HEADSCALE_USER}\""
 }
 
 get_user_id() {
-    # Extract the id field from JSON for user "default"
-    docker exec pi-headscale headscale users list --output json 2>/dev/null | \
-        grep -B 1 '"name": "default"' | grep '"id"' | grep -o '[0-9]\+' | head -1
+    # Extract the id field from JSON for the configured user
+    docker exec pi-headscale "$HEADSCALE_BIN" users list --output json 2>/dev/null | \
+        grep -B 1 "\"name\": \"${HEADSCALE_USER}\"" | grep '"id"' | grep -o '[0-9]\+' | head -1
 }
 
 create_user() {
     if user_exists; then
-        log "User 'default' already exists"
+        log "User '${HEADSCALE_USER}' already exists"
     else
-        log "Creating user 'default'..."
-        docker exec pi-headscale headscale users create default
+        log "Creating user '${HEADSCALE_USER}'..."
+        docker exec pi-headscale "$HEADSCALE_BIN" users create "$HEADSCALE_USER"
         log "User created"
     fi
 }
@@ -67,8 +69,26 @@ create_user() {
 get_valid_preauthkey() {
     local user_id="$1"
     # Check if there's already a valid reusable preauthkey using JSON output
-    docker exec pi-headscale headscale preauthkeys list --user "$user_id" --output json 2>/dev/null | \
-        grep -o '"key": *"[^"]*"' | head -1 | sed 's/"key": *"\([^"]*\)"/\1/'
+    docker exec pi-headscale "$HEADSCALE_BIN" preauthkeys list --output json 2>/dev/null | \
+        awk -v user="$HEADSCALE_USER" '
+            /"name":/ {
+                user_match = ($0 ~ "\"name\": \"" user "\"")
+            }
+            /"key":/ {
+                if (user_match) {
+                    match($0, /"key": "([^"]+)"/, m)
+                    current_key = m[1]
+                } else {
+                    current_key = ""
+                }
+            }
+            /"tag:router"/ {
+                if (current_key != "") {
+                    print current_key
+                    exit
+                }
+            }
+        '
 }
 
 current_key_is_valid() {
@@ -79,8 +99,19 @@ current_key_is_valid() {
         return 1
     fi
 
-    docker exec pi-headscale headscale preauthkeys list --user "$user_id" --output json 2>/dev/null | \
-        grep -q "\"key\": *\"${key}\""
+    docker exec pi-headscale "$HEADSCALE_BIN" preauthkeys list --output json 2>/dev/null | \
+        awk -v key="$key" '
+            /"key":/ {
+                match($0, /"key": "([^"]+)"/, m)
+                key_match = (m[1] == key)
+            }
+            /"tag:router"/ {
+                if (key_match) {
+                    exit 0
+                }
+            }
+            END { exit 1 }
+        '
 }
 
 create_preauthkey() {
@@ -94,8 +125,8 @@ create_preauthkey() {
         return 0
     fi
     
-    log "Creating new preauthkey (expires in 1 year)..."
-    docker exec pi-headscale headscale preauthkeys create --user "$user_id" --reusable --expiration 8760h --output json 2>/dev/null | \
+    log "Creating new preauthkey (expires in 1 year) with tag:router..."
+    docker exec pi-headscale "$HEADSCALE_BIN" preauthkeys create --user "$user_id" --reusable --expiration 8760h --tags tag:router --output json 2>/dev/null | \
         grep -o '"key": *"[^"]*"' | sed 's/"key": *"\([^"]*\)"/\1/'
 }
 
@@ -133,6 +164,7 @@ update_env_if_needed() {
 
 restart_tailscale_if_needed() {
     local key="$1"
+    local project_name=""
     
     # Check if tailscale is already connected
     if docker exec pi-tailscale tailscale status --peers=false >/dev/null 2>&1; then
@@ -140,28 +172,35 @@ restart_tailscale_if_needed() {
         return 0
     fi
     
-    log "Restarting Tailscale with new authkey..."
-    
-    # Update the container's environment and restart
-    docker stop pi-tailscale 2>/dev/null || true
-    sleep 2
-    
-    # The container will pick up the new TS_AUTHKEY from .env on restart
-    cd "$PROJECT_DIR"
-    docker compose up -d tailscale
-    
-    log "Tailscale restarted"
+    log "Recreating Tailscale to pick up updated TS_AUTHKEY..."
+
+    if [ -f "$PROJECT_DIR/compose.yaml" ]; then
+        project_name=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' pi-tailscale 2>/dev/null || true)
+        if [ -z "$project_name" ]; then
+            project_name="pi-web"
+        fi
+
+        docker compose --project-name "$project_name" -f "$PROJECT_DIR/compose.yaml" \
+            up -d --no-deps --force-recreate tailscale
+    else
+        log "ERROR: compose.yaml not found at $PROJECT_DIR/compose.yaml"
+        return 1
+    fi
+
+    log "Tailscale recreated"
 }
 
 main() {
     log "=== Headscale Auto-Init ==="
     
-    # Load HOST_NAME from .env
+    # Load HOST_NAME/EMAIL from .env
     if [ -f "$ENV_FILE" ]; then
         HOST_NAME=$(grep "^HOST_NAME=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "pi.lan")
+        EMAIL=$(grep "^EMAIL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
     fi
     HOST_NAME="${HOST_NAME:-pi.lan}"
-    
+    HEADSCALE_USER="$EMAIL"
+
     # Wait for Headscale container to start (first boot can be slow)
     if ! wait_for_headscale_container; then
         log "Headscale container did not become ready"
@@ -215,9 +254,7 @@ main() {
     log "=== Init Complete ==="
     log ""
     log "To connect external clients (with self-signed cert):"
-    log "  sudo TS_INSECURE_SKIP_VERIFY=1 tailscale up --login-server=https://headscale.${HOST_NAME} --authkey=$PREAUTHKEY"
-    log ""
-    log "Note: TS_INSECURE_SKIP_VERIFY=1 bypasses TLS certificate validation for LAN-only setups"
+    log "  sudo tailscale up --login-server=https://headscale.${HOST_NAME} --auth-key=$PREAUTHKEY --accept-dns=true --accept-routes"
 }
 
 main "$@"
