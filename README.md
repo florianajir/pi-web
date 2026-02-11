@@ -65,6 +65,7 @@ Data persistence via named volumes (e.g. `nextcloud_data`, `netdata_lib`, `porta
 | Real-time monitoring | ✔ | Netdata (host + containers) |
 | Container management | ✔ | Portainer CE |
 | Automatic image updates | ✔ | Watchtower (no auto restarts) |
+| Dynamic DNS (Cloudflare) | ✔ | ddns-updater keeps `pi.*` records synced |
 | Memory safeguarding | ✔ | `mem_limit` on each container |
 
 ## Hardware & Prerequisites
@@ -185,6 +186,21 @@ Configured via command flags + per‑service labels:
 - Optional IP allowlist (commented middleware)
 - `--serversTransport.insecureSkipVerify=true` to tolerate self‑signed upstreams
 
+#### 7.7.1 Cloudflare DNS‑01 (ACME) for valid LAN TLS
+When clients (e.g., Tailscale) must trust HTTPS for `headscale.${HOST_NAME}`, Traefik can obtain a real certificate via Cloudflare DNS‑01 (free).
+
+**Prereqs**
+- Your base domain is hosted in Cloudflare.
+- You can create a Cloudflare API token with **Zone → DNS → Edit** permission for that zone.
+
+**Setup**
+1. Set the token in `.env`:
+	- `CF_DNS_API_TOKEN=...`
+2. Restart Traefik:
+	- `docker compose -f compose.yaml up -d traefik`
+
+Traefik will request certificates for routed services (including `headscale.${HOST_NAME}`) using DNS‑01 and store them in the `traefik_letsencrypt` volume.
+
 ### 7.8 n8n
 Runs with persistent volume; environment includes host, protocol, timezone. Extend via additional `N8N_*` variables in compose if needed.
 
@@ -193,6 +209,14 @@ Uses macvlan IP; wildcard DNS maps all `<anything>.${HOST_NAME}` to `HOST_IP` en
 
 ### 7.10 Watchtower
 Scheduled cleanup & image checks (`WATCHTOWER_*` env in compose). Restart control set to “no auto restart” to prevent surprise downtime; manual `make update` remains authoritative.
+
+### 7.11 Cloudflare DDNS (ddns-updater)
+Keeps your public DNS records in Cloudflare synced to your current public IP so `pi.${HOST_NAME}` and `*.pi.${HOST_NAME}` stay reachable.
+
+Required `.env` keys:
+- `CF_DNS_API_TOKEN` (DNS edit token)
+- `CF_ZONE_ID` (Cloudflare Zone ID for your domain)
+The updater will manage `HOST_NAME` and `*.HOST_NAME` automatically.
 
 ## Operations (Make Targets)
 | Target | Action |
@@ -291,6 +315,13 @@ Traefik routing issue? Inspect dashboard (`traefik.<HOST_NAME>`) or:
 ```bash
 docker compose logs traefik | grep -i error
 ```
+DDNS not updating records? Check updater logs:
+```bash
+docker compose logs ddns-updater
+```
+Tailscale/Headscale TLS error (`certificate signed by unknown authority` or SAN mismatch)?
+- Ensure Traefik has issued a cert for `headscale.${HOST_NAME}` using Cloudflare DNS‑01 (Section 7.7.1).
+- Confirm the certificate is no longer the Traefik default (`*.traefik.default`).
 WireGuard peer not connecting:
 ```bash
 docker exec -it pi-wireguard wg show

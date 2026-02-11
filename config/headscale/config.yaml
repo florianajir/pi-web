@@ -42,13 +42,16 @@ log:
   level: info
   format: text
 
+policy:
+  mode: file
+  path: /etc/headscale/policy.hujson
+
 dns:
   magic_dns: true
-  override_local_dns: false
+  override_local_dns: true
   nameservers:
     global:
-      - 1.1.1.1
-      - 8.8.8.8
+      - 192.168.1.29
 
 unix_socket: /var/run/headscale/headscale.sock
 unix_socket_permission: "0770"
