@@ -76,14 +76,17 @@ get_valid_preauthkey() {
             }
             /"key":/ {
                 if (user_match) {
-                    match($0, /"key": "([^"]+)"/, m)
-                    current_key = m[1]
+                    if (match($0, /"key": "[^"]+"/)) {
+                        current_key = substr($0, RSTART + 8, RLENGTH - 9)
+                        current_key_len = length(current_key)
+                    }
                 } else {
                     current_key = ""
+                    current_key_len = 0
                 }
             }
             /"tag:router"/ {
-                if (current_key != "") {
+                if (current_key != "" && current_key_len >= 88) {
                     print current_key
                     exit
                 }
@@ -102,11 +105,14 @@ current_key_is_valid() {
     docker exec pi-headscale "$HEADSCALE_BIN" preauthkeys list --output json 2>/dev/null | \
         awk -v key="$key" '
             /"key":/ {
-                match($0, /"key": "([^"]+)"/, m)
-                key_match = (m[1] == key)
+                if (match($0, /"key": "[^"]+"/)) {
+                    current_key = substr($0, RSTART + 8, RLENGTH - 9)
+                    key_match = (current_key == key)
+                    key_len = length(current_key)
+                }
             }
             /"tag:router"/ {
-                if (key_match) {
+                if (key_match && key_len >= 88) {
                     exit 0
                 }
             }
