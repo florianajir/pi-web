@@ -1,2 +1,3 @@
 /.env
 /config/headscale/policy.hujson
+/config/headscale/config.yaml

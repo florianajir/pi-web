@@ -7,8 +7,8 @@ services:
     environment:
       CONFIG: >-
         {"settings":[
-        {"provider":"cloudflare","zone_identifier":"${CF_ZONE_ID}","domain":"${HOST_NAME}","token":"${CF_DNS_API_TOKEN}","ttl":1,"proxied":false},
-        {"provider":"cloudflare","zone_identifier":"${CF_ZONE_ID}","domain":"*.${HOST_NAME}","token":"${CF_DNS_API_TOKEN}","ttl":1,"proxied":false}
+        {"provider":"cloudflare","zone_identifier":"${CLOUDFLARE_ZONE_ID}","domain":"${HOST_NAME}","token":"${CLOUDFLARE_DNS_API_TOKEN}","ttl":1,"proxied":false},
+        {"provider":"cloudflare","zone_identifier":"${CLOUDFLARE_ZONE_ID}","domain":"*.${HOST_NAME}","token":"${CLOUDFLARE_DNS_API_TOKEN}","ttl":1,"proxied":false}
         ]}
     volumes:
       - ddns_data:/updater/data
@@ -48,7 +48,7 @@ services:
     hostname: pi-traefik
     restart: unless-stopped
     environment:
-      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN:-}
+      - CLOUDFLARE_DNS_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN:-}
     command:
       - "--log.level=INFO"
       - "--api.dashboard=true"
@@ -71,8 +71,6 @@ services:
       - "--certificatesresolvers.cloudflare.acme.storage=/letsencrypt/acme.json"
       - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
       - "--certificatesresolvers.cloudflare.acme.dnschallenge.delaybeforecheck=10"
-      # Servers Transport
-      # - "--serversTransport.insecureSkipVerify=true" # corrected flag name for v3
     labels:
       - "com.example.description=Traefik reverse proxy"
       - "com.example.service=traefik"
@@ -212,21 +210,20 @@ services:
     expose:
       - 53
       - 8082
-    # Pi-hole expects to start some components as root then drop privileges. Remove forced user.
     environment:
       TZ: ${TIMEZONE:-Europe/Paris}
       FTLCONF_webserver_api_password: ${PASSWORD:-admin}
+      FTLCONF_webserver_allow_api_all_origins: "true"
       FTLCONF_dns_listeningMode: "all"
       FTLCONF_dns_upstreams: "1.1.1.1;8.8.8.8"
-      # Wildcard all hosts under HOST_NAME to the host (Traefik) IP. Pi-hole still keeps its own macvlan IP (IP var).
-      FTLCONF_misc_dnsmasq_lines: "address=/${HOST_NAME:-pi.lan}/${HOST_IP:-192.168.1.30}"
+      FTLCONF_misc_dnsmasq_lines: "address=/${HOST_NAME:-pi.lan}/${HOST_LAN_IP:-192.168.1.30}"
       FTLCONF_webserver_port: 8082
       # DHCP configuration
-      FTLCONF_dhcp_active: ${DHCP_ACTIVE:-false}
-      FTLCONF_dhcp_start: ${DHCP_START:-192.168.1.100}
-      FTLCONF_dhcp_end: ${DHCP_END:-192.168.1.150}
-      FTLCONF_dhcp_router: ${DHCP_ROUTER:-192.168.1.1}
-      FTLCONF_dhcp_leasetime: ${DHCP_LEASE_TIME:-24}
+      FTLCONF_dhcp_active: ${PIHOLE_DHCP_ACTIVE:-false}
+      FTLCONF_dhcp_start: ${PIHOLE_DHCP_START:-192.168.1.100}
+      FTLCONF_dhcp_end: ${PIHOLE_DHCP_END:-192.168.1.150}
+      FTLCONF_dhcp_router: ${PIHOLE_DHCP_ROUTER:-192.168.1.1}
+      FTLCONF_dhcp_leasetime: ${PIHOLE_DHCP_LEASE_TIME:-24}
       FTLCONF_dhcp_ipv6: "false"
       FTLCONF_dhcp_rapidCommit: "true"
       FTLCONF_dns_domain: ${HOST_NAME:-pi.lan}
@@ -293,11 +290,9 @@ services:
       - WEBHOOK_URL=https://n8n.${HOST_NAME:-pi.lan}/
       - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-${TIMEZONE:-Europe/Paris}}
       - TZ=${TIMEZONE:-Europe/Paris}
-      - N8N_RUNNERS_ENABLED=${N8N_RUNNERS_ENABLED:-true}
       - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=${N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS:-true}
-      - DB_TYPE=${DB_TYPE:-sqlite}
-      - DB_SQLITE_POOL_SIZE=${DB_SQLITE_POOL_SIZE:-2}
-      - N8N_BLOCK_ENV_ACCESS_IN_NODE=${N8N_BLOCK_ENV_ACCESS_IN_NODE:-false}
+      - DB_TYPE=sqlite
+      - DB_SQLITE_POOL_SIZE=2
     volumes:
       - n8n_data:/home/node/.n8n
       - ./data/n8n/files:/files
@@ -489,6 +484,7 @@ services:
     container_name: pi-tailscale
     hostname: pi-tailscale
     restart: unless-stopped
+    network_mode: host
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
@@ -501,8 +497,6 @@ services:
     volumes:
       - tailscale_state:/var/lib/tailscale
       - /dev/net/tun:/dev/net/tun
-    networks:
-      - frontend
     depends_on:
       - headscale
     healthcheck:
@@ -578,7 +572,6 @@ volumes:
 networks:
   frontend:
     driver: bridge
-    # Force stable docker network name to match traefik provider config
     name: frontend
     ipam:
       driver: default
@@ -591,12 +584,12 @@ networks:
   lan:
     driver: macvlan
     driver_opts:
-      parent: ${LAN_PARENT:-eth0}
+      parent: ${HOST_LAN_PARENT:-eth0}
     ipam:
       driver: default
       config:
-        - subnet: ${LAN_SUBNET:-192.168.1.0/24}
-          gateway: ${LAN_GATEWAY:-192.168.1.1}
+        - subnet: ${HOST_LAN_SUBNET:-192.168.1.0/24}
+          gateway: ${HOST_LAN_GATEWAY:-192.168.1.1}
     labels:
       - "com.example.description=Physical LAN macvlan for DHCP"
       - "com.example.service=network"

@@ -90,7 +90,7 @@ jobs:
       USER: testuser
       EMAIL: test@example.com
       PASSWORD: testpassword123
-      HOST_IP: 192.168.1.100
+      HOST_LAN_IP: 192.168.1.100
 
     steps:
       - name: Checkout code

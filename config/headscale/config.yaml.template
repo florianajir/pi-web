@@ -51,7 +51,10 @@ dns:
   override_local_dns: true
   nameservers:
     global:
-      - 192.168.1.29
+      - __PIHOLE_IP__
+    split:
+      __HOST_NAME__:
+        - __PIHOLE_IP__
 
 unix_socket: /var/run/headscale/headscale.sock
 unix_socket_permission: "0770"
