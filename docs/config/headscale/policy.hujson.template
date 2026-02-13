@@ -4,7 +4,9 @@
   },
   "autoApprovers": {
     "routes": {
-      "192.168.1.0/24": ["tag:router"]
+      "192.168.1.0/24": ["tag:router"],
+      "0.0.0.0/0": ["tag:router"],
+      "::/0": ["tag:router"]
     }
   },
   "acls": [

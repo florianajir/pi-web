@@ -1,8 +1,3 @@
-################################################################################
-# Minimal Makefile for pi-web
-# Keeps only essential operational commands.
-################################################################################
-
 .PHONY: help install uninstall start stop restart update status logs preflight headscale-register
 
 PROJECT_PATH := $(shell pwd)
@@ -39,6 +34,9 @@ preflight:
 install:
 	@echo "📦 Installing..."
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	@echo "🧰 Applying host sysctl settings..."
+	sudo cp config/sysctl.d/pi-web.conf /etc/sysctl.d/99-pi-web.conf
+	sudo sysctl --system >/dev/null
 	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/pi-web.service > /tmp/$(UNIT)
 	sudo cp /tmp/$(UNIT) /etc/systemd/system/
 	sudo cp config/systemd/system/pi-web-restart.service /etc/systemd/system/
@@ -64,6 +62,9 @@ uninstall:
 	-sudo systemctl stop pi-web-restart.timer 2>/dev/null || true
 	@echo "🐳 Removing containers and volumes..."
 	-$(COMPOSE) down -v --remove-orphans 2>/dev/null || true
+	@echo "🧰 Removing host sysctl settings..."
+	-sudo rm -f /etc/sysctl.d/99-pi-web.conf
+	-sudo sysctl --system >/dev/null
 	@echo "🧹 Removing systemd units..."
 	-sudo systemctl disable $(UNIT) 2>/dev/null || true
 	-sudo systemctl disable pi-web-restart.timer 2>/dev/null || true
