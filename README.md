@@ -4,227 +4,136 @@
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docker.com/)
 [![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Compatible-red.svg)](https://www.raspberrypi.org/)
 
-A comprehensive, production-ready Docker Compose stack for Raspberry Pi that provides monitoring, reverse proxy, and automation services. Turn your Raspberry Pi into a powerful self-hosted infrastructure with web-based dashboards and automated service management.
+`pi-web` is a compact self-hosting stack for Raspberry Pi, managed with a single Docker Compose setup.
 
-## ✨ Features
+It includes:
+- Reverse proxy + TLS (`traefik`)
+- DNS filtering (`pihole`)
+- Monitoring (`netdata`) and container management (`portainer`)
+- Productivity apps (`nextcloud`, `n8n`, `immich-server`)
+- Data services (`postgres`, `redis`)
+- Connectivity (`headscale`, `tailscale`)
+- Maintenance (`ddns-updater`, `watchtower`)
 
-- 🚀 **One-command deployment** with automated Makefile setup
-- 🔍 **Complete monitoring stack** with Grafana, Prometheus, and system metrics
-- 🌐 **Smart reverse proxy** with Traefik for automatic service discovery
-- 🤖 **Workflow automation** with n8n for connecting services and APIs
-- 🔐 **Secure secrets management** with SOPS encryption
-- ⚙️ **Systemd integration** for production-grade service management
-- 🏠 **Local subdomain routing** for easy service access
+---
 
-## 🏗️ Architecture
+## Architecture
 
-### Services Included
+```mermaid
+flowchart LR
+  U["Users / Clients"] -->|"HTTPS :443"| T["Traefik"]
+  U -->|"DNS :53"| PH["Pi-hole"]
+  U -->|"STUN :3478/udp"| HS["Headscale"]
 
-| Service | Purpose | Access |
-|---------|---------|--------|
-| **Grafana** | Analytics and monitoring dashboards | `monitoring.pi.home` |
-| **Prometheus** | Metrics collection and storage | Internal |
-| **cAdvisor** | Container resource monitoring | Internal |
-| **Node Exporter** | System metrics collection | Internal |
-| **Traefik** | Reverse proxy with SSL termination | `proxy.pi.home` |
-| **n8n** | Workflow automation platform | `n8n.pi.home` |
+  subgraph FE["frontend network"]
+    T
+    PH
+    ND["Netdata"]
+    PT["Portainer"]
+    N8["n8n"]
+    NC["Nextcloud"]
+    IM["Immich"]
+    HS
+  end
 
-### Stack Components
+  subgraph NCNET["nextcloud (internal)"]
+    NC
+    R["Redis"]
+    PG["Postgres"]
+  end
 
-- **🔍 Monitoring Stack**: Complete observability with Grafana dashboards, Prometheus metrics, and system monitoring
-- **🌐 Reverse Proxy**: Traefik handles routing, SSL certificates, and service discovery
-- **🤖 Automation**: n8n provides visual workflow automation for connecting various services
+  subgraph IMNET["immich (internal)"]
+    IM
+    R
+    PG
+  end
 
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Raspberry Pi with Raspbian/Ubuntu
-- Docker and Docker Compose installed
-- `sudo` access for systemd service management
-
-### Installation
-
-1. **Clone the repository**:
-   ```bash
-   sudo git clone https://github.com/yourusername/pi-web.git /opt/web
-   cd /opt/web
-   ```
-
-2. **One-command setup**:
-   ```bash
-   make install
-   ```
-
-That's it! The installation will:
-- Install dependencies (SOPS for encryption)
-- Configure environment variables
-- Set up systemd services
-- Start all services automatically
-
-### Access Your Services
-
-Configure your local machine's `/etc/hosts` file with your Pi's IP address:
-
-```bash
-# Add this line to /etc/hosts on your local machine
-192.168.1.45    pi.home proxy.pi.home monitoring.pi.home n8n.pi.home
+  TS["Tailscale (host network)"] --> HS
 ```
 
-Then access:
-- **Grafana Dashboard**: `http://monitoring.pi.home`
-- **Traefik Dashboard**: `http://proxy.pi.home`
-- **n8n Automation**: `http://n8n.pi.home`
+---
 
-## 📋 Management Commands
+## Install guide
+
+1. Clone the repository.
+2. Copy `.env.dist` to `.env` and fill required values.
+3. Run preflight checks.
+4. Install/start via systemd helper.
+
+```bash
+git clone https://github.com/florianajir/pi-web.git
+cd pi-web
+cp .env.dist .env
+make preflight
+make install
+make status
+```
+
+---
+
+## Make commands
 
 | Command | Description |
-|---------|-------------|
-| `make help` | Show all available commands |
-| `make install` | Complete installation and setup |
-| `make start` | Start all services |
-| `make stop` | Stop all services |
-| `make restart` | Restart all services |
-| `make status` | Check service status |
-| `make update` | Update from git and restart |
+| --- | --- |
+| `make preflight` | Verify Docker/cgroup readiness |
+| `make install` | Install systemd units and start stack |
+| `make uninstall` | Remove stack, volumes, and units (destructive) |
+| `make start` | Start stack |
+| `make stop` | Stop stack |
+| `make restart` | Restart stack |
+| `make status` | Show stack status |
+| `make logs` | Follow stack logs |
+| `make update` | Pull latest changes and restart |
+| `make headscale-register <key>` | Register a Headscale node |
 
-### Service Management Examples
+---
 
-```bash
-# Check status of all services
-make status
+## Variables listing (`.env`)
 
-# Restart services after configuration changes
-make restart
+### Personal
+- `HOST_NAME`
+- `TIMEZONE`
+- `EMAIL`
+- `USER`
+- `PASSWORD`
 
-# Update to latest version
-make update
+### Network
+- `HOST_LAN_IP`
+- `HOST_LAN_PARENT` (default: `eth0`)
+- `HOST_LAN_SUBNET` (default: `192.168.1.0/24`)
+- `HOST_LAN_GATEWAY` (default: `192.168.1.1`)
+- `PIHOLE_IP` (default: `192.168.1.29`)
+- `TAILSCALE_DNS_IP` (default: `100.64.0.1`)
+- `ALLOW_IP_RANGES` (default: `127.0.0.1/32,192.168.1.0/24,100.64.0.0/10`)
 
-# Start/stop individual components
-sudo systemctl start monitoring.service
-sudo systemctl stop n8n.service
-```
+### Traefik / Cloudflare
+- `CLOUDFLARE_DNS_API_TOKEN`
+- `CLOUDFLARE_ZONE_ID`
 
-## 🧪 Development Setup
+### PostgreSQL (shared)
+- `DB_PASSWORD`
+- `DB_USERNAME` (default: `postgres`)
+- `DB_DATABASE_NAME` (default: `postgres`)
+- `DB_DATA_LOCATION` (default: `./data/postgres`)
 
-For contributors and developers who want to maintain code quality:
+### Immich
+- `IMMICH_DB_NAME` (default: `immich`)
+- `IMMICH_DB_USER` (default: `immich`)
+- `IMMICH_DB_PASSWORD`
+- `IMMICH_UPLOAD_LOCATION` (default: `./data/immich`)
 
-### Linting Setup
+### Nextcloud
+- `NEXTCLOUD_DB_NAME` (default: `nextcloud`)
+- `NEXTCLOUD_DB_USER` (default: `nextcloud`)
+- `NEXTCLOUD_DB_PASSWORD` (default: `nextcloud-secure-password`)
+- `NEXTCLOUD_TRUSTED_PROXIES` (default: `172.30.11.0/24`)
 
-Install linting tools for validation:
+### Netdata Cloud (optional)
+- `NETDATA_CLAIM_TOKEN`
+- `NETDATA_CLAIM_URL`
+- `NETDATA_CLAIM_ROOMS`
 
-```bash
-make setup-lint
-```
+## License
 
-This installs:
-- ✅ yamllint for YAML syntax and formatting
-- ✅ Git pre-commit hook for automatic validation
+MIT (see `LICENSE`).
 
-### Manual Linting
-
-Run quality checks manually:
-
-```bash
-make lint
-```
-
-This checks:
-- YAML syntax and formatting in compose files
-- Dockerfile best practices (if present)
-- Docker Compose configuration validation
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-The stack uses encrypted environment variables for security. Basic configuration:
-
-```bash
-HOSTNAME=pi.home
-USER=admin
-EMAIL=admin@example.com
-PASSWORD=your_secure_password
-```
-
-### SOPS Encryption
-
-This project uses [SOPS](https://github.com/mozilla/sops) for secure environment management:
-
-```bash
-# Decrypt environment file (automatically done by make install)
-sops -d .env.enc > .env
-
-# Encrypt new environment file
-sops -e .env > .env.enc
-
-# Edit encrypted file directly
-sops .env.enc
-```
-
-### Advanced Configuration
-
-- **Grafana**: Dashboards in `monitoring/grafana/provisioning/`
-- **Prometheus**: Configuration in `monitoring/prometheus/prometheus.yml`
-- **Traefik**: Auto-configuration via Docker labels
-- **n8n**: Workflow data persisted in `n8n/files/`
-
-## 🔧 Development
-
-### Project Structure
-
-```
-pi-web/
-├── Makefile              # Management commands
-├── monitoring/           # Grafana, Prometheus, exporters
-├── proxy/               # Traefik reverse proxy
-├── n8n/                 # Workflow automation
-└── etc/systemd/system/  # Service definitions
-```
-
-### Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test on a Raspberry Pi
-5. Submit a pull request
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**Services won't start:**
-```bash
-# Check service status
-make status
-
-# Check logs
-journalctl -u monitoring.service -f
-```
-
-**Can't access web interfaces:**
-- Verify `/etc/hosts` configuration on your local machine
-- Check that services are running: `make status`
-- Ensure firewall allows access to ports 80, 443, 8080
-
-**Environment decryption fails:**
-- Ensure SOPS and age are installed: `make dependencies`
-- Verify age key file exists and is configured
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🤝 Support
-
-- 📖 [Wiki](../../wiki) for detailed documentation
-- 🐛 [Issues](../../issues) for bug reports and feature requests
-- 💬 [Discussions](../../discussions) for questions and community support
-
-## ⭐ Acknowledgments
-
-- [Grafana](https://grafana.com/) for monitoring dashboards
-- [Prometheus](https://prometheus.io/) for metrics collection
-- [Traefik](https://traefik.io/) for reverse proxy
-- [n8n](https://n8n.io/) for workflow automation

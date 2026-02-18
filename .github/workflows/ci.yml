@@ -5,6 +5,9 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: "0 2 * * 0"
 
 permissions:
   contents: read
@@ -17,40 +20,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Validate Docker Compose files
         run: |
-          docker compose -f proxy/compose.yaml config
-          docker compose -f monitoring/compose.yaml config
-          docker compose -f n8n/compose.yaml config
+          docker compose -f compose.yaml config
+          docker compose -f compose.yaml -f compose.test.yaml config
 
       - name: Lint YAML files
         run: |
-          # Install yamllint
           pip install yamllint
-
-          # Lint compose files with custom config
-          yamllint -c .yamllint proxy/compose.yaml
-          yamllint -c .yamllint monitoring/compose.yaml
-          yamllint -c .yamllint n8n/compose.yaml
-
-          # Lint other YAML files
-          yamllint -c .yamllint .github/workflows/*.yml
-
-      - name: Validate Prometheus config
-        run: |
-          # Check if prometheus config exists
-          if [ -f monitoring/prometheus/prometheus.yml ]; then
-            # Use promtool to validate config
-            docker run --rm \
-              -v $PWD/monitoring/prometheus:/etc/prometheus \
-              --entrypoint=promtool \
-              prom/prometheus:latest \
-              check config /etc/prometheus/prometheus.yml
-          else
-            echo "Warning: prometheus.yml not found"
-          fi
+          yamllint -c .yamllint .
 
       - name: Check Makefile syntax
         run: |
@@ -64,26 +44,26 @@ jobs:
       security-events: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-results.sarif"
         continue-on-error: true
 
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         if: always() && github.repository_owner == github.actor
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: "trivy-results.sarif"
         continue-on-error: true
 
       - name: Upload Trivy results as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: trivy-results
@@ -92,10 +72,11 @@ jobs:
 
       - name: Security checks
         run: |
+          set -euo pipefail
           echo "🔍 Running security checks..."
 
-          # Check Docker Compose configurations
-          for file in */compose.yaml; do
+          # Check tracked compose files only
+          for file in compose.yaml compose.test.yaml; do
             echo "Checking $file..."
             grep -q "privileged.*true" "$file" && echo "⚠️ WARNING: Privileged container in $file"
             grep -q "network_mode.*host" "$file" && echo "⚠️ WARNING: Host network mode in $file"
@@ -109,62 +90,235 @@ jobs:
     name: Test Deployment
     runs-on: ubuntu-latest
     env:
-      HOSTNAME: test.local
+      HOST_NAME: test.local
       USER: testuser
       EMAIL: test@example.com
       PASSWORD: testpassword123
-      SUBDOMAIN: proxy
+      HOST_LAN_IP: 192.168.1.100
+      TIMEZONE: UTC
+      CLOUDFLARE_ZONE_ID: ci-zone-placeholder
+      CLOUDFLARE_DNS_API_TOKEN: ci-token-placeholder
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Test all services deployment
         run: |
+          set -euo pipefail
+
           # Create test environment
-          echo "HOSTNAME=test.local" > .env
+          echo "HOST_NAME=test.local" > .env
           echo "USER=testuser" >> .env
           echo "EMAIL=test@example.com" >> .env
           echo "PASSWORD=testpassword123" >> .env
-          echo "SUBDOMAIN=proxy" >> .env
 
-          docker network create web
+          # Start the services validated by this smoke test and wait for healthchecks
+          docker compose -f compose.yaml -f compose.test.yaml up -d --wait --wait-timeout 480 \
+            traefik portainer netdata pihole redis postgres nextcloud immich-server
+          docker compose -f compose.yaml -f compose.test.yaml ps \
+            traefik portainer netdata pihole redis postgres nextcloud immich-server
 
-          # Test each service quickly
-          services=("proxy" "monitoring" "n8n")
-          for service in "${services[@]}"; do
-            echo "Testing $service..."
-            cd "$service"
-            docker compose up -d
-            sleep 15
-            docker compose ps
-            docker compose down
-            cd ..
+          # Verify a focused set of externally-relevant endpoints
+          docker compose -f compose.yaml -f compose.test.yaml exec -T traefik \
+            traefik healthcheck --ping >/dev/null
+          docker compose -f compose.yaml -f compose.test.yaml exec -T portainer \
+            /portainer --version >/dev/null
+          docker compose -f compose.yaml -f compose.test.yaml exec -T netdata \
+            curl -sf http://localhost:19999/api/v1/info >/dev/null
+          docker compose -f compose.yaml -f compose.test.yaml exec -T nextcloud \
+            curl -sf http://localhost/status.php >/dev/null
+          docker compose -f compose.yaml -f compose.test.yaml exec -T immich-server \
+            curl -fsS http://localhost:2283/api/server/ping >/dev/null
+
+          # Lightweight HTTPS smoke test against Traefik (self-signed / internal). Skips certificate validation.
+          # Uses --resolve to map host to loopback since we don't have DNS in CI.
+          curl -sk --resolve "traefik.test.local:443:127.0.0.1" https://traefik.test.local/ >/dev/null
+
+          docker compose -f compose.yaml -f compose.test.yaml down
+
+  test-arm64:
+    name: Test ARM64 Compatibility
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [linux/arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64,arm
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create test environment
+        run: |
+          echo "HOST_NAME=pi.test" > .env
+          echo "USER=testuser" >> .env
+          echo "EMAIL=test@example.com" >> .env
+          echo "PASSWORD=testpass123" >> .env
+
+      - name: Test multi-arch image compatibility
+        run: |
+          set -euo pipefail
+
+          # Keep checks version-accurate by reading images directly from compose.yaml.
+          IMAGES="$(docker compose -f compose.yaml config --images | sort -u)"
+
+          if [ -z "$IMAGES" ]; then
+            echo "No images found in compose.yaml"
+            exit 1
+          fi
+
+          CHECKED=0
+
+          for image in $IMAGES; do
+            echo "Testing $image on ${{ matrix.platform }}"
+            case "$image" in
+              ghcr.io/qdm12/ddns-updater:*)
+                docker run --platform ${{ matrix.platform }} --rm "$image" version
+                CHECKED=$((CHECKED + 1))
+                ;;
+              containrrr/watchtower:*)
+                docker run --platform ${{ matrix.platform }} --rm "$image" --help >/dev/null
+                CHECKED=$((CHECKED + 1))
+                ;;
+              traefik:*)
+                docker run --platform ${{ matrix.platform }} --rm "$image" version
+                CHECKED=$((CHECKED + 1))
+                ;;
+              netdata/netdata:*)
+                docker run --platform ${{ matrix.platform }} --rm --entrypoint /bin/sh "$image" -c "netdata -v"
+                CHECKED=$((CHECKED + 1))
+                ;;
+              portainer/portainer-ce:*)
+                docker run --platform ${{ matrix.platform }} --rm "$image" --version
+                CHECKED=$((CHECKED + 1))
+                ;;
+              n8nio/n8n:*)
+                docker run --platform ${{ matrix.platform }} --rm "$image" --version
+                CHECKED=$((CHECKED + 1))
+                ;;
+              pihole/pihole:*)
+                timeout 120s docker run --platform ${{ matrix.platform }} --rm \
+                  --entrypoint /bin/sh "$image" -c "pihole-FTL --version"
+                CHECKED=$((CHECKED + 1))
+                ;;
+              nextcloud:*)
+                docker run --platform ${{ matrix.platform }} --rm --entrypoint php "$image" -v
+                CHECKED=$((CHECKED + 1))
+                ;;
+              headscale/headscale:*)
+                docker run --platform ${{ matrix.platform }} --rm "$image" version
+                CHECKED=$((CHECKED + 1))
+                ;;
+              tailscale/tailscale:*)
+                docker run --platform ${{ matrix.platform }} --rm "$image" tailscale version
+                CHECKED=$((CHECKED + 1))
+                ;;
+              docker.io/valkey/valkey:*)
+                docker run --platform ${{ matrix.platform }} --rm "$image" redis-server --version
+                CHECKED=$((CHECKED + 1))
+                ;;
+              ghcr.io/immich-app/postgres:*)
+                docker run --platform ${{ matrix.platform }} --rm "$image" postgres --version
+                CHECKED=$((CHECKED + 1))
+                ;;
+              ghcr.io/immich-app/immich-server:*)
+                docker run --platform ${{ matrix.platform }} --rm --entrypoint /bin/sh "$image" -c "node --version"
+                CHECKED=$((CHECKED + 1))
+                ;;
+              *)
+                echo "Skipping unsupported image check: $image"
+                ;;
+            esac
           done
+
+          if [ "$CHECKED" -eq 0 ]; then
+            echo "No image checks executed"
+            exit 1
+          fi
+
+          echo "Executed $CHECKED image checks"
+
+  install:
+    name: Validate install and systemd
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create minimal .env for install
+        run: |
+          # The Makefile install target hard-fails if .env is absent.
+          # Provide just the required baseline variables for template rendering.
+          cat > .env <<'EOF'
+          HOST_NAME=ci.test
+          USER=testuser
+          PASSWORD=testpassword123
+          EMAIL=test@example.com
+          TIMEZONE=UTC
+          EOF
+
+      - name: Install systemd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y systemd
+
+      - name: Test Makefile install systemd
+        run: |
+          make install SKIP_START=1
+          test -f /etc/systemd/system/pi-web.service
+          sudo systemd-analyze verify /etc/systemd/system/pi-web.service
+          test -f /etc/systemd/system/pi-web-restart.service
+          sudo systemd-analyze verify /etc/systemd/system/pi-web-restart.service
+          test -f /etc/systemd/system/pi-web-restart.timer
+          sudo systemd-analyze verify /etc/systemd/system/pi-web-restart.timer
+
+  dependency-check:
+    name: Check Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Check required tools availability
+        run: |
+          # Test Docker availability
+          docker --version
+          docker compose version
+
+          # Test make availability
+          make --version
+
+          # Test git availability (for make update)
+          git --version
 
   build-and-push:
     name: Build and Push Documentation
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    needs: [lint, security, test-deployment]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'schedule'
+    needs:
+      [lint, security, test-deployment, test-arm64, install, dependency-check]
     permissions:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Generate documentation
         run: |
           cat > docs.md << EOF
-          # pi-web Documentation
+          # pi-web build status
 
-          ## Services Validated
-          - ✅ All services deployment tested
-          - ✅ Security scan completed
-
-          Generated: $(date)
+          Last build: $(date)
           EOF
 
       - name: Deploy documentation to GitHub Pages
@@ -174,25 +328,3 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: .
           destination_dir: docs
-
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]')
-    needs: [lint, security, test-deployment]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Create Release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v$(date +'%Y.%m.%d')
-          release_name: Release v$(date +'%Y.%m.%d')
-          body: "Automated release with validated services"
-          draft: false
-          prerelease: false
