@@ -29,7 +29,7 @@ main() {
     if [ -f "$ENV_FILE" ]; then
         EMAIL=$(grep "^EMAIL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
         HOST_NAME=$(grep "^HOST_NAME=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
-        PIHOLE_IP=$(grep "^PIHOLE_IP=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
+        TAILSCALE_DNS_IP=$(grep "^TAILSCALE_DNS_IP=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
     fi
 
     if [ -z "$EMAIL" ]; then
@@ -38,7 +38,7 @@ main() {
     fi
 
     HOST_NAME="${HOST_NAME:-pi.lan}"
-    PIHOLE_IP="${PIHOLE_IP:-192.168.1.29}"
+    TAILSCALE_DNS_IP="${TAILSCALE_DNS_IP:-100.64.0.1}"
 
     UPDATED_POLICY=$(sed -e "s|__HEADSCALE_USER__|$EMAIL|g" "$POLICY_TEMPLATE_FILE")
 
@@ -49,7 +49,10 @@ main() {
         log "Rendered policy to $POLICY_FILE"
     fi
 
-    UPDATED_CONFIG=$(sed -e "s|__HOST_NAME__|$HOST_NAME|g" -e "s|__PIHOLE_IP__|$PIHOLE_IP|g" "$CONFIG_TEMPLATE_FILE")
+    UPDATED_CONFIG=$(sed \
+        -e "s|__HOST_NAME__|$HOST_NAME|g" \
+        -e "s|__TAILSCALE_DNS_IP__|$TAILSCALE_DNS_IP|g" \
+        "$CONFIG_TEMPLATE_FILE")
 
     if [ -f "$CONFIG_FILE" ] && [ "$UPDATED_CONFIG" = "$(cat "$CONFIG_FILE")" ]; then
         log "Config already up to date"

@@ -44,8 +44,12 @@ install:
 	sudo systemctl daemon-reload
 	sudo systemctl enable $(UNIT)
 	@echo "✅ Systemd units installed"
-	@echo "🚀 Starting stack..."
-	sudo systemctl start $(UNIT)
+	@if [ "$(SKIP_START)" = "1" ]; then \
+		echo "⏭️  SKIP_START=1 set; not starting stack"; \
+	else \
+		echo "🚀 Starting stack..."; \
+		sudo systemctl start $(UNIT); \
+	fi
 	@echo "✅ Installation complete"
 
 uninstall:

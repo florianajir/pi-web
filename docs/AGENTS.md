@@ -4,7 +4,7 @@
 
 - `compose.yaml` runs the production stack; extend with `compose.test.yaml` for CI-safe overrides.
 - `config/` stores service configs: `pihole/` dnsmasq, `systemd/` templates.
-- `data/` keeps persistent volumes such as `data/n8n/`; avoid committing large exports or secrets.
+- `data/` keeps persistent volumes for stateful services (immich, postgres, n8n, nextcloud).
 - `etc/systemd/` mirrors units already installed on hosts; edit sources under `config/systemd/` instead.
 - `.env.dist` lists required variables; copy to `.env` before invoking any Make target.
 

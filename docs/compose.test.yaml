@@ -6,7 +6,8 @@ services:
   pihole:
     # Override port bindings to avoid conflicts in CI environments
     # Port 53 is typically already in use by system DNS resolver
-    ports: []
+    # Use !reset so Docker Compose does not inherit 53:53 bindings from compose.yaml.
+    ports: !reset []
     # Keep expose directive for internal container communication
     expose:
       - 53

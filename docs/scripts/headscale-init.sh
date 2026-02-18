@@ -1,6 +1,6 @@
 #!/bin/sh
 # Auto-initialization script for Headscale + Tailscale
-# Runs automatically on first start, creates user and preauthkey
+# Runs automatically on first start, creates user and performs one-time Tailscale bootstrap
 
 set -e
 
@@ -45,6 +45,19 @@ wait_for_headscale() {
     return 1
 }
 
+wait_for_tailscale_container() {
+    log "Waiting for Tailscale container to appear..."
+    for i in $(seq 1 $MAX_RETRIES); do
+        if docker ps --format '{{.Names}}' | grep -q '^pi-tailscale$'; then
+            log "Tailscale container is running"
+            return 0
+        fi
+        sleep $RETRY_INTERVAL
+    done
+    log "ERROR: Tailscale container did not start in time"
+    return 1
+}
+
 user_exists() {
     docker exec pi-headscale "$HEADSCALE_BIN" users list --output json 2>/dev/null | \
         grep -q "\"name\": \"${HEADSCALE_USER}\""
@@ -66,134 +79,49 @@ create_user() {
     fi
 }
 
-get_valid_preauthkey() {
-    local user_id="$1"
-    # Check if there's already a valid reusable preauthkey using JSON output
-    docker exec pi-headscale "$HEADSCALE_BIN" preauthkeys list --output json 2>/dev/null | \
-        awk -v user="$HEADSCALE_USER" '
-            /"name":/ {
-                user_match = ($0 ~ "\"name\": \"" user "\"")
-            }
-            /"key":/ {
-                if (user_match) {
-                    if (match($0, /"key": "[^"]+"/)) {
-                        current_key = substr($0, RSTART + 8, RLENGTH - 9)
-                        current_key_len = length(current_key)
-                    }
-                } else {
-                    current_key = ""
-                    current_key_len = 0
-                }
-            }
-            /"tag:router"/ {
-                if (current_key != "" && current_key_len >= 88) {
-                    print current_key
-                    exit
-                }
-            }
-        '
-}
-
-current_key_is_valid() {
-    local user_id="$1"
-    local key="$2"
-
-    if [ -z "$key" ]; then
-        return 1
-    fi
-
-    docker exec pi-headscale "$HEADSCALE_BIN" preauthkeys list --output json 2>/dev/null | \
-        awk -v key="$key" '
-            /"key":/ {
-                if (match($0, /"key": "[^"]+"/)) {
-                    current_key = substr($0, RSTART + 8, RLENGTH - 9)
-                    key_match = (current_key == key)
-                    key_len = length(current_key)
-                }
-            }
-            /"tag:router"/ {
-                if (key_match && key_len >= 88) {
-                    exit 0
-                }
-            }
-            END { exit 1 }
-        '
-}
-
 create_preauthkey() {
     local user_id="$1"
-    local existing_key
-    existing_key=$(get_valid_preauthkey "$user_id")
-    
-    if [ -n "$existing_key" ]; then
-        log "Valid preauthkey already exists"
-        echo "$existing_key"
-        return 0
-    fi
-    
-    log "Creating new preauthkey (expires in 1 year) with tag:router..."
-    docker exec pi-headscale "$HEADSCALE_BIN" preauthkeys create --user "$user_id" --reusable --expiration 8760h --tags tag:router --output json 2>/dev/null | \
+
+    # One-time, short-lived key for bootstrap only; long-term identity lives in tailscale_state.
+    log "Creating one-time preauthkey (expires in 30m) with tag:router..."
+    docker exec pi-headscale "$HEADSCALE_BIN" preauthkeys create --user "$user_id" --expiration 30m --tags tag:router --output json 2>/dev/null | \
         grep -o '"key": *"[^"]*"' | sed 's/"key": *"\([^"]*\)"/\1/'
 }
 
-update_env_if_needed() {
-    local key="$1"
-    
-    if [ -z "$key" ]; then
-        log "ERROR: No preauthkey provided"
-        return 1
-    fi
-    
-    # Check current value in .env
-    local current_key=""
-    if [ -f "$ENV_FILE" ]; then
-        current_key=$(grep "^TS_AUTHKEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
-    fi
-    
-    if [ "$current_key" = "$key" ]; then
-        log "TS_AUTHKEY already set correctly"
-        return 0
-    fi
-    
-    log "Updating TS_AUTHKEY in .env..."
-    if [ -f "$ENV_FILE" ]; then
-        if grep -q "^TS_AUTHKEY=" "$ENV_FILE"; then
-            sed -i "s|^TS_AUTHKEY=.*|TS_AUTHKEY=${key}|" "$ENV_FILE"
-        else
-            echo "TS_AUTHKEY=${key}" >> "$ENV_FILE"
-        fi
-    fi
-    
-    log "TS_AUTHKEY updated"
-    return 0
-}
+connect_tailscale_if_needed() {
+    local user_id="$1"
+    local key=""
 
-restart_tailscale_if_needed() {
-    local key="$1"
-    local project_name=""
-    
     # Check if tailscale is already connected
     if docker exec pi-tailscale tailscale status --peers=false >/dev/null 2>&1; then
         log "Tailscale already connected"
         return 0
     fi
-    
-    log "Recreating Tailscale to pick up updated TS_AUTHKEY..."
 
-    if [ -f "$PROJECT_DIR/compose.yaml" ]; then
-        project_name=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' pi-tailscale 2>/dev/null || true)
-        if [ -z "$project_name" ]; then
-            project_name="pi-web"
-        fi
+    key=$(create_preauthkey "$user_id")
 
-        docker compose --project-name "$project_name" -f "$PROJECT_DIR/compose.yaml" \
-            up -d --no-deps --force-recreate tailscale
-    else
-        log "ERROR: compose.yaml not found at $PROJECT_DIR/compose.yaml"
+    if [ -z "$key" ]; then
+        log "ERROR: Failed to create one-time preauthkey"
         return 1
     fi
 
-    log "Tailscale recreated"
+    log "Bootstrapping Tailscale with one-time auth key..."
+    docker exec pi-tailscale tailscale up \
+        --login-server="https://headscale.${HOST_NAME}" \
+        --auth-key="$key" \
+        --accept-dns=true \
+        --advertise-exit-node \
+        --advertise-routes=192.168.1.0/24 \
+        --accept-routes \
+        --hostname="tailscale.${HOST_NAME}"
+
+    if docker exec pi-tailscale tailscale status --peers=false >/dev/null 2>&1; then
+        log "Tailscale bootstrap successful"
+        return 0
+    fi
+
+    log "ERROR: Tailscale bootstrap failed"
+    return 1
 }
 
 main() {
@@ -205,7 +133,7 @@ main() {
         EMAIL=$(grep "^EMAIL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
     fi
     HOST_NAME="${HOST_NAME:-pi.lan}"
-    HEADSCALE_USER="$EMAIL"
+    HEADSCALE_USER="${EMAIL:-admin}"
 
     # Wait for Headscale container to start (first boot can be slow)
     if ! wait_for_headscale_container; then
@@ -229,38 +157,20 @@ main() {
         exit 1
     fi
     log "Using user ID: $USER_ID"
-    
-    # Decide which auth key to use (refresh if reset invalidated current key)
-    CURRENT_KEY=""
-    if [ -f "$ENV_FILE" ]; then
-        CURRENT_KEY=$(grep "^TS_AUTHKEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
-    fi
 
-    if current_key_is_valid "$USER_ID" "$CURRENT_KEY"; then
-        log "Existing TS_AUTHKEY is still valid"
-        PREAUTHKEY="$CURRENT_KEY"
-    else
-        # Get or create preauthkey
-        PREAUTHKEY=$(create_preauthkey "$USER_ID")
-    fi
-    
-    if [ -z "$PREAUTHKEY" ]; then
-        log "ERROR: Failed to get/create preauthkey"
+    # Wait for Tailscale container to start (first boot can be slow)
+    if ! wait_for_tailscale_container; then
+        log "Tailscale container did not become ready"
         exit 1
     fi
-    
-    log "Preauthkey: $PREAUTHKEY"
-    
-    # Update .env file
-    update_env_if_needed "$PREAUTHKEY"
-    
-    # Restart Tailscale if not connected
-    restart_tailscale_if_needed "$PREAUTHKEY"
+
+    # Bootstrap Tailscale if not connected (key is never persisted)
+    connect_tailscale_if_needed "$USER_ID"
     
     log "=== Init Complete ==="
     log ""
-    log "To connect external clients (with self-signed cert):"
-    log "  sudo tailscale up --login-server=https://headscale.${HOST_NAME} --auth-key=$PREAUTHKEY --accept-dns=true --accept-routes"
+    log "To connect external clients:"
+    log "  sudo tailscale up --login-server=https://headscale.${HOST_NAME} --auth-key=<one-time-key> --accept-dns=true --accept-routes"
 }
 
 main "$@"

@@ -62,7 +62,14 @@
 	"yaml.schemas": {
 		"https://json.schemastore.org/github-workflow.json": "/*.github/workflows/*.yml"
 	},
+	"yaml.customTags": [
+		"!reset sequence"
+	],
 	"[yaml]": {
 		"editor.defaultFormatter": "redhat.vscode-yaml"
+	},
+	"chat.tools.terminal.autoApprove": {
+		"nslookup": true,
+		"true": true
 	}
 }
