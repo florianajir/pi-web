@@ -332,6 +332,17 @@ services:
       - "traefik.http.routers.headscale.tls.domains[0].main=${HOST_NAME:-pi.lan}"
       - "traefik.http.routers.headscale.tls.domains[0].sans=*.${HOST_NAME:-pi.lan}"
       - "traefik.http.services.headscale.loadbalancer.server.port=8080"
+      - "traefik.http.routers.headscale.middlewares=cors"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowheaders=*"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowmethods=GET,POST,PUT"
+      - "traefik.http.middlewares.cors.headers.accesscontrolalloworiginlist=https://headscale.${HOST_NAME:-pi.lan}"
+      - "traefik.http.middlewares.cors.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.cors.headers.addvaryheader=true"
+      - "traefik.http.routers.rewrite.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && Path(`/`)"
+      - "traefik.http.routers.rewrite.service=headscale"
+      - "traefik.http.routers.rewrite.middlewares=rewrite"
+      - "traefik.http.middlewares.rewrite.addprefix.prefix=/admin"
+
     <<: *default-logging
     healthcheck:
       test: ["CMD", "/ko-app/headscale", "health"]
@@ -357,6 +368,7 @@ services:
     environment:
       - HEADPLANE_LOAD_ENV_OVERRIDES=true
       - HEADPLANE_SERVER__COOKIE_SECRET=${HEADPLANE_COOKIE_SECRET:-CHANGEME_32CHARS_EXACTLY_XXXXXXX}
+      - HEADPLANE_HEADSCALE__URL=http://headscale:8080
     depends_on:
       - headscale
     labels:
@@ -364,11 +376,12 @@ services:
       - "com.example.service=headplane"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      - "traefik.http.routers.headplane.rule=Host(`headplane.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.headplane.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && PathPrefix(`/admin`)"
       - "traefik.http.routers.headplane.entrypoints=websecure"
       - "traefik.http.routers.headplane.middlewares=lan@docker"
       - "traefik.http.routers.headplane.tls=true"
       - "traefik.http.services.headplane.loadbalancer.server.port=3000"
+
     <<: *default-logging
     mem_limit: 128m
 
