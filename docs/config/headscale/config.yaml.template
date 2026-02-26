@@ -1,5 +1,8 @@
 # Minimal Headscale configuration
-# Dynamic values (server_url, dns.base_domain) are set via HEADSCALE_* environment variables in docker compose
+# server_url and dns.base_domain are overridden at runtime via HEADSCALE_* env vars in docker compose,
+# but must be present here so headplane can validate the config file.
+
+server_url: https://headscale.__HOST_NAME__
 
 listen_addr: 0.0.0.0:8080
 metrics_listen_addr: 0.0.0.0:9090
