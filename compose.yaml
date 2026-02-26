@@ -322,6 +322,7 @@ services:
     labels:
       - "com.example.description=Headscale coordination server"
       - "com.example.service=headscale"
+      - "me.tale.headplane.target=headscale"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.headscale.rule=Host(`headscale.${HOST_NAME:-pi.lan}`)"
@@ -339,6 +340,37 @@ services:
       retries: 3
       start_period: 30s
     mem_limit: 256m
+
+  headplane:
+    image: ghcr.io/tale/headplane:0.6.1
+    container_name: pi-headplane
+    restart: unless-stopped
+    networks:
+      - frontend
+    expose:
+      - 3000
+    volumes:
+      - ./config/headplane/config.yaml:/etc/headplane/config.yaml:ro
+      - ./config/headscale:/etc/headscale:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - headplane_data:/var/lib/headplane
+    environment:
+      - HEADPLANE_LOAD_ENV_OVERRIDES=true
+      - HEADPLANE_SERVER__COOKIE_SECRET=${HEADPLANE_COOKIE_SECRET:-CHANGEME_32CHARS_EXACTLY_XXXXXXX}
+    depends_on:
+      - headscale
+    labels:
+      - "com.example.description=Headplane Headscale Web UI"
+      - "com.example.service=headplane"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.headplane.rule=Host(`headplane.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.headplane.entrypoints=websecure"
+      - "traefik.http.routers.headplane.middlewares=lan@docker"
+      - "traefik.http.routers.headplane.tls=true"
+      - "traefik.http.services.headplane.loadbalancer.server.port=3000"
+    <<: *default-logging
+    mem_limit: 128m
 
   tailscale:
     image: tailscale/tailscale:stable
@@ -551,6 +583,10 @@ volumes:
     labels:
       - "com.example.description=Headscale runtime socket"
       - "com.example.service=headscale"
+  headplane_data:
+    labels:
+      - "com.example.description=Headplane persistent data"
+      - "com.example.service=headplane"
   tailscale_state:
     labels:
       - "com.example.description=Tailscale persistent state"
