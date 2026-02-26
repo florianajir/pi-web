@@ -338,10 +338,6 @@ services:
       - "traefik.http.middlewares.cors.headers.accesscontrolalloworiginlist=https://headscale.${HOST_NAME:-pi.lan}"
       - "traefik.http.middlewares.cors.headers.accesscontrolmaxage=100"
       - "traefik.http.middlewares.cors.headers.addvaryheader=true"
-      - "traefik.http.routers.rewrite.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && Path(`/`)"
-      - "traefik.http.routers.rewrite.service=headscale"
-      - "traefik.http.routers.rewrite.middlewares=rewrite"
-      - "traefik.http.middlewares.rewrite.addprefix.prefix=/admin"
 
     <<: *default-logging
     healthcheck:
@@ -376,11 +372,19 @@ services:
       - "com.example.service=headplane"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      - "traefik.http.routers.headplane.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && PathPrefix(`/admin`)"
+      - "traefik.http.routers.headplane.rule=Host(`headplane.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.headplane.entrypoints=websecure"
       - "traefik.http.routers.headplane.middlewares=lan@docker"
       - "traefik.http.routers.headplane.tls=true"
+      - "traefik.http.routers.headplane.tls.certresolver=cloudflare"
       - "traefik.http.services.headplane.loadbalancer.server.port=3000"
+      - "traefik.http.routers.headplane-root.rule=Host(`headplane.${HOST_NAME:-pi.lan}`) && Path(`/`)"
+      - "traefik.http.routers.headplane-root.entrypoints=websecure"
+      - "traefik.http.routers.headplane-root.middlewares=lan@docker,headplane-root-redirect@docker"
+      - "traefik.http.routers.headplane-root.tls=true"
+      - "traefik.http.routers.headplane-root.service=headplane"
+      - "traefik.http.middlewares.headplane-root-redirect.redirectregex.regex=^https?://([^/]+)/$$"
+      - "traefik.http.middlewares.headplane-root-redirect.redirectregex.replacement=https://$${1}/admin"
 
     <<: *default-logging
     mem_limit: 128m
