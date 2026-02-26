@@ -66,7 +66,7 @@ user_exists() {
 get_user_id() {
     # Extract the id field from JSON for the configured user
     docker exec pi-headscale "$HEADSCALE_BIN" users list --output json 2>/dev/null | \
-        grep -B 1 "\"name\": \"${HEADSCALE_USER}\"" | grep '"id"' | grep -o '[0-9]\+' | head -1
+        grep "\"name\": \"${HEADSCALE_USER}\"" -B 1 | grep '"id"' | sed 's/[^0-9]*\([0-9]\+\).*/\1/' | head -1
 }
 
 create_user() {
@@ -129,11 +129,15 @@ main() {
     
     # Load HOST_NAME/EMAIL from .env
     if [ -f "$ENV_FILE" ]; then
-        HOST_NAME=$(grep "^HOST_NAME=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "pi.lan")
-        EMAIL=$(grep "^EMAIL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
+        HOST_NAME=$(grep "^HOST_NAME=" "$ENV_FILE" | cut -d'=' -f2 | tr -d '\r' | tail -n1)
+        EMAIL=$(grep "^EMAIL=" "$ENV_FILE" | cut -d'=' -f2 | tr -d '\r' | tail -n1)
     fi
     HOST_NAME="${HOST_NAME:-pi.lan}"
     HEADSCALE_USER="${EMAIL:-admin}"
+    if [ -z "$HEADSCALE_USER" ]; then
+        log "ERROR: HEADSCALE_USER (EMAIL) is not set."
+        exit 1
+    fi
 
     # Wait for Headscale container to start (first boot can be slow)
     if ! wait_for_headscale_container; then
@@ -166,11 +170,6 @@ main() {
 
     # Bootstrap Tailscale if not connected (key is never persisted)
     connect_tailscale_if_needed "$USER_ID"
-    
-    log "=== Init Complete ==="
-    log ""
-    log "To connect external clients:"
-    log "  sudo tailscale up --login-server=https://headscale.${HOST_NAME} --auth-key=<one-time-key> --accept-dns=true --accept-routes"
 }
 
 main "$@"

@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart update status logs preflight headscale-register
+.PHONY: help install uninstall start stop restart update status logs preflight headscale-register headscale-reset
 
 PROJECT_PATH := $(shell pwd)
 UNIT         := pi-web.service
@@ -21,6 +21,7 @@ help:
 	@echo "  update    Git pull + restart"
 	@echo "  preflight Quick env readiness check"
 	@echo "  headscale-register <key> Register a headscale node"
+	@echo "  headscale-reset Reset all Headscale nodes, preauth keys, and IP allocations"
 	@echo "  help      This help"
 
 preflight:
@@ -117,3 +118,13 @@ headscale-register:
 	if [ -z "$$EMAIL_FROM_ENV" ]; then echo "❌ EMAIL not set in .env"; exit 1; fi; \
 	$(COMPOSE) run --rm headscale nodes register --key "$(HEADSCALE_KEY)" --user "$$EMAIL_FROM_ENV"
 
+headscale-reset:
+	@echo "⚠️  This will WIPE ALL Headscale nodes, preauth keys, and IP allocations!"
+	@read -p "Are you sure? Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
+	@echo "🧹 Deleting all Headscale nodes..."
+	-docker compose exec -T headscale headscale nodes list -o json | jq -r '.[].id' 2>/dev/null | xargs -r -I{} docker compose exec -T headscale headscale nodes delete --identifier {} --force
+	@echo "🧹 Deleting all Headscale preauth keys..."
+	-docker compose exec -T headscale headscale preauthkeys list -o json | jq -r '.[].id' 2>/dev/null | xargs -r -I{} docker compose exec -T headscale headscale preauthkeys expire --id {} --force
+	@echo "🧹 Resetting Headscale IP allocations (restarting service)..."
+	-docker compose restart headscale
+	@echo "✅ Headscale reset complete"

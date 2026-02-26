@@ -71,6 +71,26 @@ make status
 
 ---
 
+
+## Registering a new Headscale node
+
+To add a new device to your private Tailscale network managed by Headscale:
+
+1. On the client device, install Tailscale and run the join command. It will output a registration key and prompt for approval.
+2. Copy the key provided by the client.
+3. On your Pi-Web host, run:
+
+  ```bash
+  make headscale-register <key>
+  ```
+
+  Replace `<key>` with the actual key from the client.
+
+4. The node will be registered to the user specified by the `EMAIL` variable in your `.env` file.
+
+5. The client device should now join your Tailscale network.
+
+---
 ## Make commands
 
 | Command | Description |
@@ -102,31 +122,21 @@ make status
 - `HOST_LAN_PARENT` (default: `eth0`)
 - `HOST_LAN_SUBNET` (default: `192.168.1.0/24`)
 - `HOST_LAN_GATEWAY` (default: `192.168.1.1`)
-- `PIHOLE_IP` (default: `192.168.1.29`)
-- `TAILSCALE_DNS_IP` (default: `100.64.0.1`)
-- `ALLOW_IP_RANGES` (default: `127.0.0.1/32,192.168.1.0/24,100.64.0.0/10`)
+- `PIHOLE_IP` (default: `192.168.1.250`)
+- `ALLOW_IP_RANGES` (default: `127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16`)
 
 ### Traefik / Cloudflare
 - `CLOUDFLARE_DNS_API_TOKEN`
 - `CLOUDFLARE_ZONE_ID`
 
 ### PostgreSQL (shared)
-- `DB_PASSWORD`
-- `DB_USERNAME` (default: `postgres`)
-- `DB_DATABASE_NAME` (default: `postgres`)
 - `DB_DATA_LOCATION` (default: `./data/postgres`)
 
 ### Immich
-- `IMMICH_DB_NAME` (default: `immich`)
-- `IMMICH_DB_USER` (default: `immich`)
-- `IMMICH_DB_PASSWORD`
 - `IMMICH_UPLOAD_LOCATION` (default: `./data/immich`)
 
 ### Nextcloud
-- `NEXTCLOUD_DB_NAME` (default: `nextcloud`)
-- `NEXTCLOUD_DB_USER` (default: `nextcloud`)
-- `NEXTCLOUD_DB_PASSWORD` (default: `nextcloud-secure-password`)
-- `NEXTCLOUD_TRUSTED_PROXIES` (default: `172.30.11.0/24`)
+- `NEXTCLOUD_DATA_LOCATION` (default: `./data/nextcloud`)
 
 ### Netdata Cloud (optional)
 - `NETDATA_CLAIM_TOKEN`

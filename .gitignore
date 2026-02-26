@@ -1,3 +1,5 @@
 /.env
+/data
 /config/headscale/policy.hujson
 /config/headscale/config.yaml
+/config/pihole/dnsmasq.d

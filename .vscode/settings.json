@@ -13,6 +13,7 @@
 		"containrrr",
 		"coredns",
 		"datasource",
+		"ddns",
 		"dnsmasq",
 		"DNSSEC",
 		"exposedbydefault",

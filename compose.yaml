@@ -10,6 +10,7 @@ services:
     image: ghcr.io/qdm12/ddns-updater:v2.9
     container_name: pi-ddns-updater
     restart: unless-stopped
+    <<: *default-logging
     environment:
       CONFIG: >-
         {"settings":[
@@ -24,12 +25,15 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    <<: *default-logging
+    labels:
+      - "com.example.description=Dynamic DNS updater for Cloudflare"
+      - "com.example.service=ddns"
     mem_limit: 128m
 
   watchtower:
     container_name: pi-watchtower
     image: containrrr/watchtower:1.7.1
+    restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -44,7 +48,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    restart: unless-stopped
+    labels:
+      - "com.example.description=Watchtower automatic updates"
+      - "com.example.service=watchtower"
     mem_limit: 64m
 
   traefik:
@@ -65,6 +71,7 @@ services:
       - "--entrypoints.websecure.http.middlewares=compress@docker,hsts@docker"
       - "--entrypoints.websecure.http.tls.certresolver=cloudflare"
       - "--entrypoints.websecure.http3=true"
+      - "--entrypoints.websecure.forwardedHeaders.trustedIPs=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}"
       # Providers
       - "--providers.docker=true"
       - "--providers.docker.watch=true"
@@ -82,7 +89,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.middlewares.compress.compress=true"
       - "traefik.http.middlewares.hsts.headers.stsSeconds=2592000"
-      - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-192.168.1.0/24}"
+      - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}"
       - "traefik.http.routers.traefik.middlewares=lan@docker"
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.rule=Host(`traefik.${HOST_NAME:-pi.lan}`)"
@@ -149,7 +156,7 @@ services:
       start_period: 30s
     labels:
       - "com.example.description=Netdata real-time monitoring"
-      - "com.example.service=monitoring"
+      - "com.example.service=netdata"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.netdata.rule=Host(`netdata.${HOST_NAME:-pi.lan}`)"
@@ -158,7 +165,7 @@ services:
       - "traefik.http.routers.netdata.tls=true"
       - "traefik.http.services.netdata.loadbalancer.server.port=19999"
     <<: *default-logging
-    mem_limit: 512m
+    mem_limit: 256m
 
   portainer:
     image: portainer/portainer-ce:lts
@@ -173,7 +180,7 @@ services:
       - portainer_data:/data
     labels:
       - "com.example.description=Portainer container management"
-      - "com.example.service=monitoring"
+      - "com.example.service=portainer"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.portainer.rule=Host(`portainer.${HOST_NAME:-pi.lan}`)"
@@ -218,7 +225,7 @@ services:
     networks:
       frontend: {}
       lan:
-        ipv4_address: ${PIHOLE_IP:-192.168.1.29}
+        ipv4_address: ${PIHOLE_IP:-192.168.1.250}
     labels:
       - "com.example.description=Pi-hole DNS Ad-Blocker"
       - "com.example.service=pihole"
@@ -267,7 +274,7 @@ services:
       - DB_SQLITE_POOL_SIZE=2
     volumes:
       - n8n_data:/home/node/.n8n
-      - ./data/n8n/files:/files
+      - ./data/n8n:/files
     networks:
       - frontend
     <<: *default-logging
@@ -288,55 +295,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    mem_limit: 512m
-
-  nextcloud:
-    image: nextcloud:32-apache
-    container_name: pi-nextcloud
-    restart: unless-stopped
-    environment:
-      - NEXTCLOUD_ADMIN_USER=${USER:-admin}
-      - NEXTCLOUD_ADMIN_PASSWORD=${PASSWORD:-admin}
-      - NEXTCLOUD_ADMIN_EMAIL=${EMAIL:-admin@example.com}
-      - NEXTCLOUD_TRUSTED_DOMAINS=nextcloud.${HOST_NAME:-pi.lan}
-      - NEXTCLOUD_DATA_DIR=/var/www/html/data
-      - OVERWRITEHOST=nextcloud.${HOST_NAME:-pi.lan}
-      - OVERWRITEPROTOCOL=https
-      - TRUSTED_PROXIES=${NEXTCLOUD_TRUSTED_PROXIES:-172.30.11.0/24}
-      - POSTGRES_HOST=postgres
-      - POSTGRES_DB=${NEXTCLOUD_DB_NAME:-nextcloud}
-      - POSTGRES_USER=${NEXTCLOUD_DB_USER:-nextcloud}
-      - POSTGRES_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-nextcloud-secure-password}
-      - REDIS_HOST=redis
-      - TZ=${TIMEZONE:-Europe/Paris}
-    volumes:
-      - nextcloud_data:/var/www/html
-    networks:
-      - frontend
-      - nextcloud
-    labels:
-      - "com.example.description=Nextcloud self-hosted storage"
-      - "com.example.service=nextcloud"
-      - "traefik.enable=true"
-      - "traefik.docker.network=frontend"
-      - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`)"
-      - "traefik.http.routers.nextcloud.entrypoints=websecure"
-      - "traefik.http.routers.nextcloud.middlewares=lan@docker"
-      - "traefik.http.routers.nextcloud.tls=true"
-      - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/status.php"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    <<: *default-logging
-    mem_limit: 1g
+    mem_limit: 384m
 
   # Connectivity Stack
   headscale:
@@ -418,13 +377,14 @@ services:
     volumes:
       - ${IMMICH_UPLOAD_LOCATION:-./data/immich}:/data
       - /etc/localtime:/etc/localtime:ro
+    <<: *default-logging
     environment:
       DB_TYPE: postgresql
       DB_HOSTNAME: postgres
       DB_PORT: 5432
-      DB_USERNAME: ${IMMICH_DB_USER:-immich}
-      DB_PASSWORD: ${IMMICH_DB_PASSWORD:-immich-secure-password}
-      DB_DATABASE_NAME: ${IMMICH_DB_NAME:-immich}
+      DB_DATABASE_NAME: immich
+      DB_USERNAME: immich
+      DB_PASSWORD: ${PASSWORD}
       REDIS_HOSTNAME: redis
       REDIS_PORT: 6379
       REDIS_DBINDEX: 0
@@ -456,8 +416,84 @@ services:
       - "traefik.http.routers.immich.middlewares=lan@docker"
       - "traefik.http.routers.immich.tls=true"
       - "traefik.http.services.immich.loadbalancer.server.port=2283"
-    <<: *default-logging
     mem_limit: 1g
+
+  nextcloud:
+    image: nextcloud:32-apache
+    container_name: pi-nextcloud
+    restart: unless-stopped
+    <<: *default-logging
+    environment:
+      - NEXTCLOUD_ADMIN_USER=${USER}
+      - NEXTCLOUD_ADMIN_PASSWORD=${PASSWORD}
+      - NEXTCLOUD_ADMIN_EMAIL=${EMAIL}
+      - NEXTCLOUD_TRUSTED_DOMAINS=nextcloud.${HOST_NAME:-pi.lan}
+      - NEXTCLOUD_DATA_DIR=/var/www/html/data
+      - OVERWRITEHOST=nextcloud.${HOST_NAME:-pi.lan}
+      - OVERWRITEPROTOCOL=https
+      - TRUSTED_PROXIES=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=nextcloud
+      - POSTGRES_USER=nextcloud
+      - POSTGRES_PASSWORD=${PASSWORD}
+      - REDIS_HOST=redis
+      - TZ=${TIMEZONE:-Europe/Paris}
+    volumes:
+      - ${NEXTCLOUD_DATA_LOCATION:-./data/nextcloud}:/var/www/html/data
+    networks:
+      - frontend
+      - nextcloud
+    labels:
+      - "com.example.description=Nextcloud self-hosted storage"
+      - "com.example.service=nextcloud"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.nextcloud.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud.middlewares=lan@docker"
+      - "traefik.http.routers.nextcloud.tls=true"
+      - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/status.php"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: 1g
+
+  # Database & Cache
+  postgres:
+    container_name: pi-postgres
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    <<: *default-logging
+    environment:
+      POSTGRES_PASSWORD: ${PASSWORD}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      # Uncomment the DB_STORAGE_TYPE: 'HDD' var if your database isn't stored on SSDs
+      # DB_STORAGE_TYPE: 'HDD'
+    volumes:
+      - ${DB_DATA_LOCATION:-./data/postgres}:/var/lib/postgresql/data
+      - ./config/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh
+    restart: always
+    networks:
+      - immich
+      - nextcloud
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    mem_limit: 2g
+    shm_size: 256mb
+    labels:
+      - "com.example.description=PostgreSQL database for Immich & Nextcloud"
+      - "com.example.service=postgres"
 
   redis:
     container_name: pi-redis
@@ -474,81 +510,39 @@ services:
     <<: *default-logging
     mem_limit: 256m
 
-  postgres:
-    container_name: pi-postgres
-    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
-    environment:
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-secure-password}
-      POSTGRES_USER: ${DB_USERNAME:-postgres}
-      POSTGRES_DB: ${DB_DATABASE_NAME:-postgres}
-      POSTGRES_INITDB_ARGS: "--data-checksums"
-      # Immich database vars
-      IMMICH_DB_NAME: ${IMMICH_DB_NAME:-immich}
-      IMMICH_DB_USER: ${IMMICH_DB_USER:-immich}
-      IMMICH_DB_PASSWORD: ${IMMICH_DB_PASSWORD:-immich-secure-password}
-      # Nextcloud database vars
-      NEXTCLOUD_DB_NAME: ${NEXTCLOUD_DB_NAME:-nextcloud}
-      NEXTCLOUD_DB_USER: ${NEXTCLOUD_DB_USER:-nextcloud}
-      NEXTCLOUD_DB_PASSWORD: ${NEXTCLOUD_DB_PASSWORD:-nextcloud-secure-password}
-      # Uncomment the DB_STORAGE_TYPE: 'HDD' var if your database isn't stored on SSDs
-      # DB_STORAGE_TYPE: 'HDD'
-    volumes:
-      - ${DB_DATA_LOCATION:-./data/postgres}:/var/lib/postgresql/data
-      - ./config/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh
-    shm_size: 128mb
-    restart: always
-    networks:
-      - immich
-      - nextcloud
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    <<: *default-logging
-    mem_limit: 2g
-    labels:
-      - "com.example.description=PostgreSQL database for Immich & Nextcloud"
-      - "com.example.service=postgres"
-
 volumes:
   ddns_data:
     labels:
       - "com.example.description=DDNS updater state"
-      - "com.example.service=network"
+      - "com.example.service=ddns"
   traefik_letsencrypt:
     labels:
       - "com.example.description=Traefik ACME certificates"
-      - "com.example.service=proxy"
+      - "com.example.service=traefik"
   netdata_config:
     labels:
       - "com.example.description=Netdata configuration"
-      - "com.example.service=monitoring"
+      - "com.example.service=netdata"
   netdata_lib:
     labels:
       - "com.example.description=Netdata library data"
-      - "com.example.service=monitoring"
+      - "com.example.service=netdata"
   netdata_cache:
     labels:
       - "com.example.description=Netdata cache data"
-      - "com.example.service=monitoring"
+      - "com.example.service=netdata"
   portainer_data:
     labels:
       - "com.example.description=Portainer persistent data"
-      - "com.example.service=monitoring"
+      - "com.example.service=portainer"
   pihole_data:
     labels:
       - "com.example.description=Pi-hole configuration data"
-      - "com.example.service=dns"
+      - "com.example.service=pihole"
   n8n_data:
     labels:
       - "com.example.description=n8n persistent data"
-      - "com.example.service=automation"
-  nextcloud_data:
-    labels:
-      - "com.example.description=Nextcloud application data"
-      - "com.example.service=cloud"
+      - "com.example.service=n8n"
   headscale_data:
     labels:
       - "com.example.description=Headscale persistent data and keys"
@@ -573,7 +567,7 @@ networks:
           gateway: 172.30.11.1
     labels:
       - "com.example.description=External Web Network"
-      - "com.example.service=proxy"
+      - "com.example.service=traefik"
   lan:
     driver: macvlan
     name: lan
