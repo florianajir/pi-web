@@ -7,20 +7,13 @@ server:
   data_path: "/var/lib/headplane"
 
 headscale:
-  # Internal Docker service URL (HTTP, not gRPC)
   url: "http://headscale:8080"
   # Headscale config is mounted read-only; config editing is view-only
   config_path: "/etc/headscale/config.yaml"
-  config_strict: false
+  config_strict: true
 
 integration:
-  agent:
-    enabled: false
   docker:
     enabled: true
     container_label: "me.tale.headplane.target=headscale"
     socket: "unix:///var/run/docker.sock"
-  kubernetes:
-    enabled: false
-  proc:
-    enabled: false
