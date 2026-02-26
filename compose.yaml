@@ -387,7 +387,7 @@ services:
       - "traefik.http.middlewares.headplane-root-redirect.redirectregex.replacement=https://$${1}/admin"
 
     <<: *default-logging
-    mem_limit: 128m
+    mem_limit: 384m
 
   tailscale:
     image: tailscale/tailscale:stable
