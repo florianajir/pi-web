@@ -1,6 +1,8 @@
 server:
   host: "0.0.0.0"
   port: 3000
+  # Override via HEADPLANE_SERVER__COOKIE_SECRET env var (must be exactly 32 chars)
+  cookie_secret: "CHANGEME_32CHARS_EXACTLY_XXXXXXX"
   cookie_secure: true
   data_path: "/var/lib/headplane"
 
