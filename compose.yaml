@@ -117,55 +117,65 @@ services:
       start_period: 30s
     mem_limit: 256m
 
-  netdata:
-    image: netdata/netdata:v2.8
-    container_name: pi-netdata
+  beszel:
+    image: henrygd/beszel:0.18.4
+    container_name: pi-beszel
     restart: unless-stopped
-    pid: host
-    cap_add:
-      - SYS_PTRACE
-      - SYS_ADMIN
-    security_opt:
-      - apparmor:unconfined
     networks:
       - frontend
     expose:
-      - 19999
-    volumes:
-      - netdata_config:/etc/netdata
-      - netdata_lib:/var/lib/netdata
-      - netdata_cache:/var/cache/netdata
-      - /:/host/root:ro,rslave
-      - /etc/passwd:/host/etc/passwd:ro
-      - /etc/group:/host/etc/group:ro
-      - /etc/localtime:/etc/localtime:ro
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /etc/os-release:/host/etc/os-release:ro
-      - /var/log:/host/var/log:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - 8090
     environment:
-      - NETDATA_CLAIM_TOKEN=${NETDATA_CLAIM_TOKEN:-}
-      - NETDATA_CLAIM_URL=${NETDATA_CLAIM_URL:-}
-      - NETDATA_CLAIM_ROOMS=${NETDATA_CLAIM_ROOMS:-}
+      - APP_URL=https://beszel.${HOST_NAME:-pi.lan}
+      - USER_EMAIL=${EMAIL}
+      - USER_PASSWORD=${PASSWORD}
+      - AUTO_LOGIN=${EMAIL}
+    volumes:
+      - beszel_data:/beszel_data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:19999/api/v1/info"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://localhost:8090/api/health",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
     labels:
-      - "com.example.description=Netdata real-time monitoring"
-      - "com.example.service=netdata"
+      - "com.example.description=Beszel monitoring hub"
+      - "com.example.service=beszel"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      - "traefik.http.routers.netdata.rule=Host(`netdata.${HOST_NAME:-pi.lan}`)"
-      - "traefik.http.routers.netdata.entrypoints=websecure"
-      - "traefik.http.routers.netdata.middlewares=lan@docker"
-      - "traefik.http.routers.netdata.tls=true"
-      - "traefik.http.services.netdata.loadbalancer.server.port=19999"
+      - "traefik.http.routers.beszel.rule=Host(`beszel.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.beszel.entrypoints=websecure"
+      - "traefik.http.routers.beszel.middlewares=lan@docker"
+      - "traefik.http.routers.beszel.tls=true"
+      - "traefik.http.services.beszel.loadbalancer.server.port=8090"
     <<: *default-logging
     mem_limit: 256m
+
+  beszel-agent:
+    image: henrygd/beszel-agent
+    container_name: beszel-agent
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data/beszel_agent:/var/lib/beszel-agent
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      LISTEN: 45876
+      HUB_URL: "https://beszel.${HOST_NAME:-pi.lan}"
+      KEY: "<public key>"
+      TOKEN: "<token>"
+    <<: *default-logging
+    mem_limit: 128m
 
   portainer:
     image: portainer/portainer-ce:lts
@@ -570,18 +580,10 @@ volumes:
     labels:
       - "com.example.description=Traefik ACME certificates"
       - "com.example.service=traefik"
-  netdata_config:
+  beszel_data:
     labels:
-      - "com.example.description=Netdata configuration"
-      - "com.example.service=netdata"
-  netdata_lib:
-    labels:
-      - "com.example.description=Netdata library data"
-      - "com.example.service=netdata"
-  netdata_cache:
-    labels:
-      - "com.example.description=Netdata cache data"
-      - "com.example.service=netdata"
+      - "com.example.description=Beszel monitoring data"
+      - "com.example.service=beszel"
   portainer_data:
     labels:
       - "com.example.description=Portainer persistent data"
