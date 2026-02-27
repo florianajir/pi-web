@@ -20,6 +20,7 @@ main() {
     # If the file is missing, Docker would create a directory at the bind-mount path
     # causing headplane to crash with EISDIR on startup.
     HEADPLANE_CONFIG="$PROJECT_DIR/config/headplane/config.yaml"
+    mkdir -p "$(dirname "$HEADPLANE_CONFIG")"
     if [ -d "$HEADPLANE_CONFIG" ]; then
         log "WARNING: headplane config.yaml is a directory (Docker bind-mount artifact). Removing..."
         rm -rf "$HEADPLANE_CONFIG"
