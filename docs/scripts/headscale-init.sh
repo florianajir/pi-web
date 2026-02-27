@@ -88,6 +88,47 @@ create_preauthkey() {
         grep -o '"key": *"[^"]*"' | sed 's/"key": *"\([^"]*\)"/\1/'
 }
 
+init_headplane_config() {
+    local user_id="$1"
+    local config_dir="$PROJECT_DIR/config/headplane"
+    local template="$config_dir/config.yaml.template"
+    local config="$config_dir/config.yaml"
+
+    if [ -f "$config" ]; then
+        log "Headplane config already exists, skipping"
+        return 0
+    fi
+
+    log "Initializing Headplane config from template..."
+
+    # Generate 32-char cookie secret (16 bytes = 32 hex chars)
+    COOKIE_SECRET=$(openssl rand -hex 16)
+
+    HEADSCALE_URL="https://headscale.${HOST_NAME}"
+
+    # Create a reusable, long-lived preauthkey for the Headplane agent
+    log "Creating preauthkey for Headplane agent (reusable, expires in 1 year)..."
+    HEADPLANE_AUTHKEY=$(docker exec pi-headscale "$HEADSCALE_BIN" preauthkeys create \
+        --user "$user_id" \
+        --reusable \
+        --expiration 8760h \
+        --output json 2>/dev/null | \
+        grep -o '"key": *"[^"]*"' | sed 's/"key": *"\([^"]*\)"/\1/')
+
+    if [ -z "$HEADPLANE_AUTHKEY" ]; then
+        log "ERROR: Failed to create Headplane agent preauthkey"
+        return 1
+    fi
+
+    sed \
+        -e "s|__COOKIE_SECRET__|${COOKIE_SECRET}|g" \
+        -e "s|__HEADSCALE_URL__|${HEADSCALE_URL}|g" \
+        -e "s|__HEADPLANE_AGENT__PRE_AUTHKEY__|${HEADPLANE_AUTHKEY}|g" \
+        "$template" > "$config"
+
+    log "Headplane config written to $config"
+}
+
 connect_tailscale_if_needed() {
     local user_id="$1"
     local key=""
@@ -161,6 +202,9 @@ main() {
         exit 1
     fi
     log "Using user ID: $USER_ID"
+
+    # Initialize Headplane config if not already done
+    init_headplane_config "$USER_ID"
 
     # Wait for Tailscale container to start (first boot can be slow)
     if ! wait_for_tailscale_container; then
