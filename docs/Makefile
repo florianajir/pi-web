@@ -56,7 +56,11 @@ uninstall:
 	@echo "🗑️  Uninstalling Pi-Web..."
 	@echo ""
 	@echo "⚠️  WARNING: This will remove ALL data including:"
-	@echo "   - Docker volumes (Nextcloud, Pi-hole, n8n, Headscale, etc.)"
+	@echo "   - Docker volumes (Pi-hole, Headscale, etc.)"
+	@echo "   - Bind-mount data dirs: ./data/nextcloud, ./data/postgres, ./data/n8n, ./data/immich"
+	@echo "   - Generated config: ./config/headplane/config.yaml" 
+	@echo "   - Generated config: ./config/headscale/config.yaml"
+	@echo "   - Generated config: ./config/headscale/policy.hujson"
 	@echo "   - Systemd service units"
 	@echo ""
 	@read -p "Are you sure? Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
@@ -66,6 +70,12 @@ uninstall:
 	-sudo systemctl stop pi-web-restart.timer 2>/dev/null || true
 	@echo "🐳 Removing containers and volumes..."
 	-$(COMPOSE) down -v --remove-orphans 2>/dev/null || true
+	@echo "🧹 Removing bind-mount data directories..."
+	-sudo rm -rf ./data/nextcloud ./data/postgres ./data/n8n ./data/immich
+	@echo "🧹 Removing generated config files..."
+	-rm -f ./config/headplane/config.yaml
+	-rm -f ./config/headscale/config.yaml
+	-rm -f ./config/headscale/policy.hujson
 	@echo "🧰 Removing host sysctl settings..."
 	-sudo rm -f /etc/sysctl.d/99-pi-web.conf
 	-sudo sysctl --system >/dev/null

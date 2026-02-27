@@ -1,6 +1,6 @@
 #!/bin/sh
-# Auto-initialization script for Headscale + Tailscale
-# Runs automatically on first start, creates user and performs one-time Tailscale bootstrap
+# Auto-initialization script for Headscale + Tailscale + Headplane
+# Runs automatically on first start, creates user and performs one-time Tailscale bootstrap with a short-lived preauthkey, then initializes Headplane config with a long-lived reusable preauthkey.
 
 set -e
 
@@ -94,7 +94,7 @@ init_headplane_config() {
     local template="$config_dir/config.yaml.template"
     local config="$config_dir/config.yaml"
 
-    if [ -f "$config" ]; then
+    if [ -f "$config" ] && [ -s "$config" ]; then
         log "Headplane config already exists, skipping"
         return 0
     fi
@@ -127,6 +127,10 @@ init_headplane_config() {
         "$template" > "$config"
 
     log "Headplane config written to $config"
+
+    log "Restarting Headplane container to apply new config..."
+    docker restart pi-headplane
+    log "Headplane restarted"
 }
 
 connect_tailscale_if_needed() {
