@@ -164,9 +164,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       LISTEN: /beszel_socket/beszel.sock
-      HUB_URL: "https://beszel.${HOST_NAME:-pi.lan}"
+      HUB_URL: https://beszel.${HOST_NAME:-pi.lan}
       KEY: "${BESZEL_AGENT_KEY:-}"
-      TOKEN: "${BESZEL_AGENT_TOKEN:-}"
+      TOKEN: ${BESZEL_AGENT_TOKEN:-}
     healthcheck:
       test: ["CMD", "/agent", "health"]
       interval: 120s
