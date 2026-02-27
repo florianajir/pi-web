@@ -1,19 +1,18 @@
 # pi-web
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docker.com/)
 [![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Compatible-red.svg)](https://www.raspberrypi.org/)
 
 `pi-web` is a compact self-hosting stack for Raspberry Pi, managed with a single Docker Compose setup.
 
 It includes:
-- Reverse proxy + TLS (`traefik`)
-- DNS filtering (`pihole`)
+- Private cloud servers (`nextcloud`, `immich`, `n8n`)
+- Personal DNS filtering (`pihole`)
+- VPN Connectivity (`tailscale`, `headscale`, `headplane`)
+- Secured network access using reverse proxy + TLS (`traefik` with Cloudflare DNS challenge and DDNS updater)
 - Monitoring (`netdata`) and container management (`portainer`)
-- Productivity apps (`nextcloud`, `n8n`, `immich-server`)
-- Data services (`postgres`, `redis`)
-- Connectivity (`headscale`, `tailscale`)
-- Maintenance (`ddns-updater`, `watchtower`)
+- Internal data services (`postgres`, `redis`)
+- Maintenance (`watchtower`)
 
 ---
 
@@ -57,8 +56,8 @@ flowchart LR
 
 1. Clone the repository.
 2. Copy `.env.dist` to `.env` and fill required values.
-3. Run preflight checks.
-4. Install/start via systemd helper.
+3. Run preflight checks using `make preflight`.
+4. Install/start the stack using `make install`.
 
 ```bash
 git clone https://github.com/florianajir/pi-web.git
@@ -67,6 +66,7 @@ cp .env.dist .env
 make preflight
 make install
 make status
+make logs
 ```
 
 ---
@@ -86,10 +86,6 @@ To add a new device to your private Tailscale network managed by Headscale:
 
   Replace `<key>` with the actual key from the client.
 
-4. The node will be registered to the user specified by the `EMAIL` variable in your `.env` file.
-
-5. The client device should now join your Tailscale network.
-
 ---
 ## Make commands
 
@@ -103,8 +99,8 @@ To add a new device to your private Tailscale network managed by Headscale:
 | `make restart` | Restart stack |
 | `make status` | Show stack status |
 | `make logs` | Follow stack logs |
-| `make update` | Pull latest changes and restart |
 | `make headscale-register <key>` | Register a Headscale node |
+| `make headscale-reset` | Reset all Headscale registrations (destructive) |
 
 ---
 
@@ -129,9 +125,6 @@ To add a new device to your private Tailscale network managed by Headscale:
 - `CLOUDFLARE_DNS_API_TOKEN`
 - `CLOUDFLARE_ZONE_ID`
 
-### PostgreSQL (shared)
-- `DB_DATA_LOCATION` (default: `./data/postgres`)
-
 ### Immich
 - `IMMICH_UPLOAD_LOCATION` (default: `./data/immich`)
 
@@ -145,5 +138,4 @@ To add a new device to your private Tailscale network managed by Headscale:
 
 ## License
 
-MIT (see `LICENSE`).
-
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

@@ -297,9 +297,42 @@ services:
       start_period: 60s
     mem_limit: 384m
 
+  headplane:
+    image: ghcr.io/tale/headplane:next
+    container_name: pi-headplane
+    restart: unless-stopped
+    networks:
+      - frontend
+    expose:
+      - 3000
+    volumes:
+      - ./config/headplane/config.yaml:/etc/headplane/config.yaml:ro
+      - ./config/headscale:/etc/headscale:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - headplane_data:/var/lib/headplane
+    environment:
+      - HEADPLANE_LOAD_ENV_OVERRIDES=true
+      - HEADPLANE_HEADSCALE__URL=https://headscale.${HOST_NAME:-pi.lan}
+      - HEADPLANE_SERVER__COOKIE_SECRET=${HEADPLANE_COOKIE_SECRET:-CHANGEME_32CHARS_EXACTLY_XXXXXXX}
+    depends_on:
+      - headscale
+    labels:
+      - "com.example.description=Headplane Headscale Web UI"
+      - "com.example.service=headplane"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.headplane.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && PathPrefix(`/admin`)"
+      - "traefik.http.routers.headplane.entrypoints=websecure"
+      - "traefik.http.routers.headplane.middlewares=lan@docker"
+      - "traefik.http.routers.headplane.tls=true"
+      - "traefik.http.routers.headplane.tls.certresolver=cloudflare"
+      - "traefik.http.services.headplane.loadbalancer.server.port=3000"
+    <<: *default-logging
+    mem_limit: 384m
+
   # Connectivity Stack
   headscale:
-    image: headscale/headscale:stable
+    image: headscale/headscale:0.27
     container_name: pi-headscale
     restart: unless-stopped
     command: serve
@@ -319,20 +352,30 @@ services:
       - ./config/headscale:/etc/headscale:ro
       - headscale_data:/var/lib/headscale
       - headscale_run:/var/run/headscale
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     labels:
       - "com.example.description=Headscale coordination server"
       - "com.example.service=headscale"
       - "me.tale.headplane.target=headscale"
+
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
+
       - "traefik.http.routers.headscale.rule=Host(`headscale.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.headscale.entrypoints=websecure"
       - "traefik.http.routers.headscale.tls=true"
       - "traefik.http.routers.headscale.tls.certresolver=cloudflare"
       - "traefik.http.routers.headscale.tls.domains[0].main=${HOST_NAME:-pi.lan}"
       - "traefik.http.routers.headscale.tls.domains[0].sans=*.${HOST_NAME:-pi.lan}"
-      - "traefik.http.services.headscale.loadbalancer.server.port=8080"
       - "traefik.http.routers.headscale.middlewares=cors"
+
+      - "traefik.http.routers.rewrite.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && Path(`/`)"
+      - "traefik.http.routers.rewrite.service=headscale"
+      - "traefik.http.routers.rewrite.middlewares=rewrite"
+
+      - "traefik.http.services.headscale.loadbalancer.server.port=8080"
+
+      - "traefik.http.middlewares.rewrite.addprefix.prefix=/admin"
       - "traefik.http.middlewares.cors.headers.accesscontrolallowheaders=*"
       - "traefik.http.middlewares.cors.headers.accesscontrolallowmethods=GET,POST,PUT"
       - "traefik.http.middlewares.cors.headers.accesscontrolalloworiginlist=https://headscale.${HOST_NAME:-pi.lan}"
@@ -347,47 +390,6 @@ services:
       retries: 3
       start_period: 30s
     mem_limit: 256m
-
-  headplane:
-    image: ghcr.io/tale/headplane:0.6.1
-    container_name: pi-headplane
-    restart: unless-stopped
-    networks:
-      - frontend
-    expose:
-      - 3000
-    volumes:
-      - ./config/headplane/config.yaml:/etc/headplane/config.yaml:ro
-      - ./config/headscale:/etc/headscale:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - headplane_data:/var/lib/headplane
-    environment:
-      - HEADPLANE_LOAD_ENV_OVERRIDES=true
-      - HEADPLANE_SERVER__COOKIE_SECRET=${HEADPLANE_COOKIE_SECRET:-CHANGEME_32CHARS_EXACTLY_XXXXXXX}
-      - HEADPLANE_HEADSCALE__URL=http://headscale:8080
-    depends_on:
-      - headscale
-    labels:
-      - "com.example.description=Headplane Headscale Web UI"
-      - "com.example.service=headplane"
-      - "traefik.enable=true"
-      - "traefik.docker.network=frontend"
-      - "traefik.http.routers.headplane.rule=Host(`headplane.${HOST_NAME:-pi.lan}`)"
-      - "traefik.http.routers.headplane.entrypoints=websecure"
-      - "traefik.http.routers.headplane.middlewares=lan@docker"
-      - "traefik.http.routers.headplane.tls=true"
-      - "traefik.http.routers.headplane.tls.certresolver=cloudflare"
-      - "traefik.http.services.headplane.loadbalancer.server.port=3000"
-      - "traefik.http.routers.headplane-root.rule=Host(`headplane.${HOST_NAME:-pi.lan}`) && Path(`/`)"
-      - "traefik.http.routers.headplane-root.entrypoints=websecure"
-      - "traefik.http.routers.headplane-root.middlewares=lan@docker,headplane-root-redirect@docker"
-      - "traefik.http.routers.headplane-root.tls=true"
-      - "traefik.http.routers.headplane-root.service=headplane"
-      - "traefik.http.middlewares.headplane-root-redirect.redirectregex.regex=^https?://([^/]+)/$$"
-      - "traefik.http.middlewares.headplane-root-redirect.redirectregex.replacement=https://$${1}/admin"
-
-    <<: *default-logging
-    mem_limit: 384m
 
   tailscale:
     image: tailscale/tailscale:stable
@@ -414,7 +416,7 @@ services:
       retries: 3
       start_period: 120s
     labels:
-      - "com.example.description=Tailscale VPN client (Headscale)"
+      - "com.example.description=Tailscale VPN client"
       - "com.example.service=tailscale"
     <<: *default-logging
     mem_limit: 256m

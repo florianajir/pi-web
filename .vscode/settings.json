@@ -23,6 +23,7 @@
 		"healthcheck",
 		"hsts",
 		"httpchallenge",
+		"immich",
 		"insecureskipverify",
 		"ipallowlist",
 		"journalctl",

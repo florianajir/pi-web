@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart update status logs preflight headscale-register headscale-reset
+.PHONY: help install uninstall start stop restart status logs preflight headscale-register headscale-reset
 
 PROJECT_PATH := $(shell pwd)
 UNIT         := pi-web.service
@@ -18,7 +18,6 @@ help:
 	@echo "  restart   Restart stack"
 	@echo "  status    Show systemd status"
 	@echo "  logs      Follow compose logs"
-	@echo "  update    Git pull + restart"
 	@echo "  preflight Quick env readiness check"
 	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  headscale-reset Reset all Headscale nodes, preauth keys, and IP allocations"

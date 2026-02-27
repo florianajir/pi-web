@@ -7,7 +7,13 @@ server_url: https://headscale.__HOST_NAME__
 listen_addr: 0.0.0.0:8080
 metrics_listen_addr: 0.0.0.0:9090
 grpc_listen_addr: 0.0.0.0:50443
+
 grpc_allow_insecure: true
+disable_check_updates: true
+
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
+randomize_client_port: false
 
 noise:
   private_key_path: /var/lib/headscale/noise_private.key
@@ -31,9 +37,6 @@ derp:
     - https://controlplane.tailscale.com/derpmap/default
   auto_update_enabled: true
   update_frequency: 24h
-
-disable_check_updates: true
-ephemeral_node_inactivity_timeout: 30m
 
 database:
   type: sqlite
@@ -59,11 +62,9 @@ dns:
       __HOST_NAME__:
         - 100.64.0.1
 
-unix_socket: /var/run/headscale/headscale.sock
-unix_socket_permission: "0770"
 
 logtail:
   enabled: false
-randomize_client_port: false
+
 taildrop:
   enabled: true
