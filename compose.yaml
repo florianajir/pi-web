@@ -132,14 +132,13 @@ services:
       - AUTO_LOGIN=${EMAIL}
     volumes:
       - beszel_data:/beszel_data
+      - ./data/beszel_socket:/beszel_socket
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/api/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
+      start_period: 5s
+      interval: 120s
     labels:
       - "com.example.description=Beszel monitoring hub"
       - "com.example.service=beszel"
@@ -154,19 +153,23 @@ services:
     mem_limit: 256m
 
   beszel-agent:
+    <<: *default-logging
     image: henrygd/beszel-agent
     container_name: beszel-agent
     restart: unless-stopped
     network_mode: host
     volumes:
-      - ./data/beszel_agent:/var/lib/beszel-agent
+      - beszel_agent_data:/var/lib/beszel-agent
+      - ./data/beszel_socket:/beszel_socket
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
-      LISTEN: 45876
+      LISTEN: /beszel_socket/beszel.sock
       HUB_URL: "https://beszel.${HOST_NAME:-pi.lan}"
       KEY: "${BESZEL_AGENT_KEY:-}"
       TOKEN: "${BESZEL_AGENT_TOKEN:-}"
-    <<: *default-logging
+    healthcheck:
+      test: ["CMD", "/agent", "health"]
+      interval: 120s
     mem_limit: 128m
 
   portainer:
@@ -576,6 +579,10 @@ volumes:
     labels:
       - "com.example.description=Beszel monitoring data"
       - "com.example.service=beszel"
+  beszel_agent_data:
+    labels:
+      - "com.example.description=Beszel agent data"
+      - "com.example.service=beszel agent"
   portainer_data:
     labels:
       - "com.example.description=Portainer persistent data"
