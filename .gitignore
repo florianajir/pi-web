@@ -4,3 +4,4 @@
 /config/headscale/config.yaml
 /config/headplane/config.yaml
 /config/pihole/dnsmasq.d
+/config/beszel-agent/agent.env

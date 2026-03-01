@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs preflight headscale-register headscale-reset
+.PHONY: help install uninstall start stop restart status logs preflight headscale-register headscale-reset beszel-bootstrap
 
 PROJECT_PATH := $(shell pwd)
 UNIT         := pi-web.service
@@ -19,6 +19,7 @@ help:
 	@echo "  status    Show systemd status"
 	@echo "  logs      Follow compose logs"
 	@echo "  preflight Quick env readiness check"
+	@echo "  beszel-bootstrap Ensure Beszel universal token + agent registration"
 	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  headscale-reset Reset all Headscale nodes, preauth keys, and IP allocations"
 	@echo "  help      This help"
@@ -49,6 +50,7 @@ install:
 	else \
 		echo "🚀 Starting stack..."; \
 		sudo systemctl start $(UNIT); \
+		$(MAKE) beszel-bootstrap; \
 	fi
 	@echo "✅ Installation complete"
 
@@ -61,6 +63,7 @@ uninstall:
 	@echo "   - Generated config: ./config/headplane/config.yaml" 
 	@echo "   - Generated config: ./config/headscale/config.yaml"
 	@echo "   - Generated config: ./config/headscale/policy.hujson"
+	@echo "   - Generated config: ./config/beszel-agent/agent.env"
 	@echo "   - Systemd service units"
 	@echo ""
 	@read -p "Are you sure? Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
@@ -76,6 +79,7 @@ uninstall:
 	-rm -f ./config/headplane/config.yaml
 	-rm -f ./config/headscale/config.yaml
 	-rm -f ./config/headscale/policy.hujson
+	-rm -f ./config/beszel-agent/agent.env
 	@echo "🧰 Removing host sysctl settings..."
 	-sudo rm -f /etc/sysctl.d/99-pi-web.conf
 	-sudo sysctl --system >/dev/null
@@ -93,6 +97,7 @@ uninstall:
 start:
 	@echo "🚀 Starting Pi-Web stack..."
 	sudo systemctl start $(UNIT)
+	@$(MAKE) beszel-bootstrap
 	@echo "✅ Stack started"
 
 stop:
@@ -137,3 +142,9 @@ headscale-reset:
 	@echo "🧹 Resetting Headscale IP allocations (restarting service)..."
 	-docker compose restart headscale
 	@echo "✅ Headscale reset complete"
+
+beszel-bootstrap:
+	@echo "🔑 Ensuring Beszel agent registration token..."
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	@sh ./scripts/beszel-agent-bootstrap.sh
+	@echo "✅ Beszel agent bootstrap complete"

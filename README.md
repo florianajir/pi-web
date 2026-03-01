@@ -10,7 +10,7 @@ It includes:
 - Personal DNS filtering (`pihole`)
 - VPN Connectivity (`tailscale`, `headscale`, `headplane`)
 - Secured network access using reverse proxy + TLS (`traefik` with Cloudflare DNS challenge and DDNS updater)
-- Monitoring (`netdata`) and container management (`portainer`)
+- Monitoring (`beszel`) and container management (`portainer`)
 - Internal data services (`postgres`, `redis`)
 - Maintenance (`watchtower`)
 
@@ -27,7 +27,7 @@ flowchart LR
   subgraph FE["frontend network"]
     T
     PH
-    ND["Netdata"]
+    ND["Beszel"]
     PT["Portainer"]
     N8["n8n"]
     NC["Nextcloud"]
@@ -131,10 +131,6 @@ To add a new device to your private Tailscale network managed by Headscale:
 ### Nextcloud
 - `NEXTCLOUD_DATA_LOCATION` (default: `./data/nextcloud`)
 
-### Netdata Cloud (optional)
-- `NETDATA_CLAIM_TOKEN`
-- `NETDATA_CLAIM_URL`
-- `NETDATA_CLAIM_ROOMS`
 
 ## License
 

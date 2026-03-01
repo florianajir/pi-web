@@ -72,6 +72,7 @@
 	},
 	"chat.tools.terminal.autoApprove": {
 		"nslookup": true,
-		"true": true
+		"true": true,
+		"docker run": true
 	}
 }

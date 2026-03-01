@@ -118,6 +118,7 @@ services:
     mem_limit: 256m
 
   beszel:
+    <<: *default-logging
     image: henrygd/beszel:0.18.4
     container_name: pi-beszel
     restart: unless-stopped
@@ -132,7 +133,7 @@ services:
       - AUTO_LOGIN=${EMAIL}
     volumes:
       - beszel_data:/beszel_data
-      - ./data/beszel_socket:/beszel_socket
+      - beszel_socket:/beszel_socket
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -148,8 +149,11 @@ services:
       - "traefik.http.routers.beszel.entrypoints=websecure"
       - "traefik.http.routers.beszel.middlewares=lan@docker"
       - "traefik.http.routers.beszel.tls=true"
+      - "traefik.http.routers.beszel-agentconnect.rule=Host(`beszel.${HOST_NAME:-pi.lan}`) && PathPrefix(`/api/beszel/agent-connect`)"
+      - "traefik.http.routers.beszel-agentconnect.entrypoints=websecure"
+      - "traefik.http.routers.beszel-agentconnect.priority=100"
+      - "traefik.http.routers.beszel-agentconnect.tls=true"
       - "traefik.http.services.beszel.loadbalancer.server.port=8090"
-    <<: *default-logging
     mem_limit: 256m
 
   beszel-agent:
@@ -157,22 +161,29 @@ services:
     image: henrygd/beszel-agent
     container_name: beszel-agent
     restart: unless-stopped
+    depends_on:
+      beszel:
+        condition: service_healthy
+      traefik:
+        condition: service_healthy
     network_mode: host
     volumes:
-      - beszel_agent_data:/var/lib/beszel-agent
-      - ./data/beszel_socket:/beszel_socket
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - beszel_socket:/beszel_socket
+      - beszel_agent_data:/var/lib/beszel-agent
+    env_file:
+      - path: ./config/beszel-agent/agent.env
+        required: false
     environment:
       LISTEN: /beszel_socket/beszel.sock
       HUB_URL: https://beszel.${HOST_NAME:-pi.lan}
-      KEY: "${BESZEL_AGENT_KEY:-}"
-      TOKEN: ${BESZEL_AGENT_TOKEN:-}
     healthcheck:
       test: ["CMD", "/agent", "health"]
       interval: 120s
     mem_limit: 128m
 
   portainer:
+    <<: *default-logging
     image: portainer/portainer-ce:lts
     container_name: pi-portainer
     restart: unless-stopped
@@ -193,7 +204,6 @@ services:
       - "traefik.http.routers.portainer.middlewares=lan@docker"
       - "traefik.http.routers.portainer.tls=true"
       - "traefik.http.services.portainer.loadbalancer.server.port=9000"
-    <<: *default-logging
     healthcheck:
       test: ["CMD", "/portainer", "--version"]
       interval: 30s
@@ -583,6 +593,10 @@ volumes:
     labels:
       - "com.example.description=Beszel agent data"
       - "com.example.service=beszel agent"
+  beszel_socket:
+    labels:
+      - "com.example.description=Beszel shared runtime socket"
+      - "com.example.service=beszel"
   portainer_data:
     labels:
       - "com.example.description=Portainer persistent data"

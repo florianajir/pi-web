@@ -1,6 +1,6 @@
 # PI Web Docker Compose Stack
 
-
+A personal self-hosted web stack for Raspberry Pi, built with Docker Compose. It includes a variety of services for personal cloud storage, media management, VPN connectivity, DNS filtering, monitoring, and more.
 
 ## Architecture
 
@@ -17,16 +17,16 @@
 ## Docker compose stack containers
 
 - **Docker** for containerization and orchestration.
+- **Portainer** for container management.
+- **Beszel** for monitoring.
+- **DDNS Updater** for dynamic DNS updates.
 - **Traefik** for reverse proxy and TLS management.
+- **Tailscale** for secure VPN connectivity.
+- **Headscale** for managing Tailscale networks.
+- **Headplane** for Headscale web interface.
+- **N8n** for workflow automation.
+- **Pihole** for personal DNS filtering.
 - **Immich** for personal photo and video management.
 - **Nextcloud** for personal cloud storage and collaboration.
-- **Tailscale** for secure VPN connectivity.
-- **Headscale** for managing private Tailscale networks.
-- **Headplane** for Headscale web interface.
-- **DDNS Updater** for dynamic DNS updates.
-- **Portainer** for container management.
-- **Pihole** for personal DNS filtering.
-- **Netdata** for real-time performance monitoring.
-- **N8n** for workflow automation.
 - **Redis** for in-memory data storage.
-- **Postgres** for relational database management (immich and nextcloud).
+- **Postgres** for relational database management (Immich and Nextcloud).
