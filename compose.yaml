@@ -7,10 +7,10 @@ x-logging: &default-logging
 
 services:
   ddns-updater:
+    <<: *default-logging
     image: ghcr.io/qdm12/ddns-updater:v2.9
     container_name: pi-ddns-updater
     restart: unless-stopped
-    <<: *default-logging
     environment:
       CONFIG: >-
         {"settings":[
@@ -31,6 +31,7 @@ services:
     mem_limit: 128m
 
   watchtower:
+    <<: *default-logging
     container_name: pi-watchtower
     image: containrrr/watchtower:1.7.1
     restart: unless-stopped
@@ -41,7 +42,6 @@ services:
       - WATCHTOWER_SCHEDULE=0 0 3 * * *
       - WATCHTOWER_NO_RESTART=true
       - TZ=${TIMEZONE:-Europe/Paris}
-    <<: *default-logging
     healthcheck:
       test: ["CMD", "/watchtower", "--health-check"]
       interval: 30s
@@ -53,7 +53,76 @@ services:
       - "com.example.service=watchtower"
     mem_limit: 64m
 
+  backrest:
+    <<: *default-logging
+    image: ghcr.io/garethgeorge/backrest:v1.12.0
+    container_name: pi-backrest
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        apk add --no-cache postgresql17-client >/dev/null
+        exec /sbin/tini -- /docker-entrypoint /backrest
+    networks:
+      - frontend
+      - immich
+      - nextcloud
+    expose:
+      - 9898
+    environment:
+      - BACKREST_PORT=0.0.0.0:9898
+      - BACKREST_DATA=/data
+      - BACKREST_CONFIG=/config/config.json
+      - XDG_CACHE_HOME=/cache
+      - TMPDIR=/tmp
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - DB_HOST=postgres
+      - DB_NAME=nextcloud
+      - DB_USER=nextcloud
+      - DB_PASSWORD=${PASSWORD}
+      - NEXTCLOUD_CONFIG_FILE=/userdata/nextcloud-config/config.php
+      - NEXTCLOUD_SQL_BACKUP_DIR=/userdata/nextcloud-config/backups
+      - NEXTCLOUD_SQL_BACKUP_KEEP=${NEXTCLOUD_SQL_BACKUP_KEEP:-30}
+      - NEXTCLOUD_HOOK_STATE_FILE=/tmp/nextcloud-maintenance.state
+    volumes:
+      - ${DATA_LOCATION:-./data}/backrest/data:/data
+      - ${DATA_LOCATION:-./data}/backrest/config:/config
+      - ${DATA_LOCATION:-./data}/backrest/repos:/repos
+      - ${DATA_LOCATION:-./data}/immich:/userdata/immich:ro
+      - ${DATA_LOCATION:-./data}/nextcloud:/userdata/nextcloud-data:ro
+      - ${DATA_LOCATION:-./data}/nextcloud-config:/userdata/nextcloud-config
+      - ${DATA_LOCATION:-./data}/nextcloud-themes:/userdata/nextcloud-themes:ro
+      - ./scripts/nextcloud-db-backup.sh:/hooks/nextcloud-db-backup.sh:ro
+    tmpfs:
+      - /cache
+      - /tmp
+    depends_on:
+      immich-server:
+        condition: service_healthy
+      nextcloud:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    labels:
+      - "com.example.description=Backrest backup management"
+      - "com.example.service=backrest"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.backrest.rule=Host(`backrest.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.backrest.entrypoints=websecure"
+      - "traefik.http.routers.backrest.middlewares=lan@docker"
+      - "traefik.http.routers.backrest.tls=true"
+      - "traefik.http.services.backrest.loadbalancer.server.port=9898"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9898/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    mem_limit: 512m
+
   traefik:
+    <<: *default-logging
     image: traefik:v3.6
     container_name: pi-traefik
     restart: unless-stopped
@@ -105,10 +174,9 @@ services:
       - 8080
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - traefik_letsencrypt:/letsencrypt
+      - ${DATA_LOCATION:-./data}/traefik/letsencrypt:/letsencrypt
     networks:
       - frontend
-    <<: *default-logging
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 30s
@@ -159,7 +227,7 @@ services:
   beszel-agent:
     <<: *default-logging
     image: henrygd/beszel-agent
-    container_name: beszel-agent
+    container_name: pi-beszel-agent
     restart: unless-stopped
     depends_on:
       beszel:
@@ -185,6 +253,7 @@ services:
   portainer:
     <<: *default-logging
     image: portainer/portainer-ce:lts
+    command: -H unix:///var/run/docker.sock --http-enabled
     container_name: pi-portainer
     restart: unless-stopped
     networks:
@@ -213,6 +282,7 @@ services:
     mem_limit: 256m
 
   pihole:
+    <<: *default-logging
     image: pihole/pihole:2025.11.1
     container_name: pi-pihole
     restart: unless-stopped
@@ -257,10 +327,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    <<: *default-logging
     mem_limit: 256m
 
   n8n:
+    <<: *default-logging
     image: n8nio/n8n:2.8.2
     container_name: pi-n8n
     restart: unless-stopped
@@ -289,10 +359,9 @@ services:
       - DB_SQLITE_POOL_SIZE=2
     volumes:
       - n8n_data:/home/node/.n8n
-      - ./data/n8n:/files
+      - ${DATA_LOCATION:-./data}/n8n:/files
     networks:
       - frontend
-    <<: *default-logging
     depends_on:
       - traefik
     healthcheck:
@@ -313,6 +382,7 @@ services:
     mem_limit: 384m
 
   headplane:
+    <<: *default-logging
     image: ghcr.io/tale/headplane:next
     container_name: pi-headplane
     restart: unless-stopped
@@ -328,7 +398,6 @@ services:
     environment:
       - HEADPLANE_LOAD_ENV_OVERRIDES=true
       - HEADPLANE_HEADSCALE__URL=https://headscale.${HOST_NAME:-pi.lan}
-      - HEADPLANE_SERVER__COOKIE_SECRET=${HEADPLANE_COOKIE_SECRET:-CHANGEME_32CHARS_EXACTLY_XXXXXXX}
     depends_on:
       - headscale
     labels:
@@ -342,11 +411,22 @@ services:
       - "traefik.http.routers.headplane.tls=true"
       - "traefik.http.routers.headplane.tls.certresolver=cloudflare"
       - "traefik.http.services.headplane.loadbalancer.server.port=3000"
-    <<: *default-logging
+    healthcheck:
+      test:
+        - "CMD"
+        - "/nodejs/bin/node"
+        - "-e"
+        - >-
+          const net=require('node:net');const s=net.connect({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.setTimeout(5000,()=>{s.destroy();process.exit(1)});s.on('error',()=>process.exit(1));
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
     mem_limit: 384m
 
   # Connectivity Stack
   headscale:
+    <<: *default-logging
     image: headscale/headscale:0.27
     container_name: pi-headscale
     restart: unless-stopped
@@ -366,16 +446,15 @@ services:
     volumes:
       - ./config/headscale:/etc/headscale:ro
       - headscale_data:/var/lib/headscale
-      - headscale_run:/var/run/headscale
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    tmpfs:
+      - /var/run/headscale
     labels:
       - "com.example.description=Headscale coordination server"
       - "com.example.service=headscale"
       - "me.tale.headplane.target=headscale"
-
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-
       - "traefik.http.routers.headscale.rule=Host(`headscale.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.headscale.entrypoints=websecure"
       - "traefik.http.routers.headscale.tls=true"
@@ -383,21 +462,16 @@ services:
       - "traefik.http.routers.headscale.tls.domains[0].main=${HOST_NAME:-pi.lan}"
       - "traefik.http.routers.headscale.tls.domains[0].sans=*.${HOST_NAME:-pi.lan}"
       - "traefik.http.routers.headscale.middlewares=cors"
-
       - "traefik.http.routers.rewrite.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && Path(`/`)"
       - "traefik.http.routers.rewrite.service=headscale"
       - "traefik.http.routers.rewrite.middlewares=rewrite"
-
       - "traefik.http.services.headscale.loadbalancer.server.port=8080"
-
       - "traefik.http.middlewares.rewrite.addprefix.prefix=/admin"
       - "traefik.http.middlewares.cors.headers.accesscontrolallowheaders=*"
       - "traefik.http.middlewares.cors.headers.accesscontrolallowmethods=GET,POST,PUT"
       - "traefik.http.middlewares.cors.headers.accesscontrolalloworiginlist=https://headscale.${HOST_NAME:-pi.lan}"
       - "traefik.http.middlewares.cors.headers.accesscontrolmaxage=100"
       - "traefik.http.middlewares.cors.headers.addvaryheader=true"
-
-    <<: *default-logging
     healthcheck:
       test: ["CMD", "/ko-app/headscale", "health"]
       interval: 30s
@@ -407,6 +481,7 @@ services:
     mem_limit: 256m
 
   tailscale:
+    <<: *default-logging
     image: tailscale/tailscale:stable
     container_name: pi-tailscale
     restart: unless-stopped
@@ -433,28 +508,22 @@ services:
     labels:
       - "com.example.description=Tailscale VPN client"
       - "com.example.service=tailscale"
-    <<: *default-logging
     mem_limit: 256m
 
   immich-server:
+    <<: *default-logging
     container_name: pi-immich
     image: ghcr.io/immich-app/immich-server:v2
     restart: unless-stopped
     volumes:
-      - ${IMMICH_UPLOAD_LOCATION:-./data/immich}:/data
+      - ${DATA_LOCATION:-./data}/immich:/data
       - /etc/localtime:/etc/localtime:ro
-    <<: *default-logging
     environment:
-      DB_TYPE: postgresql
       DB_HOSTNAME: postgres
-      DB_PORT: 5432
       DB_DATABASE_NAME: immich
       DB_USERNAME: immich
       DB_PASSWORD: ${PASSWORD}
       REDIS_HOSTNAME: redis
-      REDIS_PORT: 6379
-      REDIS_DBINDEX: 0
-      NODE_ENV: production
       TZ: ${TIMEZONE:-Europe/Paris}
     networks:
       - frontend
@@ -485,10 +554,10 @@ services:
     mem_limit: 1g
 
   nextcloud:
+    <<: *default-logging
     image: nextcloud:32-apache
     container_name: pi-nextcloud
     restart: unless-stopped
-    <<: *default-logging
     environment:
       - NEXTCLOUD_ADMIN_USER=${USER}
       - NEXTCLOUD_ADMIN_PASSWORD=${PASSWORD}
@@ -505,7 +574,9 @@ services:
       - REDIS_HOST=redis
       - TZ=${TIMEZONE:-Europe/Paris}
     volumes:
-      - ${NEXTCLOUD_DATA_LOCATION:-./data/nextcloud}:/var/www/html/data
+      - ${DATA_LOCATION:-./data}/nextcloud:/var/www/html/data
+      - ${DATA_LOCATION:-./data}/nextcloud-config:/var/www/html/config
+      - ${DATA_LOCATION:-./data}/nextcloud-themes:/var/www/html/themes
     networks:
       - frontend
       - nextcloud
@@ -514,6 +585,9 @@ services:
       - "com.example.service=nextcloud"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
+      - "traefik.http.middlewares.compress.compress=true"
+      - "traefik.http.middlewares.hsts.headers.stsSeconds=2592000"
+      - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}"
       - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.nextcloud.entrypoints=websecure"
       - "traefik.http.routers.nextcloud.middlewares=lan@docker"
@@ -534,16 +608,16 @@ services:
 
   # Database & Cache
   postgres:
+    <<: *default-logging
     container_name: pi-postgres
     image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
-    <<: *default-logging
     environment:
       POSTGRES_PASSWORD: ${PASSWORD}
       POSTGRES_INITDB_ARGS: "--data-checksums"
       # Uncomment the DB_STORAGE_TYPE: 'HDD' var if your database isn't stored on SSDs
       # DB_STORAGE_TYPE: 'HDD'
     volumes:
-      - ${DB_DATA_LOCATION:-./data/postgres}:/var/lib/postgresql/data
+      - ${DATA_LOCATION:-./data}/postgres:/var/lib/postgresql/data
       - ./config/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh
     restart: always
     networks:
@@ -562,6 +636,7 @@ services:
       - "com.example.service=postgres"
 
   redis:
+    <<: *default-logging
     container_name: pi-redis
     image: docker.io/valkey/valkey:9@sha256:546304417feac0874c3dd576e0952c6bb8f06bb4093ea0c9ca303c73cf458f63
     healthcheck:
@@ -573,7 +648,6 @@ services:
     labels:
       - "com.example.description=Redis cache for Immich & Nextcloud"
       - "com.example.service=redis"
-    <<: *default-logging
     mem_limit: 256m
 
 volumes:
@@ -581,10 +655,6 @@ volumes:
     labels:
       - "com.example.description=DDNS updater state"
       - "com.example.service=ddns"
-  traefik_letsencrypt:
-    labels:
-      - "com.example.description=Traefik ACME certificates"
-      - "com.example.service=traefik"
   beszel_data:
     labels:
       - "com.example.description=Beszel monitoring data"
@@ -612,10 +682,6 @@ volumes:
   headscale_data:
     labels:
       - "com.example.description=Headscale persistent data and keys"
-      - "com.example.service=headscale"
-  headscale_run:
-    labels:
-      - "com.example.description=Headscale runtime socket"
       - "com.example.service=headscale"
   headplane_data:
     labels:

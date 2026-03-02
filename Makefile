@@ -50,7 +50,7 @@ install:
 	else \
 		echo "🚀 Starting stack..."; \
 		sudo systemctl start $(UNIT); \
-		$(MAKE) beszel-bootstrap; \
+		$(MAKE) start; \
 	fi
 	@echo "✅ Installation complete"
 

@@ -32,6 +32,78 @@ get_agent_env_value() {
     cat "$AGENT_ENV_FILE" 2>/dev/null | grep "^$1=" | tail -n1 | cut -d'=' -f2-
 }
 
+set_agent_env_value() {
+    # Upsert KEY=value in agent env file without sed replacement pitfalls.
+    # Works with values containing special characters like '&' or '|'.
+    local key="$1"
+    local value="$2"
+    local tmp_file
+
+    tmp_file=$(mktemp)
+    awk -v k="$key" -v v="$value" '
+        BEGIN { done = 0 }
+        $0 ~ ("^" k "=") {
+            if (!done) {
+                print k "=" v
+                done = 1
+            }
+            next
+        }
+        { print }
+        END {
+            if (!done) {
+                print k "=" v
+            }
+        }
+    ' "$AGENT_ENV_FILE" > "$tmp_file"
+
+    mv "$tmp_file" "$AGENT_ENV_FILE"
+    chmod 600 "$AGENT_ENV_FILE" 2>/dev/null || true
+}
+
+resolve_key_from_env() {
+    # Support multiple env names for compatibility.
+    # Priority: explicit key vars.
+    local value
+
+    value=$(get_env_value BESZEL_AGENT_KEY)
+    if [ -n "$value" ]; then
+        printf '%s' "$value"
+        return 0
+    fi
+
+    value=$(get_env_value BESZEL_KEY)
+    if [ -n "$value" ]; then
+        printf '%s' "$value"
+        return 0
+    fi
+
+    value=$(get_env_value KEY)
+    if [ -n "$value" ]; then
+        printf '%s' "$value"
+        return 0
+    fi
+}
+
+get_hub_public_key() {
+    local auth_token response hub_key
+    auth_token="$1"
+
+    response=$(docker run --rm --network frontend \
+        "$CURL_IMAGE" \
+        -fsS \
+        -H "Authorization: $auth_token" \
+        "$HUB_URL_DOCKER/api/beszel/getkey")
+
+    hub_key=$(extract_json_field "$response" key)
+    if [ -z "$hub_key" ]; then
+        log "ERROR: Failed to retrieve Beszel hub public key"
+        return 1
+    fi
+
+    printf '%s' "$hub_key"
+}
+
 ensure_agent_env_file() {
     mkdir -p "$AGENT_ENV_DIR"
 
@@ -155,9 +227,11 @@ get_or_create_permanent_universal_token() {
 
 persist_agent_config() {
     local token="$1"
+    local hub_key="$2"
     local current_token=""
     local current_key=""
-    local legacy_key=""
+    local sourced_key=""
+    local target_key=""
     local updated=0
 
     if [ ! -f "$AGENT_ENV_FILE" ]; then
@@ -168,28 +242,33 @@ persist_agent_config() {
     current_token=$(get_agent_env_value TOKEN)
 
     if [ "$current_token" != "$token" ]; then
-        if grep -q '^TOKEN=' "$AGENT_ENV_FILE"; then
-            sed -i "s|^TOKEN=.*|TOKEN=$token|" "$AGENT_ENV_FILE"
-        else
-            printf '\nTOKEN=%s\n' "$token" >> "$AGENT_ENV_FILE"
-        fi
+        set_agent_env_value TOKEN "$token"
         updated=1
         log "Updated TOKEN in $AGENT_ENV_FILE"
     else
         log "TOKEN already up to date in $AGENT_ENV_FILE"
     fi
 
-    # One-time migration for legacy BESZEL_AGENT_KEY in root .env
+    # Ensure KEY contains Beszel hub public key expected by beszel-agent.
     current_key=$(get_agent_env_value KEY)
-    legacy_key=$(get_env_value BESZEL_AGENT_KEY)
-    if [ -z "$current_key" ] && [ -n "$legacy_key" ]; then
-        if grep -q '^KEY=' "$AGENT_ENV_FILE"; then
-            sed -i "s|^KEY=.*|KEY=$legacy_key|" "$AGENT_ENV_FILE"
-        else
-            printf 'KEY=%s\n' "$legacy_key" >> "$AGENT_ENV_FILE"
-        fi
+    if [ -n "$hub_key" ]; then
+        target_key="$hub_key"
+    else
+        sourced_key=$(resolve_key_from_env)
+        target_key="$sourced_key"
+    fi
+
+    if [ -z "$target_key" ]; then
+        log "ERROR: KEY is required but no hub key (or override key) is available"
+        return 1
+    fi
+
+    if [ "$current_key" != "$target_key" ]; then
+        set_agent_env_value KEY "$target_key"
         updated=1
-        log "Migrated legacy BESZEL_AGENT_KEY from .env into $AGENT_ENV_FILE"
+        log "Updated KEY in $AGENT_ENV_FILE"
+    else
+        log "KEY already up to date in $AGENT_ENV_FILE"
     fi
 
     CONFIG_UPDATED=$updated
@@ -236,13 +315,19 @@ main() {
 
     AUTH_TOKEN=$(login_and_get_auth_token)
     UNIVERSAL_TOKEN=$(get_or_create_permanent_universal_token "$AUTH_TOKEN")
+    HUB_PUBLIC_KEY=$(get_hub_public_key "$AUTH_TOKEN")
 
     if [ -z "$UNIVERSAL_TOKEN" ]; then
         log "ERROR: Could not obtain universal token"
         exit 1
     fi
 
-    persist_agent_config "$UNIVERSAL_TOKEN"
+    if [ -z "$HUB_PUBLIC_KEY" ]; then
+        log "ERROR: Could not obtain Beszel hub public key"
+        exit 1
+    fi
+
+    persist_agent_config "$UNIVERSAL_TOKEN" "$HUB_PUBLIC_KEY"
     restart_agent_if_needed
 
     log "Bootstrap completed successfully"

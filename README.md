@@ -11,6 +11,7 @@ It includes:
 - VPN Connectivity (`tailscale`, `headscale`, `headplane`)
 - Secured network access using reverse proxy + TLS (`traefik` with Cloudflare DNS challenge and DDNS updater)
 - Monitoring (`beszel`) and container management (`portainer`)
+- Backup management (`backrest`)
 - Internal data services (`postgres`, `redis`)
 - Maintenance (`watchtower`)
 
@@ -112,6 +113,7 @@ To add a new device to your private Tailscale network managed by Headscale:
 - `EMAIL`
 - `USER`
 - `PASSWORD`
+- `DATA_LOCATION` (default: `./data`)
 
 ### Network
 - `HOST_LAN_IP`
@@ -125,11 +127,10 @@ To add a new device to your private Tailscale network managed by Headscale:
 - `CLOUDFLARE_DNS_API_TOKEN`
 - `CLOUDFLARE_ZONE_ID`
 
-### Immich
-- `IMMICH_UPLOAD_LOCATION` (default: `./data/immich`)
+### Backup tuning (optional)
+- `NEXTCLOUD_SQL_BACKUP_KEEP` (default: `30`)
 
-### Nextcloud
-- `NEXTCLOUD_DATA_LOCATION` (default: `./data/nextcloud`)
+---
 
 
 ## License

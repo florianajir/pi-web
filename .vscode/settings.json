@@ -4,6 +4,7 @@
 		"appendonly",
 		"aufs",
 		"basicauth",
+		"beszel",
 		"cadvisor",
 		"certificatesresolvers",
 		"certresolver",
@@ -19,6 +20,7 @@
 		"exposedbydefault",
 		"FTLCONF",
 		"grafana",
+		"headplane",
 		"HEADSCALE",
 		"healthcheck",
 		"hsts",
@@ -57,6 +59,7 @@
 		"sysctls",
 		"sysfs",
 		"tlschallenge",
+		"tmpfs",
 		"traefik",
 		"WEBPASSWORD",
 		"websecure"
