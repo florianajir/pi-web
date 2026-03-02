@@ -28,7 +28,7 @@ services:
     labels:
       - "com.example.description=Dynamic DNS updater for Cloudflare"
       - "com.example.service=ddns"
-    mem_limit: 128m
+    mem_limit: 64m
 
   watchtower:
     <<: *default-logging
@@ -119,7 +119,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    mem_limit: 512m
+    mem_limit: 384m
 
   traefik:
     <<: *default-logging
@@ -183,7 +183,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    mem_limit: 256m
+    mem_limit: 192m
 
   beszel:
     <<: *default-logging
@@ -222,7 +222,7 @@ services:
       - "traefik.http.routers.beszel-agentconnect.priority=100"
       - "traefik.http.routers.beszel-agentconnect.tls=true"
       - "traefik.http.services.beszel.loadbalancer.server.port=8090"
-    mem_limit: 256m
+    mem_limit: 64m
 
   beszel-agent:
     <<: *default-logging
@@ -248,7 +248,7 @@ services:
     healthcheck:
       test: ["CMD", "/agent", "health"]
       interval: 120s
-    mem_limit: 128m
+    mem_limit: 96m
 
   portainer:
     <<: *default-logging
@@ -279,7 +279,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    mem_limit: 256m
+    mem_limit: 192m
 
   pihole:
     <<: *default-logging
@@ -327,7 +327,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    mem_limit: 256m
+    mem_limit: 192m
 
   n8n:
     <<: *default-logging
@@ -422,7 +422,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 45s
-    mem_limit: 384m
+    mem_limit: 256m
 
   # Connectivity Stack
   headscale:
@@ -478,7 +478,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    mem_limit: 256m
+    mem_limit: 192m
 
   tailscale:
     <<: *default-logging
@@ -508,7 +508,7 @@ services:
     labels:
       - "com.example.description=Tailscale VPN client"
       - "com.example.service=tailscale"
-    mem_limit: 256m
+    mem_limit: 192m
 
   immich-server:
     <<: *default-logging
@@ -551,7 +551,7 @@ services:
       - "traefik.http.routers.immich.middlewares=lan@docker"
       - "traefik.http.routers.immich.tls=true"
       - "traefik.http.services.immich.loadbalancer.server.port=2283"
-    mem_limit: 1g
+    mem_limit: 896m
 
   nextcloud:
     <<: *default-logging
@@ -604,7 +604,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    mem_limit: 1g
+    mem_limit: 768m
 
   # Database & Cache
   postgres:
@@ -629,7 +629,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    mem_limit: 2g
+    mem_limit: 1536m
     shm_size: 256mb
     labels:
       - "com.example.description=PostgreSQL database for Immich & Nextcloud"
@@ -648,7 +648,7 @@ services:
     labels:
       - "com.example.description=Redis cache for Immich & Nextcloud"
       - "com.example.service=redis"
-    mem_limit: 256m
+    mem_limit: 192m
 
 volumes:
   ddns_data:
