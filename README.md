@@ -21,34 +21,62 @@ It includes:
 
 ```mermaid
 flowchart LR
-  U["Users / Clients"] -->|"HTTPS :443"| T["Traefik"]
-  U -->|"DNS :53"| PH["Pi-hole"]
-  U -->|"STUN :3478/udp"| HS["Headscale"]
+  Internet((Internet))
+  Cloudflare[Cloudflare DNS]
+  LAN[Home LAN Clients]
 
-  subgraph FE["frontend network"]
-    T
-    PH
-    ND["Beszel"]
-    PT["Portainer"]
-    N8["n8n"]
-    NC["Nextcloud"]
-    IM["Immich"]
-    HS
+  subgraph Pi["Raspberry Pi Host (Docker Compose)"]
+    DDNS[ddns-updater]
+    Traefik[traefik]
+    Watchtower[watchtower]
+    Tailscale[tailscale]
+
+    subgraph Apps["User-facing services (routed by Traefik)"]
+      Nextcloud[nextcloud]
+      Immich[immich-server]
+      N8N[n8n]
+      Portainer[portainer]
+      Beszel[beszel]
+      Headscale[headscale]
+      Headplane[headplane]
+      Backrest[backrest]
+      PiholeWeb[pihole web]
+    end
+
+    subgraph Internal["Internal app services"]
+      Postgres[(postgres)]
+      Redis[(redis)]
+      PiholeDNS[(pihole dns)]
+    end
   end
 
-  subgraph NCNET["nextcloud (internal)"]
-    NC
-    R["Redis"]
-    PG["Postgres"]
-  end
+  Internet -->|HTTPS 443| Traefik
+  Cloudflare <-->|DNS records update| DDNS
+  Traefik --> Nextcloud
+  Traefik --> Immich
+  Traefik --> N8N
+  Traefik --> Portainer
+  Traefik --> Beszel
+  Traefik --> Headscale
+  Traefik --> Headplane
+  Traefik --> Backrest
+  Traefik --> PiholeWeb
 
-  subgraph IMNET["immich (internal)"]
-    IM
-    R
-    PG
-  end
+  Nextcloud --> Postgres
+  Nextcloud --> Redis
+  Immich --> Postgres
+  Immich --> Redis
+  Backrest --> Nextcloud
+  Backrest --> Immich
+  Backrest --> Postgres
 
-  TS["Tailscale (host network)"] --> HS
+  LAN -->|DNS 53/tcp+udp| PiholeDNS
+  PiholeWeb -.admin UI.-> Traefik
+
+  Tailscale <-->|VPN coordination| Headscale
+  Headplane -->|admin API/UI| Headscale
+  Watchtower -.automatic image updates.-> Nextcloud
+  Watchtower -.automatic image updates.-> Immich
 ```
 
 ---
