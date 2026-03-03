@@ -5,6 +5,31 @@ x-logging: &default-logging
       max-size: "10m"
       max-file: "3"
 
+x-cpu-request-tiny: &cpu-request-tiny
+  resources:
+    reservations:
+      cpus: "0.05"
+
+x-cpu-request-small: &cpu-request-small
+  resources:
+    reservations:
+      cpus: "0.10"
+
+x-cpu-request-medium: &cpu-request-medium
+  resources:
+    reservations:
+      cpus: "0.20"
+
+x-cpu-request-large: &cpu-request-large
+  resources:
+    reservations:
+      cpus: "0.35"
+
+x-cpu-request-xlarge: &cpu-request-xlarge
+  resources:
+    reservations:
+      cpus: "0.60"
+
 services:
   ddns-updater:
     <<: *default-logging
@@ -21,13 +46,14 @@ services:
       - ddns_data:/updater/data
     healthcheck:
       test: ["CMD", "/updater/ddns-updater", "healthcheck"]
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 30s
     labels:
       - "com.example.description=Dynamic DNS updater for Cloudflare"
       - "com.example.service=ddns"
+    deploy: *cpu-request-tiny
     mem_limit: 64m
 
   watchtower:
@@ -44,13 +70,14 @@ services:
       - TZ=${TIMEZONE:-Europe/Paris}
     healthcheck:
       test: ["CMD", "/watchtower", "--health-check"]
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 30s
     labels:
       - "com.example.description=Watchtower automatic updates"
       - "com.example.service=watchtower"
+    deploy: *cpu-request-tiny
     mem_limit: 64m
 
   backrest:
@@ -61,7 +88,7 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
-        apk add --no-cache postgresql17-client >/dev/null
+        apk add --no-cache postgresql-client >/dev/null
         exec /sbin/tini -- /docker-entrypoint /backrest
     networks:
       - frontend
@@ -106,6 +133,11 @@ services:
     labels:
       - "com.example.description=Backrest backup management"
       - "com.example.service=backrest"
+      - "homepage.group=Management"
+      - "homepage.name=Backrest"
+      - "homepage.icon=backrest.png"
+      - "homepage.href=https://backrest.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Backup management"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.backrest.rule=Host(`backrest.${HOST_NAME:-pi.lan}`)"
@@ -115,10 +147,11 @@ services:
       - "traefik.http.services.backrest.loadbalancer.server.port=9898"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:9898/"]
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 60s
+    deploy: *cpu-request-medium
     mem_limit: 384m
 
   traefik:
@@ -154,6 +187,11 @@ services:
     labels:
       - "com.example.description=Traefik reverse proxy"
       - "com.example.service=traefik"
+      - "homepage.group=Management"
+      - "homepage.name=Traefik"
+      - "homepage.icon=traefik.png"
+      - "homepage.href=https://traefik.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Reverse proxy dashboard"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.middlewares.compress.compress=true"
@@ -183,6 +221,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    cpuset: "0"
+    deploy: *cpu-request-medium
     mem_limit: 192m
 
   beszel:
@@ -211,6 +251,11 @@ services:
     labels:
       - "com.example.description=Beszel monitoring hub"
       - "com.example.service=beszel"
+      - "homepage.group=Monitoring"
+      - "homepage.name=Beszel"
+      - "homepage.icon=beszel.png"
+      - "homepage.href=https://beszel.${HOST_NAME:-pi.lan}"
+      - "homepage.description=System monitoring"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.beszel.rule=Host(`beszel.${HOST_NAME:-pi.lan}`)"
@@ -222,6 +267,7 @@ services:
       - "traefik.http.routers.beszel-agentconnect.priority=100"
       - "traefik.http.routers.beszel-agentconnect.tls=true"
       - "traefik.http.services.beszel.loadbalancer.server.port=8090"
+    deploy: *cpu-request-small
     mem_limit: 64m
 
   beszel-agent:
@@ -248,6 +294,7 @@ services:
     healthcheck:
       test: ["CMD", "/agent", "health"]
       interval: 120s
+    deploy: *cpu-request-small
     mem_limit: 96m
 
   portainer:
@@ -266,6 +313,11 @@ services:
     labels:
       - "com.example.description=Portainer container management"
       - "com.example.service=portainer"
+      - "homepage.group=Management"
+      - "homepage.name=Portainer"
+      - "homepage.icon=portainer.png"
+      - "homepage.href=https://portainer.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Container management"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.portainer.rule=Host(`portainer.${HOST_NAME:-pi.lan}`)"
@@ -275,10 +327,11 @@ services:
       - "traefik.http.services.portainer.loadbalancer.server.port=9000"
     healthcheck:
       test: ["CMD", "/portainer", "--version"]
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 30s
+    deploy: *cpu-request-small
     mem_limit: 192m
 
   pihole:
@@ -314,6 +367,11 @@ services:
     labels:
       - "com.example.description=Pi-hole DNS Ad-Blocker"
       - "com.example.service=pihole"
+      - "homepage.group=Network"
+      - "homepage.name=Pi-hole"
+      - "homepage.icon=pi-hole.png"
+      - "homepage.href=https://pihole.${HOST_NAME:-pi.lan}"
+      - "homepage.description=DNS filtering"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.pihole.rule=Host(`pihole.${HOST_NAME:-pi.lan}`)"
@@ -323,10 +381,12 @@ services:
       - "traefik.http.services.pihole.loadbalancer.server.port=8082"
     healthcheck:
       test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 30s
+    cpuset: "0"
+    deploy: *cpu-request-medium
     mem_limit: 192m
 
   n8n:
@@ -339,6 +399,11 @@ services:
     labels:
       - "com.example.description=n8n workflow automation"
       - "com.example.service=n8n"
+      - "homepage.group=Automation"
+      - "homepage.name=n8n"
+      - "homepage.icon=n8n.png"
+      - "homepage.href=https://n8n.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Workflow automation"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.n8n.rule=Host(`n8n.${HOST_NAME:-pi.lan}`)"
@@ -375,10 +440,11 @@ services:
           "/dev/null",
           "http://127.0.0.1:5678/healthz",
         ]
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 60s
+    deploy: *cpu-request-large
     mem_limit: 384m
 
   headplane:
@@ -403,6 +469,11 @@ services:
     labels:
       - "com.example.description=Headplane Headscale Web UI"
       - "com.example.service=headplane"
+      - "homepage.group=Network"
+      - "homepage.name=Headplane"
+      - "homepage.icon=headscale.png"
+      - "homepage.href=https://headscale.${HOST_NAME:-pi.lan}/admin"
+      - "homepage.description=Headscale administration"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.headplane.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && PathPrefix(`/admin`)"
@@ -418,10 +489,11 @@ services:
         - "-e"
         - >-
           const net=require('node:net');const s=net.connect({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.setTimeout(5000,()=>{s.destroy();process.exit(1)});s.on('error',()=>process.exit(1));
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 5
       start_period: 45s
+    deploy: *cpu-request-small
     mem_limit: 256m
 
   # Connectivity Stack
@@ -452,6 +524,11 @@ services:
     labels:
       - "com.example.description=Headscale coordination server"
       - "com.example.service=headscale"
+      - "homepage.group=Network"
+      - "homepage.name=Headscale"
+      - "homepage.icon=tailscale.png"
+      - "homepage.href=https://headscale.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Private Tailnet coordination"
       - "me.tale.headplane.target=headscale"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
@@ -474,10 +551,12 @@ services:
       - "traefik.http.middlewares.cors.headers.addvaryheader=true"
     healthcheck:
       test: ["CMD", "/ko-app/headscale", "health"]
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 30s
+    cpuset: "0"
+    deploy: *cpu-request-medium
     mem_limit: 192m
 
   tailscale:
@@ -501,13 +580,18 @@ services:
       - headscale
     healthcheck:
       test: ["CMD", "tailscale", "status", "--peers=false"]
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 120s
     labels:
       - "com.example.description=Tailscale VPN client"
       - "com.example.service=tailscale"
+      - "homepage.group=Network"
+      - "homepage.name=Tailscale"
+      - "homepage.icon=tailscale.png"
+      - "homepage.description=VPN mesh client"
+    deploy: *cpu-request-small
     mem_limit: 192m
 
   immich-server:
@@ -537,13 +621,18 @@ services:
       - 2283
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:2283/api/server/ping"]
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 60s
     labels:
       - "com.example.description=Immich media server"
       - "com.example.service=immich"
+      - "homepage.group=Storage"
+      - "homepage.name=Immich"
+      - "homepage.icon=immich.png"
+      - "homepage.href=https://immich.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Photos and videos"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.immich.rule=Host(`immich.${HOST_NAME:-pi.lan}`)"
@@ -551,6 +640,8 @@ services:
       - "traefik.http.routers.immich.middlewares=lan@docker"
       - "traefik.http.routers.immich.tls=true"
       - "traefik.http.services.immich.loadbalancer.server.port=2283"
+    cpuset: "1-3"
+    deploy: *cpu-request-xlarge
     mem_limit: 896m
 
   nextcloud:
@@ -583,6 +674,11 @@ services:
     labels:
       - "com.example.description=Nextcloud self-hosted storage"
       - "com.example.service=nextcloud"
+      - "homepage.group=Storage"
+      - "homepage.name=Nextcloud"
+      - "homepage.icon=nextcloud.png"
+      - "homepage.href=https://nextcloud.${HOST_NAME:-pi.lan}"
+      - "homepage.description=File sync and collaboration"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.middlewares.compress.compress=true"
@@ -595,7 +691,7 @@ services:
       - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/status.php"]
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 60s
@@ -604,7 +700,98 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    cpuset: "1-3"
+    deploy: *cpu-request-large
     mem_limit: 768m
+
+  homepage:
+    <<: *default-logging
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: pi-homepage
+    restart: unless-stopped
+    networks:
+      - frontend
+    expose:
+      - 3000
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - HOMEPAGE_ALLOWED_HOSTS=homepage.${HOST_NAME:-pi.lan}
+    volumes:
+      - ./config/homepage:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    tmpfs:
+      - /app/config/logs
+    labels:
+      - "com.example.description=Homepage service dashboard"
+      - "com.example.service=homepage"
+      - "homepage.group=Management"
+      - "homepage.name=Homepage"
+      - "homepage.icon=homepage.png"
+      - "homepage.href=https://homepage.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Service dashboard"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.homepage.rule=Host(`homepage.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.homepage.entrypoints=websecure"
+      - "traefik.http.routers.homepage.middlewares=lan@docker"
+      - "traefik.http.routers.homepage.tls=true"
+      - "traefik.http.services.homepage.loadbalancer.server.port=3000"
+    depends_on:
+      - traefik
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy: *cpu-request-small
+    mem_limit: 192m
+
+  ntfy:
+    <<: *default-logging
+    image: binwiederhier/ntfy:v2.17.0
+    container_name: pi-ntfy
+    restart: unless-stopped
+    command: serve
+    networks:
+      - frontend
+    expose:
+      - 80
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - NTFY_BASE_URL=https://ntfy.${HOST_NAME:-pi.lan}
+      - NTFY_BEHIND_PROXY=true
+      - NTFY_CACHE_FILE=/var/cache/ntfy/cache.db
+      - NTFY_AUTH_FILE=/var/lib/ntfy/user.db
+      - NTFY_AUTH_DEFAULT_ACCESS=read-write
+      - NTFY_ENABLE_LOGIN=true
+    volumes:
+      - ntfy_cache:/var/cache/ntfy
+      - ntfy_data:/var/lib/ntfy
+    labels:
+      - "com.example.description=ntfy push notifications"
+      - "com.example.service=ntfy"
+      - "homepage.group=Automation"
+      - "homepage.name=ntfy"
+      - "homepage.icon=ntfy.png"
+      - "homepage.href=https://ntfy.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Self-hosted notifications"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.ntfy.rule=Host(`ntfy.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.ntfy.entrypoints=websecure"
+      - "traefik.http.routers.ntfy.middlewares=lan@docker"
+      - "traefik.http.routers.ntfy.tls=true"
+      - "traefik.http.services.ntfy.loadbalancer.server.port=80"
+    healthcheck:
+      test:
+        ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/v1/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy: *cpu-request-small
+    mem_limit: 128m
 
   # Database & Cache
   postgres:
@@ -625,11 +812,13 @@ services:
       - nextcloud
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
-      interval: 30s
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 40s
     mem_limit: 1536m
+    cpuset: "1-3"
+    deploy: *cpu-request-xlarge
     shm_size: 256mb
     labels:
       - "com.example.description=PostgreSQL database for Immich & Nextcloud"
@@ -641,6 +830,10 @@ services:
     image: docker.io/valkey/valkey:9@sha256:546304417feac0874c3dd576e0952c6bb8f06bb4093ea0c9ca303c73cf458f63
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: always
     networks:
       - immich
@@ -648,6 +841,7 @@ services:
     labels:
       - "com.example.description=Redis cache for Immich & Nextcloud"
       - "com.example.service=redis"
+    deploy: *cpu-request-small
     mem_limit: 192m
 
 volumes:
@@ -679,6 +873,14 @@ volumes:
     labels:
       - "com.example.description=n8n persistent data"
       - "com.example.service=n8n"
+  ntfy_cache:
+    labels:
+      - "com.example.description=ntfy cache and queue state"
+      - "com.example.service=ntfy"
+  ntfy_data:
+    labels:
+      - "com.example.description=ntfy auth and metadata"
+      - "com.example.service=ntfy"
   headscale_data:
     labels:
       - "com.example.description=Headscale persistent data and keys"

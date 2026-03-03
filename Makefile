@@ -101,9 +101,10 @@ start:
 	@echo "✅ Stack started"
 
 stop:
-	@echo "🛑 Stop"
-	-sudo systemctl stop $(UNIT)
-	@echo "✅ Stopped"
+	@echo "🛑 Stopping Pi-Web stack..."
+	$(COMPOSE) down --remove-orphans
+	sudo systemctl stop $(UNIT) 2>/dev/null || true
+	@echo "✅ Stack stopped"
 
 restart:
 	@echo "🔄 Restart"

@@ -7,6 +7,7 @@
 
 It includes:
 - Private cloud servers (`nextcloud`, `immich`, `n8n`)
+- Push notifications (`ntfy`)
 - Personal DNS filtering (`pihole`)
 - VPN Connectivity (`tailscale`, `headscale`, `headplane`)
 - Secured network access using reverse proxy + TLS (`traefik` with Cloudflare DNS challenge and DDNS updater)
@@ -40,6 +41,7 @@ flowchart LR
       Headscale[headscale]
       Headplane[headplane]
       Backrest[backrest]
+      Ntfy[ntfy]
       PiholeWeb[pihole web]
     end
 
@@ -60,6 +62,7 @@ flowchart LR
   Traefik --> Headscale
   Traefik --> Headplane
   Traefik --> Backrest
+  Traefik --> Ntfy
   Traefik --> PiholeWeb
 
   Nextcloud --> Postgres

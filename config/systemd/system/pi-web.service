@@ -10,7 +10,7 @@ EnvironmentFile=__PROJECT_PATH__/.env
 ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/headscale-pre-start.sh
 ExecStart=/usr/bin/docker compose up -d
 ExecStartPost=-/bin/bash __PROJECT_PATH__/scripts/headscale-init.sh
-ExecStop=/usr/bin/docker compose down
+ExecStop=/usr/bin/docker compose down --remove-orphans
 RemainAfterExit=true
 
 [Install]
