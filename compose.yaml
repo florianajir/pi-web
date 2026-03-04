@@ -59,7 +59,7 @@ services:
   watchtower:
     <<: *default-logging
     container_name: pi-watchtower
-    image: containrrr/watchtower:1.7.1
+    image: containrrr/watchtower:latest
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -336,7 +336,7 @@ services:
 
   pihole:
     <<: *default-logging
-    image: pihole/pihole:2025.11.1
+    image: pihole/pihole:2026.02.0
     container_name: pi-pihole
     restart: unless-stopped
     cap_add:
