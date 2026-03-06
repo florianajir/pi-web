@@ -576,7 +576,7 @@ services:
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=false
       - TS_EXTRA_ARGS=--login-server=https://headscale.${HOST_NAME:-pi.lan} --accept-dns=true --advertise-exit-node --advertise-routes=192.168.1.0/24 --accept-routes
-      - TS_HOSTNAME=tailscale.${HOST_NAME:-pi.lan}
+      - TS_HOSTNAME=tailscale
     volumes:
       - tailscale_state:/var/lib/tailscale
       - /dev/net/tun:/dev/net/tun
@@ -672,6 +672,7 @@ services:
       - nextcloud_html:/var/www/html
       - ${DATA_LOCATION:-./data}/nextcloud:/var/www/html/data
       - ${DATA_LOCATION:-./data}/nextcloud-config:/var/www/html/config
+      - ./config/nextcloud/reverse-proxy.config.php:/var/www/html/config/reverse-proxy.config.php:ro
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/var/www/html/themes
     networks:
       - frontend
