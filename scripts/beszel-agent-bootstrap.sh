@@ -9,34 +9,52 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="${PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}"
 ENV_FILE="$PROJECT_DIR/.env"
+NTFY_ENV_FILE="$PROJECT_DIR/config/ntfy/ntfy.env"
 AGENT_ENV_DIR="$PROJECT_DIR/config/beszel-agent"
 AGENT_ENV_FILE="$AGENT_ENV_DIR/agent.env"
 MAX_RETRIES=90
 RETRY_INTERVAL=2
 HUB_URL_DOCKER="http://pi-beszel:8090"
 CURL_IMAGE="curlimages/curl:8.12.1"
+DEFAULT_BESZEL_NTFY_TOPIC="beszel-alerts"
+DEFAULT_BESZEL_TEMP_ALERT_VALUE="70"
+DEFAULT_BESZEL_TEMP_ALERT_MIN="5"
+DEFAULT_BESZEL_NTFY_SCHEME="http"
 CONFIG_UPDATED=0
 
 log() {
     echo "[beszel-bootstrap] $(date '+%H:%M:%S') $*" >&2
 }
 
+read_env_value_from_file() {
+    # Read the last matching KEY=value from a dotenv-style file.
+    local file="$1"
+    local key="$2"
+
+    if [ ! -f "$file" ]; then
+        return 0
+    fi
+
+    grep "^$key=" "$file" 2>/dev/null | tail -n1 | cut -d'=' -f2-
+}
+
 get_env_value() {
-    # Read last matching KEY=value from .env
-    # shellcheck disable=SC2002
-    cat "$ENV_FILE" 2>/dev/null | grep "^$1=" | tail -n1 | cut -d'=' -f2-
+    read_env_value_from_file "$ENV_FILE" "$1"
 }
 
 get_agent_env_value() {
-    # Read last matching KEY=value from agent env file
-    cat "$AGENT_ENV_FILE" 2>/dev/null | grep "^$1=" | tail -n1 | cut -d'=' -f2-
+    read_env_value_from_file "$AGENT_ENV_FILE" "$1"
 }
 
-set_agent_env_value() {
-    # Upsert KEY=value in agent env file without sed replacement pitfalls.
-    # Works with values containing special characters like '&' or '|'.
-    local key="$1"
-    local value="$2"
+get_ntfy_env_value() {
+    read_env_value_from_file "$NTFY_ENV_FILE" "$1"
+}
+
+upsert_env_value() {
+    # Upsert KEY=value in file safely (values may contain '&', '|', etc.).
+    local file="$1"
+    local key="$2"
+    local value="$3"
     local tmp_file
 
     tmp_file=$(mktemp)
@@ -55,9 +73,13 @@ set_agent_env_value() {
                 print k "=" v
             }
         }
-    ' "$AGENT_ENV_FILE" > "$tmp_file"
+    ' "$file" > "$tmp_file"
 
-    mv "$tmp_file" "$AGENT_ENV_FILE"
+    mv "$tmp_file" "$file"
+}
+
+set_agent_env_value() {
+    upsert_env_value "$AGENT_ENV_FILE" "$1" "$2"
     chmod 600 "$AGENT_ENV_FILE" 2>/dev/null || true
 }
 
@@ -85,13 +107,47 @@ resolve_key_from_env() {
     fi
 }
 
+docker_curl() {
+    docker run --rm --network frontend "$CURL_IMAGE" -fsS "$@"
+}
+
+beszel_api_get() {
+    local auth_token="$1"
+    local path="$2"
+    shift 2
+
+    docker_curl -G -H "Authorization: $auth_token" "$@" "$HUB_URL_DOCKER$path"
+}
+
+beszel_api_post_json() {
+    local auth_token="$1"
+    local path="$2"
+    local payload="$3"
+
+    docker_curl -X POST \
+        -H "Authorization: $auth_token" \
+        -H 'Content-Type: application/json' \
+        -d "$payload" \
+        "$HUB_URL_DOCKER$path"
+}
+
+beszel_api_patch_json() {
+    local auth_token="$1"
+    local path="$2"
+    local payload="$3"
+
+    docker_curl -X PATCH \
+        -H "Authorization: $auth_token" \
+        -H 'Content-Type: application/json' \
+        -d "$payload" \
+        "$HUB_URL_DOCKER$path"
+}
+
 get_hub_public_key() {
     local auth_token response hub_key
     auth_token="$1"
 
-    response=$(docker run --rm --network frontend \
-        "$CURL_IMAGE" \
-        -fsS \
+    response=$(docker_curl \
         -H "Authorization: $auth_token" \
         "$HUB_URL_DOCKER/api/beszel/getkey")
 
@@ -132,6 +188,8 @@ wait_for_beszel_container() {
 }
 
 wait_for_beszel_health() {
+    local status
+
     log "Waiting for Beszel health status..."
     for i in $(seq 1 $MAX_RETRIES); do
         status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' pi-beszel 2>/dev/null || true)
@@ -161,15 +219,135 @@ escape_json() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+url_encode() {
+    _value="$1"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        printf '%s' "$_value"
+        return 0
+    fi
+
+    python3 - "$_value" <<'PY'
+import sys
+from urllib.parse import quote
+
+print(quote(sys.argv[1], safe=""))
+PY
+}
+
+extract_settings_record_id() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 1
+    fi
+
+    python3 -c 'import json,sys
+s = sys.stdin.read() or "{}"
+try:
+    data = json.loads(s)
+except json.JSONDecodeError:
+    sys.exit(1)
+items = data.get("items") or []
+print(items[0].get("id", "") if items else "")'
+}
+
+build_user_settings_payload() {
+    _webhook_url="$1"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 1
+    fi
+
+    python3 -c 'import json,sys
+from urllib.parse import urlparse
+
+new_webhook = sys.argv[1]
+s = sys.stdin.read() or "{}"
+try:
+    data = json.loads(s)
+except json.JSONDecodeError:
+    sys.exit(1)
+items = data.get("items") or []
+if not items:
+    print("")
+    sys.exit(0)
+settings = items[0].get("settings") or {}
+webhooks = settings.get("webhooks") or []
+target = urlparse(new_webhook)
+
+# remove legacy/duplicate ntfy beszel webhooks targeting the same host/topic
+normalized = []
+for webhook in webhooks:
+    parsed = urlparse(webhook)
+    is_same_beszel_ntfy_target = (
+        parsed.scheme == "ntfy"
+        and (parsed.hostname or "") == (target.hostname or "")
+        and (parsed.username or "") == "beszel"
+        and (parsed.path or "") == (target.path or "")
+    )
+    if not is_same_beszel_ntfy_target:
+        normalized.append(webhook)
+
+webhooks = normalized
+if new_webhook not in webhooks:
+    webhooks.append(new_webhook)
+settings["webhooks"] = webhooks
+print(json.dumps({"settings": settings}, separators=(",", ":")))' "$_webhook_url"
+}
+
+count_system_records() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 1
+    fi
+
+    python3 -c 'import json,sys
+s = sys.stdin.read() or "{}"
+try:
+    data = json.loads(s)
+except json.JSONDecodeError:
+    sys.exit(1)
+items = data.get("items") or []
+print(len(items))'
+}
+
+build_temperature_alert_payload() {
+    _value="$1"
+    _min="$2"
+    _overwrite="$3"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 1
+    fi
+
+    python3 -c 'import json,sys
+value_arg = sys.argv[1]
+min_arg = sys.argv[2]
+overwrite_arg = sys.argv[3].strip().lower()
+try:
+    value = float(value_arg)
+except ValueError:
+    value = 70.0
+try:
+    min_minutes = int(float(min_arg))
+except ValueError:
+    min_minutes = 5
+overwrite = overwrite_arg in ("1", "true", "yes", "on")
+s = sys.stdin.read() or "{}"
+try:
+    data = json.loads(s)
+except json.JSONDecodeError:
+    sys.exit(1)
+systems = [item.get("id") for item in (data.get("items") or []) if item.get("id")]
+payload = {"name": "Temperature", "value": value, "min": min_minutes, "systems": systems, "overwrite": overwrite}
+print(json.dumps(payload, separators=(",", ":")))' "$_value" "$_min" "$_overwrite"
+}
+
 login_and_get_auth_token() {
     local email_escaped pass_escaped payload response token
     email_escaped=$(escape_json "$EMAIL")
     pass_escaped=$(escape_json "$PASSWORD")
     payload=$(printf '{"identity":"%s","password":"%s"}' "$email_escaped" "$pass_escaped")
 
-    response=$(docker run --rm --network frontend \
-        "$CURL_IMAGE" \
-        -fsS \
+    response=$(docker_curl \
         -X POST \
         -H 'Content-Type: application/json' \
         -d "$payload" \
@@ -187,12 +365,7 @@ get_or_create_permanent_universal_token() {
     local auth_token current_json token active permanent created_json
     auth_token="$1"
 
-    current_json=$(docker run --rm --network frontend \
-        "$CURL_IMAGE" \
-        -fsS \
-        -G \
-        -H "Authorization: $auth_token" \
-        "$HUB_URL_DOCKER/api/beszel/universal-token")
+    current_json=$(beszel_api_get "$auth_token" "/api/beszel/universal-token")
 
     token=$(extract_json_field "$current_json" token)
     active=$(extract_json_bool "$current_json" active)
@@ -203,15 +376,11 @@ get_or_create_permanent_universal_token() {
         return 0
     fi
 
-    created_json=$(docker run --rm --network frontend \
-        "$CURL_IMAGE" \
-        -fsS \
-        -G \
-        -H "Authorization: $auth_token" \
+    created_json=$(beszel_api_get "$auth_token" "/api/beszel/universal-token" \
         --data-urlencode "enable=1" \
         --data-urlencode "permanent=1" \
         --data-urlencode "token=$token" \
-        "$HUB_URL_DOCKER/api/beszel/universal-token")
+    )
 
     token=$(extract_json_field "$created_json" token)
     active=$(extract_json_bool "$created_json" active)
@@ -292,6 +461,82 @@ restart_agent_if_needed() {
     log "beszel-agent is up"
 }
 
+configure_ntfy_webhook_and_temperature_alerts() {
+    local auth_token="$1"
+    local beszel_password beszel_topic
+    local password_encoded topic_encoded webhook_url
+    local settings_response settings_record_id settings_payload
+    local systems_response systems_count alert_value alert_min alert_overwrite alerts_payload
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        log "WARNING: python3 not found; skipping Beszel notifications bootstrap"
+        return 0
+    fi
+
+    if [ ! -f "$NTFY_ENV_FILE" ]; then
+        log "WARNING: $NTFY_ENV_FILE not found; skipping Beszel notifications bootstrap"
+        return 0
+    fi
+
+    beszel_password=$(get_ntfy_env_value NTFY_BESZEL_PASSWORD)
+    beszel_topic=$(get_ntfy_env_value NTFY_BESZEL_TOPIC)
+
+    if [ -z "$beszel_password" ]; then
+        log "WARNING: NTFY_BESZEL_PASSWORD missing; skipping Beszel notifications bootstrap"
+        return 0
+    fi
+
+    [ -n "$beszel_topic" ] || beszel_topic="$DEFAULT_BESZEL_NTFY_TOPIC"
+
+    password_encoded=$(url_encode "$beszel_password")
+    topic_encoded=$(url_encode "$beszel_topic")
+    webhook_url="ntfy://beszel:${password_encoded}@ntfy/${topic_encoded}?scheme=${DEFAULT_BESZEL_NTFY_SCHEME}"
+
+    log "Ensuring Beszel notification webhook is configured"
+    settings_response=$(beszel_api_get "$auth_token" "/api/collections/user_settings/records" \
+        --data-urlencode "page=1" \
+        --data-urlencode "perPage=1" \
+    )
+
+    settings_record_id=$(printf '%s' "$settings_response" | extract_settings_record_id)
+    if [ -z "$settings_record_id" ]; then
+        log "WARNING: Could not find user_settings record; skipping notifications bootstrap"
+        return 0
+    fi
+
+    settings_payload=$(printf '%s' "$settings_response" | build_user_settings_payload "$webhook_url")
+    if [ -n "$settings_payload" ]; then
+        beszel_api_patch_json \
+            "$auth_token" \
+            "/api/collections/user_settings/records/$settings_record_id" \
+            "$settings_payload" >/dev/null
+    fi
+
+    log "Ensuring default temperature alerts are configured"
+    systems_response=$(beszel_api_get "$auth_token" "/api/collections/systems/records" \
+        --data-urlencode "page=1" \
+        --data-urlencode "perPage=500" \
+        --data-urlencode "fields=id" \
+    )
+
+    systems_count=$(printf '%s' "$systems_response" | count_system_records)
+    if [ -z "$systems_count" ] || [ "$systems_count" -eq 0 ]; then
+        log "No systems found yet; skipping temperature alert bootstrap"
+        return 0
+    fi
+
+    alert_value=$(get_env_value BESZEL_TEMP_ALERT_VALUE)
+    alert_min=$(get_env_value BESZEL_TEMP_ALERT_MIN)
+    alert_overwrite=$(get_env_value BESZEL_TEMP_ALERT_OVERWRITE)
+
+    [ -n "$alert_value" ] || alert_value="$DEFAULT_BESZEL_TEMP_ALERT_VALUE"
+    [ -n "$alert_min" ] || alert_min="$DEFAULT_BESZEL_TEMP_ALERT_MIN"
+    [ -n "$alert_overwrite" ] || alert_overwrite="false"
+
+    alerts_payload=$(printf '%s' "$systems_response" | build_temperature_alert_payload "$alert_value" "$alert_min" "$alert_overwrite")
+    beszel_api_post_json "$auth_token" "/api/beszel/user-alerts" "$alerts_payload" >/dev/null
+}
+
 main() {
     log "=== Beszel Agent Bootstrap ==="
 
@@ -329,6 +574,7 @@ main() {
 
     persist_agent_config "$UNIVERSAL_TOKEN" "$HUB_PUBLIC_KEY"
     restart_agent_if_needed
+    configure_ntfy_webhook_and_temperature_alerts "$AUTH_TOKEN"
 
     log "Bootstrap completed successfully"
 }

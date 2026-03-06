@@ -103,6 +103,7 @@ services:
       - XDG_CACHE_HOME=/cache
       - TMPDIR=/tmp
       - TZ=${TIMEZONE:-Europe/Paris}
+      - HOST_NAME=${HOST_NAME:-pi.lan}
       - DB_HOST=postgres
       - DB_NAME=nextcloud
       - DB_USER=nextcloud
@@ -111,6 +112,10 @@ services:
       - NEXTCLOUD_SQL_BACKUP_DIR=/userdata/nextcloud-config/backups
       - NEXTCLOUD_SQL_BACKUP_KEEP=${NEXTCLOUD_SQL_BACKUP_KEEP:-30}
       - NEXTCLOUD_HOOK_STATE_FILE=/tmp/nextcloud-maintenance.state
+      - RESTIC_PACK_SIZE=32
+    env_file:
+      - path: ./config/ntfy/ntfy.env
+        required: false
     volumes:
       - ${DATA_LOCATION:-./data}/backrest/data:/data
       - ${DATA_LOCATION:-./data}/backrest/config:/config
@@ -120,6 +125,7 @@ services:
       - ${DATA_LOCATION:-./data}/nextcloud-config:/userdata/nextcloud-config
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/userdata/nextcloud-themes:ro
       - ./scripts/nextcloud-db-backup.sh:/hooks/nextcloud-db-backup.sh:ro
+      - ./scripts/backrest-post-hook.sh:/hooks/backrest-post-hook.sh:ro
     tmpfs:
       - /cache
       - /tmp
@@ -152,7 +158,7 @@ services:
       retries: 3
       start_period: 30s
     deploy: *cpu-request-medium
-    mem_limit: 384m
+    mem_limit: 512m
 
   traefik:
     <<: *default-logging
@@ -769,8 +775,11 @@ services:
       - NTFY_BEHIND_PROXY=true
       - NTFY_CACHE_FILE=/var/cache/ntfy/cache.db
       - NTFY_AUTH_FILE=/var/lib/ntfy/user.db
-      - NTFY_AUTH_DEFAULT_ACCESS=read-write
       - NTFY_ENABLE_LOGIN=true
+      - NTFY_AUTH_DEFAULT_ACCESS=deny-all
+    env_file:
+      - path: ./config/ntfy/ntfy.env
+        required: false
     volumes:
       - ntfy_cache:/var/cache/ntfy
       - ntfy_data:/var/lib/ntfy

@@ -8,8 +8,11 @@ Type=oneshot
 WorkingDirectory=__PROJECT_PATH__
 EnvironmentFile=__PROJECT_PATH__/.env
 ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/headscale-pre-start.sh
+ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/backrest-pre-start.sh
+ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/ntfy-pre-start.sh
 ExecStart=/usr/bin/docker compose up -d
 ExecStartPost=-/bin/bash __PROJECT_PATH__/scripts/headscale-init.sh
+ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/beszel-agent-bootstrap.sh
 ExecStop=/usr/bin/docker compose down --remove-orphans
 RemainAfterExit=true
 

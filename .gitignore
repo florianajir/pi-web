@@ -5,3 +5,4 @@
 /config/headplane/config.yaml
 /config/pihole/dnsmasq.d
 /config/beszel-agent/agent.env
+/config/ntfy/ntfy.env

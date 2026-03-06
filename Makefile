@@ -63,6 +63,7 @@ uninstall:
 	@echo "   - Generated config: ./config/headplane/config.yaml" 
 	@echo "   - Generated config: ./config/headscale/config.yaml"
 	@echo "   - Generated config: ./config/headscale/policy.hujson"
+	@echo "   - Generated config: ./config/ntfy/ntfy.env"
 	@echo "   - Generated config: ./config/beszel-agent/agent.env"
 	@echo "   - Systemd service units"
 	@echo ""
@@ -79,6 +80,7 @@ uninstall:
 	-rm -f ./config/headplane/config.yaml
 	-rm -f ./config/headscale/config.yaml
 	-rm -f ./config/headscale/policy.hujson
+	-rm -f ./config/ntfy/ntfy.env
 	-rm -f ./config/beszel-agent/agent.env
 	@echo "🧰 Removing host sysctl settings..."
 	-sudo rm -f /etc/sysctl.d/99-pi-web.conf

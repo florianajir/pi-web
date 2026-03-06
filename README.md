@@ -217,7 +217,7 @@ Your device will now be connected to your private VPN network managed by Headsca
 - `CLOUDFLARE_ZONE_ID`
 
 ### Backup tuning (optional)
-- `NEXTCLOUD_SQL_BACKUP_KEEP` (default: `30`)
+- `NEXTCLOUD_SQL_BACKUP_KEEP` (default: `2`)
 
 ---
 

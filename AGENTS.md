@@ -5,5 +5,6 @@ Pi Web is a self-hosted web application stack designed for Raspberry Pi devices.
 ## Guidelines
 
 - Use docker compose for execution and management of services.
-- Systemd service is provided for ease of use, but it should not be modified directly. Instead, any changes should be made in the docker compose file or the service configurations and init scripts provided in the repository to ensure idempotency and functionality on fresh installs.
-- Makefile is provided for convenience to manage the stack and perform common tasks, but it should not be the primary interface for configuration or management of the services.
+- Changes should be made in the docker compose file or the service configurations and scripts provided in the repository to ensure idempotency and functionality on fresh installs.
+- Makefile is provided for convenience.
+- Never use make uninstall or any destructive operation on a path other than the project path.

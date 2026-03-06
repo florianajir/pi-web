@@ -1,12 +1,9 @@
 #!/bin/sh
 set -eu
 
-MODE="${1:-oneshot}"
-
 CONFIG_FILE="${NEXTCLOUD_CONFIG_FILE:-/nextcloud-config/config.php}"
 BACKUP_DIR="${NEXTCLOUD_SQL_BACKUP_DIR:-/nextcloud-config/backups}"
-KEEP_COUNT="${NEXTCLOUD_SQL_BACKUP_KEEP:-30}"
-STATE_FILE="${NEXTCLOUD_HOOK_STATE_FILE:-/tmp/nextcloud-maintenance.state}"
+KEEP_COUNT="${NEXTCLOUD_SQL_BACKUP_KEEP:-2}"
 
 DB_HOST="${DB_HOST:-postgres}"
 DB_NAME="${DB_NAME:-nextcloud}"
@@ -72,40 +69,14 @@ run_db_backup() {
   fi
 }
 
-case "${MODE}" in
-  pre)
-    original_state="$(current_maintenance_state)"
-    printf '%s' "${original_state}" > "${STATE_FILE}"
-    set_maintenance_state true
-    run_db_backup
-    ;;
-  post)
-    if [ -f "${STATE_FILE}" ]; then
-      restore_state="$(cat "${STATE_FILE}")"
-      rm -f "${STATE_FILE}"
-      if [ "${restore_state}" != "true" ] && [ "${restore_state}" != "false" ]; then
-        restore_state="false"
-      fi
-      set_maintenance_state "${restore_state}"
-    else
-      set_maintenance_state false
-    fi
-    ;;
-  oneshot)
-    original_state="$(current_maintenance_state)"
-    restore_original_state() {
-      set_maintenance_state "${original_state}" || true
-    }
-    trap restore_original_state EXIT INT TERM
+original_state="$(current_maintenance_state)"
+restore_original_state() {
+  set_maintenance_state "${original_state}" || true
+}
+trap restore_original_state EXIT INT TERM
 
-    set_maintenance_state true
-    run_db_backup
+set_maintenance_state true
+run_db_backup
 
-    set_maintenance_state "${original_state}"
-    trap - EXIT INT TERM
-    ;;
-  *)
-    echo "Usage: $0 [pre|post|oneshot]" >&2
-    exit 2
-    ;;
-esac
+set_maintenance_state "${original_state}"
+trap - EXIT INT TERM
