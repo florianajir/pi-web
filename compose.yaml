@@ -46,9 +46,9 @@ services:
       - ddns_data:/updater/data
     healthcheck:
       test: ["CMD", "/updater/ddns-updater", "healthcheck"]
-      interval: 60s
+      interval: 120s
       timeout: 10s
-      retries: 3
+      retries: 2
       start_period: 30s
     labels:
       - "com.example.description=Dynamic DNS updater for Cloudflare"
@@ -59,7 +59,7 @@ services:
   watchtower:
     <<: *default-logging
     container_name: pi-watchtower
-    image: containrrr/watchtower:latest
+    image: nickfedor/watchtower:latest
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -70,9 +70,9 @@ services:
       - TZ=${TIMEZONE:-Europe/Paris}
     healthcheck:
       test: ["CMD", "/watchtower", "--health-check"]
-      interval: 60s
+      interval: 120s
       timeout: 10s
-      retries: 3
+      retries: 2
       start_period: 30s
     labels:
       - "com.example.description=Watchtower automatic updates"
@@ -150,7 +150,7 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 30s
     deploy: *cpu-request-medium
     mem_limit: 384m
 
@@ -220,7 +220,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 15s
     cpuset: "0"
     deploy: *cpu-request-medium
     mem_limit: 192m
@@ -246,8 +246,10 @@ services:
       - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
+      interval: 90s
+      timeout: 10s
+      retries: 2
       start_period: 5s
-      interval: 120s
     labels:
       - "com.example.description=Beszel monitoring hub"
       - "com.example.service=beszel"
@@ -293,9 +295,11 @@ services:
       HUB_URL: https://beszel.${HOST_NAME:-pi.lan}
     healthcheck:
       test: ["CMD", "/agent", "health"]
-      interval: 120s
+      interval: 90s
+      timeout: 10s
+      retries: 2
     deploy: *cpu-request-small
-    mem_limit: 96m
+    mem_limit: 64m
 
   portainer:
     <<: *default-logging
@@ -327,12 +331,12 @@ services:
       - "traefik.http.services.portainer.loadbalancer.server.port=9000"
     healthcheck:
       test: ["CMD", "/portainer", "--version"]
-      interval: 60s
+      interval: 90s
       timeout: 10s
-      retries: 3
+      retries: 2
       start_period: 30s
     deploy: *cpu-request-small
-    mem_limit: 192m
+    mem_limit: 128m
 
   pihole:
     <<: *default-logging
@@ -443,9 +447,9 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 30s
     deploy: *cpu-request-large
-    mem_limit: 384m
+    mem_limit: 192m
 
   headplane:
     <<: *default-logging
@@ -491,10 +495,10 @@ services:
           const net=require('node:net');const s=net.connect({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.setTimeout(5000,()=>{s.destroy();process.exit(1)});s.on('error',()=>process.exit(1));
       interval: 60s
       timeout: 10s
-      retries: 5
-      start_period: 45s
+      retries: 3
+      start_period: 20s
     deploy: *cpu-request-small
-    mem_limit: 256m
+    mem_limit: 192m
 
   # Connectivity Stack
   headscale:
@@ -554,7 +558,7 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 15s
     cpuset: "0"
     deploy: *cpu-request-medium
     mem_limit: 192m
@@ -583,7 +587,7 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 120s
+      start_period: 60s
     labels:
       - "com.example.description=Tailscale VPN client"
       - "com.example.service=tailscale"
@@ -592,7 +596,7 @@ services:
       - "homepage.icon=tailscale.png"
       - "homepage.description=VPN mesh client"
     deploy: *cpu-request-small
-    mem_limit: 192m
+    mem_limit: 128m
 
   immich-server:
     <<: *default-logging
@@ -624,7 +628,7 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 30s
     labels:
       - "com.example.description=Immich media server"
       - "com.example.service=immich"
@@ -642,7 +646,7 @@ services:
       - "traefik.http.services.immich.loadbalancer.server.port=2283"
     cpuset: "1-3"
     deploy: *cpu-request-xlarge
-    mem_limit: 896m
+    mem_limit: 2304m
 
   nextcloud:
     <<: *default-logging
@@ -665,6 +669,7 @@ services:
       - REDIS_HOST=redis
       - TZ=${TIMEZONE:-Europe/Paris}
     volumes:
+      - nextcloud_html:/var/www/html
       - ${DATA_LOCATION:-./data}/nextcloud:/var/www/html/data
       - ${DATA_LOCATION:-./data}/nextcloud-config:/var/www/html/config
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/var/www/html/themes
@@ -694,7 +699,7 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -740,12 +745,12 @@ services:
       - traefik
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/"]
-      interval: 60s
+      interval: 90s
       timeout: 10s
-      retries: 3
+      retries: 2
       start_period: 30s
     deploy: *cpu-request-small
-    mem_limit: 192m
+    mem_limit: 128m
 
   ntfy:
     <<: *default-logging
@@ -786,9 +791,9 @@ services:
     healthcheck:
       test:
         ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/v1/health"]
-      interval: 60s
+      interval: 90s
       timeout: 10s
-      retries: 3
+      retries: 2
       start_period: 30s
     deploy: *cpu-request-small
     mem_limit: 128m
@@ -812,11 +817,11 @@ services:
       - nextcloud
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
-      interval: 60s
+      interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    mem_limit: 1536m
+      start_period: 10s
+    mem_limit: 1024m
     cpuset: "1-3"
     deploy: *cpu-request-xlarge
     shm_size: 256mb
@@ -830,7 +835,7 @@ services:
     image: docker.io/valkey/valkey:9@sha256:546304417feac0874c3dd576e0952c6bb8f06bb4093ea0c9ca303c73cf458f63
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 60s
+      interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
@@ -842,7 +847,7 @@ services:
       - "com.example.description=Redis cache for Immich & Nextcloud"
       - "com.example.service=redis"
     deploy: *cpu-request-small
-    mem_limit: 192m
+    mem_limit: 256m
 
 volumes:
   ddns_data:
@@ -881,6 +886,10 @@ volumes:
     labels:
       - "com.example.description=ntfy auth and metadata"
       - "com.example.service=ntfy"
+  nextcloud_html:
+    labels:
+      - "com.example.description=Nextcloud application files"
+      - "com.example.service=nextcloud"
   headscale_data:
     labels:
       - "com.example.description=Headscale persistent data and keys"

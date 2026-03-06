@@ -18,6 +18,33 @@ It includes:
 
 ---
 
+## Requirements
+
+### Hardware Requirements
+
+**Minimum:**
+- Raspberry Pi 5 with 8GB RAM
+- MicroSD card (16GB+) or SSD storage
+
+**Recommended:**
+- Raspberry Pi 5 with 16GB RAM
+- NVMe SSD HAT for storage (significantly improves performance and reliability)
+
+### Prerequisites
+
+Before installing pi-web, you'll need:
+
+1. **Domain Name**: A registered domain name for accessing your services via HTTPS
+2. **Cloudflare Account**: Free Cloudflare account for:
+   - DNS management
+   - Dynamic DNS (DDNS) updates
+   - SSL/TLS certificate provisioning via DNS challenge
+3. **Cloudflare API Token**: Generate an API token with DNS edit permissions for your zone
+4. **Docker & Docker Compose**: Installed on your Raspberry Pi (checked during `make preflight`)
+
+---
+
+
 ## Architecture
 
 ```mermaid
@@ -82,6 +109,25 @@ flowchart LR
   Watchtower -.automatic image updates.-> Immich
 ```
 
+## Connecting Devices with Tailscale
+This stack includes Headscale for managing your private Tailscale network. To connect new devices:
+
+### Quick Command
+
+```bash
+make headscale-register <key>
+```
+
+### Detailed Steps
+```bash
+make headscale-register <key>
+```
+Replace `<key>` with the actual key from the client.
+
+Your device will now be connected to your private VPN network managed by Headscale.
+
+  
+
 ---
 
 ## Install guide
@@ -104,21 +150,33 @@ make logs
 ---
 
 
-## Registering a new Headscale node
+## Connecting Devices with Tailscale
 
-To add a new device to your private Tailscale network managed by Headscale:
+This stack includes Headscale for managing your private Tailscale network. To connect new devices:
+
+### Quick Command
+
+```bash
+make headscale-register <key>
+```
+
+### Detailed Steps
 
 1. On the client device, install Tailscale and run the join command. It will output a registration key and prompt for approval.
 2. Copy the key provided by the client.
 3. On your Pi-Web host, run:
 
-  ```bash
-  make headscale-register <key>
-  ```
+   ```bash
+   make headscale-register <key>
+   ```
 
-  Replace `<key>` with the actual key from the client.
+   Replace `<key>` with the actual key from the client.
+
+Your device will now be connected to your private VPN network managed by Headscale.
+
 
 ---
+
 ## Make commands
 
 | Command | Description |
@@ -162,7 +220,6 @@ To add a new device to your private Tailscale network managed by Headscale:
 - `NEXTCLOUD_SQL_BACKUP_KEEP` (default: `30`)
 
 ---
-
 
 ## License
 
