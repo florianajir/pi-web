@@ -465,7 +465,7 @@ services:
 
   headplane:
     <<: *default-logging
-    image: ghcr.io/tale/headplane:next
+    image: ghcr.io/tale/headplane:v0.6.2
     container_name: pi-headplane
     restart: unless-stopped
     networks:
@@ -515,7 +515,7 @@ services:
   # Connectivity Stack
   headscale:
     <<: *default-logging
-    image: headscale/headscale:0.27
+    image: headscale/headscale:0.28
     container_name: pi-headscale
     restart: unless-stopped
     command: serve
