@@ -7,7 +7,7 @@ ENV_FILE="${PROJECT_DIR}/.env"
 OUTPUT_FILE="${PROJECT_DIR}/config/ntfy/ntfy.env"
 OUTPUT_DIR="$(dirname "$OUTPUT_FILE")"
 NTFY_IMAGE="${NTFY_IMAGE:-binwiederhier/ntfy:v2.17.0}"
-NTFY_BESZEL_TOPIC="beszel-alerts"
+NTFY_AUTO_TOPIC="pi"
 
 log() {
     echo "[ntfy-pre-start] $(date '+%H:%M:%S') $*" >&2
@@ -80,13 +80,13 @@ main() {
     mkdir -p "$OUTPUT_DIR"
 
     AUTH_USERS_VALUE="${USER_VALUE}:${USER_HASH}:admin,backrest:${BACKREST_HASH}:user,beszel:${BESZEL_HASH}:user"
-    AUTH_ACCESS_VALUE="backrest:backup:rw,beszel:${NTFY_BESZEL_TOPIC}:rw"
+    AUTH_ACCESS_VALUE="backrest:${NTFY_AUTO_TOPIC}:rw,beszel:${NTFY_AUTO_TOPIC}:rw"
 
     {
         printf '# Managed by scripts/ntfy-pre-start.sh\n'
         printf 'NTFY_BACKREST_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_BACKREST_PASSWORD_VALUE")"
         printf 'NTFY_BESZEL_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_BESZEL_PASSWORD_VALUE")"
-        printf 'NTFY_BESZEL_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_BESZEL_TOPIC")"
+        printf 'NTFY_BESZEL_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_AUTO_TOPIC")"
         printf 'NTFY_AUTH_USERS=%s\n' "$(escape_compose_env_value "$AUTH_USERS_VALUE")"
         printf 'NTFY_AUTH_ACCESS=%s\n' "$(escape_compose_env_value "$AUTH_ACCESS_VALUE")"
     } > "$OUTPUT_FILE"

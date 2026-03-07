@@ -7,7 +7,8 @@
       "env": [
         "AWS_ACCESS_KEY_ID=__BACKREST_S3_ACCESS_KEY_ID__",
         "AWS_DEFAULT_REGION=__BACKREST_S3_REGION__",
-        "AWS_SECRET_ACCESS_KEY=__BACKREST_S3_SECRET_ACCESS_KEY__"
+        "AWS_SECRET_ACCESS_KEY=__BACKREST_S3_SECRET_ACCESS_KEY__",
+        "RESTIC_RETRY_LOCK=45m"
       ],
       "autoInitialize": true,
       "commandPrefix": {},
@@ -19,7 +20,7 @@
         "maxUnusedBytes": "0",
         "maxUnusedPercent": 25
       },
-      "autoUnlock": false,
+      "autoUnlock": true,
       "checkPolicy": {
         "schedule": {
           "cron": "0 0 1 * *",
@@ -56,16 +57,30 @@
       "hooks": [
         {
           "conditions": ["CONDITION_SNAPSHOT_START"],
+          "onError": "ON_ERROR_IGNORE",
+          "actionCommand": {
+            "command": "/bin/sh /hooks/backrest-unlock.sh s3"
+          }
+        },
+        {
+          "conditions": ["CONDITION_SNAPSHOT_START"],
           "onError": "ON_ERROR_FATAL",
           "actionCommand": {
             "command": "/hooks/nextcloud-db-backup.sh"
           }
         },
         {
-          "conditions": ["CONDITION_SNAPSHOT_END"],
+          "conditions": ["CONDITION_SNAPSHOT_SUCCESS"],
           "onError": "ON_ERROR_IGNORE",
           "actionCommand": {
-            "command": "/bin/sh /hooks/backrest-post-hook.sh"
+            "command": "/bin/sh /hooks/backrest-post-hook.sh info {{ .ShellEscape .Summary }}"
+          }
+        },
+        {
+          "conditions": ["CONDITION_ANY_ERROR"],
+          "onError": "ON_ERROR_IGNORE",
+          "actionCommand": {
+            "command": "/bin/sh /hooks/backrest-post-hook.sh errors {{ .ShellEscape .Summary }}"
           }
         }
       ]
