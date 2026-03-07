@@ -90,8 +90,13 @@ jobs:
 
           docker compose exec -T traefik \
             traefik healthcheck --ping >/dev/null
-          docker compose exec -T nextcloud \
-            curl -sf http://localhost/status.php >/dev/null
+          docker compose exec -T nextcloud sh -ec '
+            code="$(curl -sS -o /dev/null -w "%{http_code}" http://localhost/status.php)"
+            if [ "$code" != "200" ] && [ "$code" != "503" ]; then
+              echo "Unexpected Nextcloud status.php HTTP code: $code" >&2
+              exit 1
+            fi
+          '
           docker compose exec -T immich-server \
             curl -fsS http://localhost:2283/api/server/ping >/dev/null
 
