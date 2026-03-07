@@ -1,4 +1,6 @@
-.PHONY: help install uninstall start stop restart status logs preflight headscale-register headscale-reset beszel-bootstrap
+.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset beszel-bootstrap
+
+REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
 PROJECT_PATH := $(shell pwd)
 UNIT         := pi-web.service
@@ -22,9 +24,21 @@ help:
 	@echo "  beszel-bootstrap Ensure Beszel universal token + agent registration"
 	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  headscale-reset Reset all Headscale nodes, preauth keys, and IP allocations"
+	@echo "  check-env Validate required .env variables"
 	@echo "  help      This help"
 
-preflight:
+check-env:
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	@echo "🔍 Checking required .env variables..."; \
+	missing=0; \
+	for var in $(REQUIRED_ENV_VARS); do \
+		val=$$(grep -E "^$$var=" .env 2>/dev/null | tail -n1 | cut -d= -f2-); \
+		if [ -z "$$val" ]; then echo "  ❌ $$var is not set or empty"; missing=1; fi; \
+	done; \
+	if [ $$missing -eq 1 ]; then exit 1; fi
+	@echo "✔ Required .env variables OK"
+
+preflight: check-env
 	@echo "🔍 Preflight...";
 	@if ! docker info >/dev/null 2>&1; then echo "❌ Docker not reachable"; exit 1; fi
 	@echo "✔ Docker OK"
@@ -32,9 +46,8 @@ preflight:
 	@if docker run --rm -m 32m busybox sh -c 'cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null' | grep -qE '33554432|32'; then echo "✔ memory limits enforced"; else echo "⚠ memory limits NOT enforced"; fi
 	@echo "Done"
 
-install:
+install: check-env
 	@echo "📦 Installing..."
-	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
 	@echo "🧰 Applying host sysctl settings..."
 	sudo cp config/sysctl.d/pi-web.conf /etc/sysctl.d/99-pi-web.conf
 	sudo sysctl --system >/dev/null
