@@ -49,6 +49,10 @@ jobs:
       TIMEZONE: UTC
       CLOUDFLARE_ZONE_ID: ci-zone-placeholder
       CLOUDFLARE_DNS_API_TOKEN: ci-token-placeholder
+      COMPOSE_FILE: compose.yaml:compose.test.yaml
+      COMPOSE_ANSI: never
+      COMPOSE_REMOVE_ORPHANS: "1"
+      COMPOSE_PROGRESS: plain
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -81,20 +85,20 @@ jobs:
       - name: Start stack and run smoke checks
         run: |
           set -euo pipefail
-          docker compose --no-ansi -f compose.yaml -f compose.test.yaml up -d --wait --wait-timeout 360
-          docker compose -f compose.yaml -f compose.test.yaml ps
+          docker compose --progress plain up -d --wait --wait-timeout 360 --pull missing --yes
+          docker compose ps
 
-          docker compose -f compose.yaml -f compose.test.yaml exec -T traefik \
+          docker compose exec -T traefik \
             traefik healthcheck --ping >/dev/null
-          docker compose -f compose.yaml -f compose.test.yaml exec -T nextcloud \
+          docker compose exec -T nextcloud \
             curl -sf http://localhost/status.php >/dev/null
-          docker compose -f compose.yaml -f compose.test.yaml exec -T immich-server \
+          docker compose exec -T immich-server \
             curl -fsS http://localhost:2283/api/server/ping >/dev/null
 
       - name: Collect logs on failure
         if: failure()
-        run: docker compose -f compose.yaml -f compose.test.yaml logs --no-color
+        run: docker compose logs --timestamps
 
       - name: Tear down stack
         if: always()
-        run: docker compose -f compose.yaml -f compose.test.yaml down -v
+        run: docker compose down -v
