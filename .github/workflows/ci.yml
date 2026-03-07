@@ -81,7 +81,7 @@ jobs:
       - name: Start stack and run smoke checks
         run: |
           set -euo pipefail
-          docker compose -f compose.yaml -f compose.test.yaml up -d --wait --wait-timeout 360
+          docker compose --no-ansi --quiet-pull -f compose.yaml -f compose.test.yaml up -d --wait --wait-timeout 360
           docker compose -f compose.yaml -f compose.test.yaml ps
 
           docker compose -f compose.yaml -f compose.test.yaml exec -T traefik \
@@ -93,7 +93,7 @@ jobs:
 
       - name: Collect logs on failure
         if: failure()
-        run: docker compose -f compose.yaml -f compose.test.yaml logs --no-color
+        run: docker compose -f compose.yaml -f compose.test.yaml logs --no-color --no-ansi
 
       - name: Tear down stack
         if: always()
