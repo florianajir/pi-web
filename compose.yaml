@@ -353,6 +353,31 @@ services:
     deploy: *cpu-request-small
     mem_limit: 128m
 
+  unbound:
+    <<: *default-logging
+    image: mvance/unbound-rpi:1.22.0
+    container_name: pi-unbound
+    restart: unless-stopped
+    networks:
+      dns_internal:
+        ipv4_address: 172.30.53.53
+      dns_egress: {}
+    expose:
+      - 5335
+    volumes:
+      - ./config/unbound/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
+    healthcheck:
+      test: ["CMD", "drill", "@127.0.0.1", "-p", "5335", "cloudflare.com"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    labels:
+      - "com.example.description=Unbound recursive DNS resolver"
+      - "com.example.service=unbound"
+    deploy: *cpu-request-small
+    mem_limit: 128m
+
   pihole:
     <<: *default-logging
     image: pihole/pihole:2026.02.0
@@ -372,7 +397,7 @@ services:
       FTLCONF_webserver_api_password: ${PASSWORD:-admin}
       FTLCONF_webserver_allow_api_all_origins: "true"
       FTLCONF_dns_listeningMode: "all"
-      FTLCONF_dns_upstreams: ${PIHOLE_DNS_UPSTREAMS:-8.8.8.8;8.8.4.4}
+      FTLCONF_dns_upstreams: ${PIHOLE_DNS_UPSTREAMS:-172.30.53.53#5335}
       FTLCONF_misc_dnsmasq_lines: "address=/${HOST_NAME:-pi.lan}/${HOST_LAN_IP:-192.168.1.30}"
       FTLCONF_webserver_port: 8082
       FTLCONF_dns_domain: ${HOST_NAME:-pi.lan}
@@ -380,9 +405,13 @@ services:
       - pihole_data:/etc/pihole
       - ./config/pihole/dnsmasq.d:/etc/dnsmasq.d
     networks:
+      dns_internal: {}
       frontend: {}
       lan:
         ipv4_address: ${PIHOLE_IP:-192.168.1.250}
+    depends_on:
+      unbound:
+        condition: service_healthy
     labels:
       - "com.example.description=Pi-hole DNS Ad-Blocker"
       - "com.example.service=pihole"
@@ -926,6 +955,24 @@ volumes:
       - "com.example.service=tailscale"
 
 networks:
+  dns_internal:
+    driver: bridge
+    name: dns_internal
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.53.0/24
+          gateway: 172.30.53.1
+    labels:
+      - "com.example.description=Internal DNS resolver network (Pi-hole <-> Unbound)"
+      - "com.example.service=dns"
+  dns_egress:
+    driver: bridge
+    name: dns_egress
+    labels:
+      - "com.example.description=Unbound recursive DNS egress network"
+      - "com.example.service=dns"
   frontend:
     driver: bridge
     name: frontend

@@ -109,6 +109,69 @@ flowchart LR
   Watchtower -.automatic image updates.-> Immich
 ```
 
+---
+
+## DNS Architecture
+
+This stack implements a privacy-first, three-tier recursive DNS pipeline. No third-party DNS provider (Google, Cloudflare, etc.) ever sees your queries.
+
+### Components
+
+| Tier | Container | Address | Role |
+|------|-----------|---------|------|
+| 1 | **Pi-hole** | `192.168.1.250:53` · `100.64.0.1:53` | Ad/tracker filtering, local hostname resolution, DHCP-optional |
+| 2 | **Unbound** | `172.30.53.53:5335` | Recursive resolver — walks the DNS delegation tree from root servers |
+| 3 | **Root servers** | Internet | Authoritative source of truth |
+
+### DNS Query Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client (LAN / Tailscale)
+    participant P as Pi-hole :53
+    participant U as Unbound :5335
+    participant R as Root & TLD Servers
+
+    C->>P: DNS query (e.g. cloudflare.com)
+    alt Domain is blocked
+        P-->>C: NXDOMAIN (ad/tracker blocked)
+    else Domain is allowed
+        P->>U: Forward query (172.30.53.53:5335)
+        U->>R: Recursive resolution (via dns_egress)
+        R-->>U: Authoritative answer
+        U-->>P: Resolved IP
+        P-->>C: DNS response
+    end
+```
+
+### Tailscale DNS integration
+
+Headscale is configured with [MagicDNS](https://tailscale.com/kb/1081/magicdns) and pushes `100.64.0.1` (the Pi node's Tailscale IP, which resolves to Pi-hole) as the global nameserver to all connected clients. Any device that joins the Tailscale network with `--accept-dns=true` automatically uses Pi-hole for DNS over the encrypted WireGuard tunnel — no manual client configuration required.
+
+The Headscale DNS config also sets up split DNS for the local domain (e.g. `pi.ajir.dev`) so that service hostnames like `nextcloud.pi.ajir.dev` resolve correctly inside the VPN.
+
+### Network isolation
+
+Unbound and Pi-hole communicate over a dedicated `dns_internal` Docker bridge network (`172.30.53.0/24`) flagged `internal: true` — it has no gateway and cannot reach the internet. Unbound is additionally attached to a separate `dns_egress` bridge (no `internal:` flag) exclusively for outbound recursive queries to root servers.
+
+```
+┌─────────────────────────── Raspberry Pi ───────────────────────────────┐
+│                                                                         │
+│  ┌──────────────┐   dns_internal (internal)   ┌────────────────────┐  │
+│  │   Pi-hole    │ ──────────────────────────▶ │     Unbound        │  │
+│  │ 192.168.1.250│       172.30.53.0/24         │  172.30.53.53:5335 │  │
+│  │ 100.64.0.1   │                              │                    │  │
+│  └──────┬───────┘                              └────────┬───────────┘  │
+│         │                                               │ dns_egress   │
+│         │ lan (macvlan)                                 │ (internet)   │
+└─────────┼───────────────────────────────────────────────┼──────────────┘
+          │                                               │
+    Home LAN / VPN                                 Root nameservers
+    clients :53                                    (recursive resolve)
+```
+
+---
+
 ## Connecting Devices with Tailscale
 This stack includes Headscale for managing your private Tailscale network. To connect new devices:
 
