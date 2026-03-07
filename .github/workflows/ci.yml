@@ -93,7 +93,7 @@ jobs:
 
       - name: Collect logs on failure
         if: failure()
-        run: docker compose -f compose.yaml -f compose.test.yaml logs --no-color --no-ansi
+        run: docker compose -f compose.yaml -f compose.test.yaml logs --no-color
 
       - name: Tear down stack
         if: always()
