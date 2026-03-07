@@ -67,6 +67,17 @@ jobs:
           CLOUDFLARE_DNS_API_TOKEN=ci-token-placeholder
           EOF
 
+      - name: Render generated configs for CI
+        run: |
+          set -euo pipefail
+          sh ./scripts/headscale-pre-start.sh
+
+          # Guard against bind-mount path type mismatches in CI
+          test -f ./config/headplane/config.yaml
+          test ! -d ./config/headplane/config.yaml
+          test -f ./config/headscale/config.yaml
+          test -f ./config/headscale/policy.hujson
+
       - name: Start stack and run smoke checks
         run: |
           set -euo pipefail
