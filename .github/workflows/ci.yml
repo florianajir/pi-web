@@ -52,7 +52,7 @@ jobs:
       COMPOSE_FILE: compose.yaml:compose.test.yaml
       COMPOSE_ANSI: never
       COMPOSE_REMOVE_ORPHANS: "1"
-      COMPOSE_PROGRESS: plain
+      COMPOSE_PROGRESS: quiet
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -85,7 +85,7 @@ jobs:
       - name: Start stack and run smoke checks
         run: |
           set -euo pipefail
-          docker compose --progress plain up -d --wait --wait-timeout 360 --pull missing --yes
+          docker compose up -d --wait --wait-timeout 360 --pull missing --yes
           docker compose ps
 
           docker compose exec -T traefik \
