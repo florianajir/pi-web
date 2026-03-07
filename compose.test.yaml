@@ -1,21 +1,61 @@
 # Test-specific Docker Compose configuration
-# This file extends compose.yaml and overrides only the parts needed for CI/testing
+# This file extends compose.yaml and overrides only the parts needed for CI/testing.
 # Usage: docker compose -f compose.yaml -f compose.test.yaml up -d
 
 services:
+  # --- Services excluded from CI ---
+  # These services need special hardware, real credentials, or capabilities that are
+  # unavailable on GitHub Actions runners.
+
+  tailscale:
+    # Requires /dev/net/tun, SYS_MODULE capability, and real VPN auth.
+    profiles: [ci-excluded]
+
+  beszel-agent:
+    # Depends on Traefik TLS endpoint which is not functional in CI.
+    profiles: [ci-excluded]
+
+  watchtower:
+    # Auto-updates containers; undesirable and irrelevant in CI.
+    profiles: [ci-excluded]
+
+  ddns-updater:
+    # Requires valid Cloudflare zone and API token.
+    profiles: [ci-excluded]
+
+  backrest:
+    # Installs apk packages on every start and depends on the full healthy stack.
+    profiles: [ci-excluded]
+
+  # --- pihole: disable host port bindings, fix static IP for CI bridge network ---
   pihole:
-    # Override port bindings to avoid conflicts in CI environments
-    # Port 53 is typically already in use by system DNS resolver
+    # Port 53 is occupied by systemd-resolved in CI; drop host port bindings.
     # Use !reset so Docker Compose does not inherit 53:53 bindings from compose.yaml.
     ports: !reset []
-    # Keep expose directive for internal container communication
     expose:
       - 53
       - 8082
-    # Override healthcheck to use internal container IP instead of host binding
     healthcheck:
       test: ["CMD", "nslookup", "cloudflare.com", "127.0.0.1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+    networks:
+      frontend: {}
+      lan:
+        # Must be within the CI bridge subnet defined below (192.168.88.0/24).
+        ipv4_address: "192.168.88.250"
+
+# Replace the macvlan LAN network with a plain bridge for CI compatibility.
+# macvlan requires a real physical parent interface (e.g. eth0) and promiscuous
+# mode support that is unavailable in GitHub Actions VM runners.
+networks:
+  lan:
+    driver: bridge
+    driver_opts: !reset {}
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.88.0/24
+          gateway: 192.168.88.1
