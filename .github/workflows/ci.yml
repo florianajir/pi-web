@@ -81,7 +81,7 @@ jobs:
       - name: Start stack and run smoke checks
         run: |
           set -euo pipefail
-          docker compose --no-ansi --quiet-pull -f compose.yaml -f compose.test.yaml up -d --wait --wait-timeout 360
+          docker compose --no-ansi -f compose.yaml -f compose.test.yaml up -d --wait --wait-timeout 360
           docker compose -f compose.yaml -f compose.test.yaml ps
 
           docker compose -f compose.yaml -f compose.test.yaml exec -T traefik \
