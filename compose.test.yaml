@@ -30,6 +30,28 @@ services:
     # Installs apk packages on every start and depends on the full healthy stack.
     profiles: [ci-excluded]
 
+  # --- nextcloud: replace host bind mounts with named volumes for CI ---
+  # In CI the host directories (./data/nextcloud-config, ./data/nextcloud) do not
+  # pre-exist, so Docker creates them as root:root.  Nextcloud runs as www-data
+  # (uid 33) and cannot write to those directories, which prevents first-run
+  # initialisation and makes the health check fail.  Named Docker volumes are
+  # initialised with the correct ownership by the container runtime.
+  # start_period is extended because the initial DB installation takes >30s.
+  nextcloud:
+    volumes: !override
+      - nextcloud_html:/var/www/html
+      - nextcloud_ci_data:/var/www/html/data
+      - nextcloud_ci_config:/var/www/html/config
+      - nextcloud_ci_themes:/var/www/html/themes
+      - ./config/nextcloud/reverse-proxy.config.php:/var/www/html/config/reverse-proxy.config.php:ro
+      - ./config/nextcloud/security-headers.conf:/etc/apache2/conf-enabled/security-headers.conf:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/status.php"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
   # --- pihole: disable host port bindings, fix static IP for CI bridge network ---
   pihole:
     # Port 53 is occupied by systemd-resolved in CI; drop host port bindings.
@@ -62,3 +84,9 @@ networks:
       config:
         - subnet: 192.168.88.0/24
           gateway: 192.168.88.1
+
+# Named volumes used by the nextcloud CI overrides above.
+volumes:
+  nextcloud_ci_data:
+  nextcloud_ci_config:
+  nextcloud_ci_themes:
