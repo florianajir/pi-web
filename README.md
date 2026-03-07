@@ -117,27 +117,27 @@ This stack implements a privacy-first, three-tier recursive DNS pipeline. No thi
 
 ### Components
 
-| Tier | Container | Address | Role |
-|------|-----------|---------|------|
-| 1 | **Pi-hole** | `192.168.1.250:53` · `100.64.0.1:53` | Ad/tracker filtering, local hostname resolution, DHCP-optional |
-| 2 | **Unbound** | `172.30.53.53:5335` | Recursive resolver — walks the DNS delegation tree from root servers |
-| 3 | **Root servers** | Internet | Authoritative source of truth |
+| Tier | Container | Role |
+|------|-----------|------|
+| 1 | **Pi-hole** | Ad/tracker filtering, local hostname resolution |
+| 2 | **Unbound** | Recursive resolver — walks the DNS delegation tree from root servers |
+| 3 | **Root servers** | Authoritative source of truth |
 
 ### DNS Query Flow
 
 ```mermaid
 sequenceDiagram
     participant C as Client (LAN / Tailscale)
-    participant P as Pi-hole :53
-    participant U as Unbound :5335
+    participant P as Pi-hole
+    participant U as Unbound
     participant R as Root & TLD Servers
 
     C->>P: DNS query (e.g. cloudflare.com)
     alt Domain is blocked
         P-->>C: NXDOMAIN (ad/tracker blocked)
     else Domain is allowed
-        P->>U: Forward query (172.30.53.53:5335)
-        U->>R: Recursive resolution (via dns_egress)
+        P->>U: Forward query
+        U->>R: Recursive resolution
         R-->>U: Authoritative answer
         U-->>P: Resolved IP
         P-->>C: DNS response
@@ -146,28 +146,32 @@ sequenceDiagram
 
 ### Tailscale DNS integration
 
-Headscale is configured with [MagicDNS](https://tailscale.com/kb/1081/magicdns) and pushes `100.64.0.1` (the Pi node's Tailscale IP, which resolves to Pi-hole) as the global nameserver to all connected clients. Any device that joins the Tailscale network with `--accept-dns=true` automatically uses Pi-hole for DNS over the encrypted WireGuard tunnel — no manual client configuration required.
+Headscale is configured with [MagicDNS](https://tailscale.com/kb/1081/magicdns) and pushes Pi-hole as the global nameserver to all connected clients. Any device that joins the Tailscale network with `--accept-dns=true` automatically uses Pi-hole for DNS over the encrypted WireGuard tunnel — no manual client configuration required.
 
-The Headscale DNS config also sets up split DNS for the local domain (e.g. `pi.ajir.dev`) so that service hostnames like `nextcloud.pi.ajir.dev` resolve correctly inside the VPN.
+Headscale also sets up split DNS for the local domain (e.g. `pi.ajir.dev`) so that service hostnames like `nextcloud.pi.ajir.dev` resolve correctly inside the VPN.
 
 ### Network isolation
 
-Unbound and Pi-hole communicate over a dedicated `dns_internal` Docker bridge network (`172.30.53.0/24`) flagged `internal: true` — it has no gateway and cannot reach the internet. Unbound is additionally attached to a separate `dns_egress` bridge (no `internal:` flag) exclusively for outbound recursive queries to root servers.
+Pi-hole and Unbound communicate over a dedicated internal Docker bridge network that has no internet gateway — the two containers can reach each other, but nothing else can reach Unbound directly. Unbound is additionally attached to a separate egress network exclusively for outbound recursive queries to root servers.
 
-```
-┌─────────────────────────── Raspberry Pi ───────────────────────────────┐
-│                                                                         │
-│  ┌──────────────┐   dns_internal (internal)   ┌────────────────────┐  │
-│  │   Pi-hole    │ ──────────────────────────▶ │     Unbound        │  │
-│  │ 192.168.1.250│       172.30.53.0/24         │  172.30.53.53:5335 │  │
-│  │ 100.64.0.1   │                              │                    │  │
-│  └──────┬───────┘                              └────────┬───────────┘  │
-│         │                                               │ dns_egress   │
-│         │ lan (macvlan)                                 │ (internet)   │
-└─────────┼───────────────────────────────────────────────┼──────────────┘
-          │                                               │
-    Home LAN / VPN                                 Root nameservers
-    clients :53                                    (recursive resolve)
+```mermaid
+flowchart LR
+    subgraph VPN["Tailscale VPN"]
+        TC[VPN Client]
+    end
+    subgraph LAN["Home LAN"]
+        LC[LAN Client]
+    end
+    subgraph Pi["Raspberry Pi"]
+        PH[Pi-hole]
+        UB[Unbound]
+    end
+    Internet((Root Servers))
+
+    TC -->|DNS| PH
+    LC -->|DNS| PH
+    PH -->|forward\ninternal network| UB
+    UB -->|recursive resolve\negress network| Internet
 ```
 
 ---
