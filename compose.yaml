@@ -465,7 +465,7 @@ services:
 
   headplane:
     <<: *default-logging
-    image: ghcr.io/tale/headplane:v0.6.2
+    image: ghcr.io/tale/headplane:0.6.2
     container_name: pi-headplane
     restart: unless-stopped
     networks:
