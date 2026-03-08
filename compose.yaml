@@ -108,7 +108,7 @@ services:
     environment:
       - BACKREST_PORT=0.0.0.0:9898
       - BACKREST_DATA=/data
-      - BACKREST_CONFIG=/config/config.json
+      - BACKREST_CONFIG=/config/backrest/config.json
       - XDG_CACHE_HOME=/cache
       - TMPDIR=/tmp
       - TZ=${TIMEZONE:-Europe/Paris}
@@ -129,12 +129,14 @@ services:
       - "ntfy.${HOST_NAME:-pi.lan}:172.30.11.1"
     volumes:
       - ${DATA_LOCATION:-./data}/backrest/data:/data
-      - ${DATA_LOCATION:-./data}/backrest/config:/config
+      - ${DATA_LOCATION:-./data}/backrest/config:/config/backrest
+      - ./config/backrest/config.json:/config/backrest/config.json
       - ${DATA_LOCATION:-./data}/backrest/repos:/repos
       - ${DATA_LOCATION:-./data}/immich:/userdata/immich:ro
       - ${DATA_LOCATION:-./data}/nextcloud:/userdata/nextcloud-data:ro
       - ${DATA_LOCATION:-./data}/nextcloud-config:/userdata/nextcloud-config
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/userdata/nextcloud-themes:ro
+      - ${DATA_LOCATION:-./data}/uptime-kuma:/userdata/uptime-kuma:ro
       - ./scripts/nextcloud-db-backup.sh:/hooks/nextcloud-db-backup.sh:ro
       - ./scripts/backrest-post-hook.sh:/hooks/backrest-post-hook.sh:ro
       - ./scripts/backrest-unlock.sh:/hooks/backrest-unlock.sh:ro
@@ -296,6 +298,7 @@ services:
       - "traefik.http.services.beszel.loadbalancer.server.port=8090"
     deploy: *cpu-request-small
     mem_limit: 64m
+    oom_score_adj: *oom-score-important
 
   beszel-agent:
     <<: *default-logging
@@ -325,6 +328,53 @@ services:
       retries: 2
     deploy: *cpu-request-small
     mem_limit: 64m
+    oom_score_adj: *oom-score-important
+
+  uptime-kuma:
+    <<: *default-logging
+    image: louislam/uptime-kuma:2.2.0
+    container_name: pi-uptime-kuma
+    restart: unless-stopped
+    networks:
+      - frontend
+      - ntfy
+    expose:
+      - 3001
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - APP_URL=https://uptime.${HOST_NAME:-pi.lan}
+      - UPTIME_KUMA_DB_TYPE=sqlite
+      - UPTIME_KUMA_DISABLE_AUTH=1
+    env_file:
+      - path: ./config/ntfy/ntfy.env
+        required: false
+    volumes:
+      - ${DATA_LOCATION:-./data}/uptime-kuma:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - "com.example.description=Uptime Kuma uptime monitoring"
+      - "com.example.service=uptime-kuma"
+      - "homepage.group=Monitoring"
+      - "homepage.name=Uptime Kuma"
+      - "homepage.icon=uptime-kuma.png"
+      - "homepage.href=https://uptime.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Service uptime monitoring"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.uptime-kuma.rule=Host(`uptime.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.uptime-kuma.entrypoints=websecure"
+      - "traefik.http.routers.uptime-kuma.middlewares=lan@docker"
+      - "traefik.http.routers.uptime-kuma.tls=true"
+      - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
+    healthcheck:
+      test: ["CMD", "extra/healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy: *cpu-request-small
+    mem_limit: 256m
+    oom_score_adj: *oom-score-important
 
   portainer:
     <<: *default-logging
@@ -362,6 +412,7 @@ services:
       start_period: 30s
     deploy: *cpu-request-small
     mem_limit: 128m
+    oom_score_adj: *oom-score-deprioritize
 
   unbound:
     <<: *default-logging
@@ -556,6 +607,7 @@ services:
       start_period: 20s
     deploy: *cpu-request-small
     mem_limit: 192m
+    oom_score_adj: *oom-score-deprioritize
 
   # Connectivity Stack
   headscale:
@@ -815,6 +867,7 @@ services:
       start_period: 30s
     deploy: *cpu-request-small
     mem_limit: 128m
+    oom_score_adj: *oom-score-deprioritize
 
   ntfy:
     <<: *default-logging
@@ -865,6 +918,7 @@ services:
       start_period: 30s
     deploy: *cpu-request-small
     mem_limit: 128m
+    oom_score_adj: *oom-score-important
 
   # Database & Cache
   postgres:

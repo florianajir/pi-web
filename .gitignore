@@ -6,3 +6,4 @@
 /config/pihole/dnsmasq.d
 /config/beszel-agent/agent.env
 /config/ntfy/ntfy.env
+/config/backrest/config.json
