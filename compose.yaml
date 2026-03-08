@@ -108,7 +108,7 @@ services:
     environment:
       - BACKREST_PORT=0.0.0.0:9898
       - BACKREST_DATA=/data
-      - BACKREST_CONFIG=/config/config.json
+      - BACKREST_CONFIG=/config/backrest/config.json
       - XDG_CACHE_HOME=/cache
       - TMPDIR=/tmp
       - TZ=${TIMEZONE:-Europe/Paris}
@@ -129,7 +129,8 @@ services:
       - "ntfy.${HOST_NAME:-pi.lan}:172.30.11.1"
     volumes:
       - ${DATA_LOCATION:-./data}/backrest/data:/data
-      - ${DATA_LOCATION:-./data}/backrest/config:/config
+      - ${DATA_LOCATION:-./data}/backrest/config:/config/backrest
+      - ./config/backrest/config.json:/config/backrest/config.json
       - ${DATA_LOCATION:-./data}/backrest/repos:/repos
       - ${DATA_LOCATION:-./data}/immich:/userdata/immich:ro
       - ${DATA_LOCATION:-./data}/nextcloud:/userdata/nextcloud-data:ro

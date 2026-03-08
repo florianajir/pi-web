@@ -1,4 +1,6 @@
 {
+  "version":  4,
+  "instance": "__BACKREST_INSTANCE__",
   "repos": [
     {
       "id": "s3",
