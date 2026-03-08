@@ -1,8 +1,8 @@
 #!/bin/sh
 # Auto-initialization script for Uptime Kuma.
 # Waits for the container to be healthy, then:
-#   1. Creates the admin account on first run (via /api/need-setup + /api/setup)
-#   2. Configures ntfy notification, Docker host, and container monitors via Socket.IO
+#   1. Configures ntfy notification, Docker host, and container monitors via Socket.IO
+# Uses docker exec to run Node.js inside the Uptime Kuma container — no external image needed.
 # Idempotent: each step is skipped if already configured.
 
 set -e
@@ -11,9 +11,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="${PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}"
 ENV_FILE="$PROJECT_DIR/.env"
 NTFY_ENV_FILE="$PROJECT_DIR/config/ntfy/ntfy.env"
-UPTIME_KUMA_URL_DOCKER="http://pi-uptime-kuma:3001"
-PYTHON_IMAGE="python:3.12-alpine"
-CURL_IMAGE="curlimages/curl:8.12.1"
 MAX_RETRIES=90
 RETRY_INTERVAL=2
 DEFAULT_NTFY_TOPIC="pi"
@@ -31,10 +28,6 @@ read_env_value_from_file() {
 
 get_env_value() { read_env_value_from_file "$ENV_FILE" "$1"; }
 get_ntfy_env_value() { read_env_value_from_file "$NTFY_ENV_FILE" "$1"; }
-
-docker_curl() {
-    docker run --rm --network frontend "$CURL_IMAGE" -fsS "$@"
-}
 
 wait_for_container() {
     log "Waiting for uptime-kuma container to appear..."
@@ -64,214 +57,176 @@ wait_for_healthy() {
     return 1
 }
 
-setup_admin_if_needed() {
-    local username="$1"
-    local password="$2"
-    local response need_setup
-
-    response=$(docker_curl "$UPTIME_KUMA_URL_DOCKER/api/need-setup" 2>/dev/null || true)
-    need_setup=$(printf '%s' "$response" | tr -d '\n' | sed -n 's/.*"needSetup"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p')
-
-    if [ "$need_setup" = "true" ]; then
-        log "First run detected — creating admin account..."
-        docker_curl \
-            -X POST \
-            -H 'Content-Type: application/json' \
-            -d "{\"username\":\"$(printf '%s' "$username" | sed 's/\\/\\\\/g; s/"/\\"/g')\",\"password\":\"$(printf '%s' "$password" | sed 's/\\/\\\\/g; s/"/\\"/g')\"}" \
-            "$UPTIME_KUMA_URL_DOCKER/api/setup" >/dev/null
-        log "Admin account created"
-    else
-        log "Admin account already exists, skipping setup"
-    fi
-}
-
 configure_uptime_kuma() {
     local ntfy_password="$1"
     local ntfy_topic="$2"
-    local py_script
+    local js_script
 
     log "Configuring Uptime Kuma via Socket.IO (ntfy + Docker host + monitors)..."
 
-    py_script=$(mktemp /tmp/uptime-kuma-bootstrap-XXXXXX.py)
-    trap 'rm -f "$py_script"' EXIT INT TERM
+    js_script=$(mktemp /tmp/uptime-kuma-bootstrap-XXXXXX.js)
+    trap 'rm -f "$js_script"' EXIT INT TERM
 
-    cat > "$py_script" << 'PYEOF'
-import sys, os, threading
-import socketio
+    cat > "$js_script" << 'JSEOF'
+'use strict';
+const http = require('http');
 
-url           = os.environ["UPTIME_KUMA_URL"]
-ntfy_password = os.environ["NTFY_UPTIME_KUMA_PASSWORD"]
-ntfy_topic    = os.environ["NTFY_TOPIC"]
+const PORT          = 3001;
+const NTFY_PASSWORD = process.env.NTFY_UPTIME_KUMA_PASSWORD;
+const NTFY_TOPIC    = process.env.NTFY_TOPIC || 'pi';
+const SOCKET_PATH   = '/var/run/docker.sock';
+const CONTAINERS    = [
+  'pi-backrest','pi-beszel','pi-beszel-agent','pi-ddns-updater',
+  'pi-headplane','pi-headscale','pi-homepage','pi-immich',
+  'pi-n8n','pi-nextcloud','pi-ntfy','pi-pihole',
+  'pi-portainer','pi-postgres','pi-redis','pi-tailscale',
+  'pi-traefik','pi-unbound','pi-uptime-kuma','pi-watchtower',
+];
 
-DOCKER_SOCKET = "/var/run/docker.sock"
-DOCKER_CONTAINERS = [
-    "pi-backrest", "pi-beszel", "pi-beszel-agent", "pi-ddns-updater",
-    "pi-headplane", "pi-headscale", "pi-homepage", "pi-immich",
-    "pi-n8n", "pi-nextcloud", "pi-ntfy", "pi-pihole",
-    "pi-portainer", "pi-postgres", "pi-redis", "pi-tailscale",
-    "pi-traefik", "pi-unbound", "pi-uptime-kuma", "pi-watchtower",
-]
+const RS = '\x1e'; // EIO4 packet delimiter
+let sid, nextId = 0;
+const ackResults = {};
+const state = { notificationList: null, dockerHostList: null, monitorList: null };
 
-sio = socketio.Client(logger=False, engineio_logger=False)
+function toList(v) { return Array.isArray(v) ? v : (v ? Object.values(v) : []); }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-# State received from server after login
-_state      = {"notificationList": None, "dockerHostList": None, "monitorList": None}
-_state_lock = threading.Lock()
-_all_received = threading.Event()
-_login_done   = threading.Event()
-_login_ok     = [False]
-error         = [None]
+function httpGet(path) {
+  return new Promise((res, rej) => {
+    http.get({ host: '127.0.0.1', port: PORT, path }, r => {
+      let d = ''; r.on('data', c => d += c); r.on('end', () => res(d));
+    }).on('error', rej);
+  });
+}
 
-def _as_list(data):
-    if isinstance(data, dict):
-        return list(data.values())
-    return data if isinstance(data, list) else []
+function httpPost(path, body) {
+  return new Promise((res, rej) => {
+    const buf = Buffer.from(body);
+    const req = http.request({
+      host: '127.0.0.1', port: PORT, path, method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8', 'Content-Length': buf.length },
+    }, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => res(d)); });
+    req.on('error', rej); req.write(buf); req.end();
+  });
+}
 
-def _mark(key, value):
-    with _state_lock:
-        if _state[key] is None:
-            _state[key] = value
-            if all(v is not None for v in _state.values()):
-                _all_received.set()
+function processPackets(raw) {
+  for (const p of raw.split(RS).filter(Boolean)) {
+    if (p === '2') { // EIO PING → PONG
+      httpPost(`/socket.io/?EIO=4&transport=polling&sid=${sid}`, '3').catch(() => {});
+      continue;
+    }
+    if (p[0] !== '4') continue; // skip non-MESSAGE EIO packets
+    if (p[1] === '2') { // Socket.IO EVENT (server push)
+      try {
+        const [event, payload] = JSON.parse(p.slice(2));
+        if      (event === 'notificationList' && !state.notificationList) state.notificationList = toList(payload);
+        else if (event === 'dockerHostList'   && !state.dockerHostList)   state.dockerHostList   = toList(payload);
+        else if (event === 'monitorList'      && !state.monitorList)      state.monitorList      = toList(payload);
+      } catch (_) {}
+    } else if (p[1] === '3') { // Socket.IO ACK: 43<id>[data]
+      try {
+        const rest = p.slice(2);
+        const bi = rest.search(/[\[{]/);
+        if (bi >= 0) {
+          const parsed = JSON.parse(rest.slice(bi));
+          ackResults[+rest.slice(0, bi)] = Array.isArray(parsed) ? parsed[0] : parsed;
+        }
+      } catch (_) {}
+    }
+  }
+}
 
-@sio.on("notificationList")
-def on_notification_list(data):
-    _mark("notificationList", _as_list(data))
+const sioPath = () => `/socket.io/?EIO=4&transport=polling&sid=${sid}`;
+const poll    = async () => processPackets(await httpGet(sioPath()));
 
-@sio.on("dockerHostList")
-def on_docker_host_list(data):
-    _mark("dockerHostList", _as_list(data))
+async function emit(event, ...args) {
+  const id = nextId++;
+  await httpPost(sioPath(), `42${id}${JSON.stringify([event, ...args])}`);
+  for (let i = 0; i < 30; i++) {
+    if (id in ackResults) return ackResults[id];
+    await poll();
+    await sleep(150);
+  }
+  throw new Error(`ACK timeout for '${event}'`);
+}
 
-@sio.on("monitorList")
-def on_monitor_list(data):
-    _mark("monitorList", _as_list(data))
+async function main() {
+  // ── Handshake ─────────────────────────────────────────────────────────────
+  const hs = await httpGet('/socket.io/?EIO=4&transport=polling');
+  for (const p of hs.split(RS).filter(Boolean))
+    if (p[0] === '0') sid = JSON.parse(p.slice(1)).sid;
+  if (!sid) throw new Error('Handshake failed: ' + hs);
+  processPackets(hs); // handle 40 (namespace connect) if bundled in response
+  await poll();       // ensure namespace connect is received
 
-def emit_sync(event, data, timeout=30):
-    result = [{}]
-    ev = threading.Event()
-    def cb(*args):
-        result[0] = args[0] if args else {}
-        ev.set()
-    sio.emit(event, data, callback=cb)
-    if not ev.wait(timeout=timeout):
-        raise TimeoutError(f"No ack for '{event}' within {timeout}s")
-    return result[0]
+  // ── Login (auth disabled — empty creds accepted unconditionally) ──────────
+  const login = await emit('login', { username: '', password: '', token: '' });
+  if (!login || !login.ok) throw new Error('Login failed: ' + JSON.stringify(login));
+  console.log('Login ok');
 
-def on_login_cb(data):
-    _login_ok[0] = data.get("ok", False)
-    if not _login_ok[0]:
-        error[0] = f"Login failed: {data.get('msg', 'unknown')}"
-        _all_received.set()  # unblock main thread
-    else:
-        print("Logged in to uptime-kuma")
-    _login_done.set()
+  // ── Collect server-pushed state ───────────────────────────────────────────
+  for (let i = 0; i < 20 && !(state.notificationList && state.dockerHostList && state.monitorList); i++)
+    { await poll(); await sleep(200); }
+  if (!state.notificationList || !state.dockerHostList || !state.monitorList)
+    throw new Error('Timeout waiting for server state');
 
-@sio.event
-def connect():
-    # Auth is disabled; send empty credentials — the server accepts them unconditionally.
-    sio.emit("login", {"username": "", "password": "", "token": ""}, callback=on_login_cb)
+  // ── 1. ntfy notification ──────────────────────────────────────────────────
+  const existingNtfy = state.notificationList.find(n => n.type === 'ntfy');
+  if (existingNtfy) {
+    console.log(`ntfy already configured (id=${existingNtfy.id}), skipping`);
+  } else {
+    const r = await emit('addNotification', {
+      id: null, name: 'ntfy', type: 'ntfy', isDefault: true, applyExisting: true,
+      ntfyserverurl: 'http://ntfy', ntfytopic: NTFY_TOPIC,
+      ntfyAuthenticationMethod: 'usernamePassword',
+      ntfyusername: 'uptime-kuma', ntfypassword: NTFY_PASSWORD, ntfyPriority: 3,
+    }, null);
+    if (!r.ok) throw new Error('addNotification failed: ' + r.msg);
+    console.log(`ntfy notification added: id=${r.id}`);
+  }
 
-@sio.event
-def connect_error(e):
-    error[0] = f"Connection failed: {e}"
-    _login_done.set()
-    _all_received.set()
+  // ── 2. Docker host ────────────────────────────────────────────────────────
+  let dockerHostId;
+  const existingHost = state.dockerHostList.find(h => h.dockerDaemon === SOCKET_PATH);
+  if (existingHost) {
+    dockerHostId = existingHost.id;
+    console.log(`Docker host already configured (id=${dockerHostId}), skipping`);
+  } else {
+    const r = await emit('addDockerHost', { name: 'local', dockerType: 'socket', dockerDaemon: SOCKET_PATH }, null);
+    if (!r.ok) console.error('Warning: addDockerHost failed: ' + r.msg);
+    else { dockerHostId = r.id; console.log(`Docker host added: id=${dockerHostId}`); }
+  }
 
-try:
-    sio.connect(url, transports=["polling", "websocket"])
-except Exception as e:
-    print(f"Failed to connect to {url}: {e}", file=sys.stderr)
-    sys.exit(1)
+  // ── 3. Container monitors ─────────────────────────────────────────────────
+  if (dockerHostId != null) {
+    const existing = new Set(state.monitorList.filter(m => m.type === 'docker').map(m => m.dockerContainer));
+    let added = 0;
+    for (const c of CONTAINERS) {
+      if (existing.has(c)) continue;
+      const r = await emit('addMonitor', {
+        type: 'docker', name: c.replace(/^pi-/, ''), dockerContainer: c,
+        dockerDaemon: dockerHostId, interval: 60, retryInterval: 60,
+        resendInterval: 0, maxretries: 1, active: true,
+      });
+      if (r && r.ok) { console.log(`Monitor added: ${c}`); added++; }
+      else console.error(`Warning: monitor failed for ${c}: ${r && r.msg}`);
+    }
+    console.log(`Added ${added} new container monitors`);
+  }
 
-if not _login_done.wait(timeout=30):
-    print("Timeout waiting for login", file=sys.stderr)
-    sio.disconnect(); sys.exit(1)
+  console.log('Bootstrap complete');
+}
 
-if error[0]:
-    print(f"Error: {error[0]}", file=sys.stderr)
-    sio.disconnect(); sys.exit(1)
+main().catch(e => { console.error('Error:', e.message || String(e)); process.exit(1); });
+JSEOF
 
-if not _all_received.wait(timeout=30):
-    print("Timeout waiting for server state after login", file=sys.stderr)
-    sio.disconnect(); sys.exit(1)
-
-notifications = _state["notificationList"]
-docker_hosts  = _state["dockerHostList"]
-monitors      = _state["monitorList"]
-
-# ── 1. ntfy notification ────────────────────────────────────────────────────
-existing_ntfy = [n for n in notifications if n.get("type") == "ntfy"]
-if existing_ntfy:
-    print(f"ntfy notification already configured (id={existing_ntfy[0]['id']}), skipping")
-else:
-    r = emit_sync("addNotification", ({
-        "id": None, "name": "ntfy", "type": "ntfy",
-        "isDefault": True, "applyExisting": True,
-        "ntfyserverurl": "http://ntfy", "ntfytopic": ntfy_topic,
-        "ntfyAuthenticationMethod": "usernamePassword",
-        "ntfyusername": "uptime-kuma", "ntfypassword": ntfy_password,
-        "ntfyPriority": 3,
-    }, None))
-    if not r.get("ok"):
-        print(f"Error adding ntfy notification: {r.get('msg')}", file=sys.stderr)
-        sio.disconnect(); sys.exit(1)
-    print(f"ntfy notification added: id={r.get('id')}")
-
-# ── 2. Docker host ──────────────────────────────────────────────────────────
-local_host = next((h for h in docker_hosts if h.get("dockerDaemon") == DOCKER_SOCKET), None)
-if local_host:
-    docker_host_id = local_host["id"]
-    print(f"Docker host already configured (id={docker_host_id}), skipping")
-else:
-    r = emit_sync("addDockerHost", (
-        {"name": "local", "dockerType": "socket", "dockerDaemon": DOCKER_SOCKET}, None
-    ))
-    if not r.get("ok"):
-        print(f"Warning: failed to add Docker host: {r.get('msg')}", file=sys.stderr)
-        docker_host_id = None
-    else:
-        docker_host_id = r.get("id")
-        print(f"Docker host added: id={docker_host_id}")
-
-# ── 3. Container monitors ───────────────────────────────────────────────────
-if docker_host_id is not None:
-    existing = {m.get("dockerContainer") for m in monitors if m.get("type") == "docker"}
-    added = 0
-    for container in DOCKER_CONTAINERS:
-        if container in existing:
-            continue
-        r = emit_sync("addMonitor", {
-            "type": "docker",
-            "name": container.removeprefix("pi-"),
-            "dockerContainer": container,
-            "dockerDaemon": docker_host_id,
-            "interval": 60,
-            "retryInterval": 60,
-            "resendInterval": 0,
-            "maxretries": 1,
-            "active": True,
-        })
-        if r.get("ok"):
-            print(f"Monitor added for {container}: id={r.get('monitorID')}")
-            added += 1
-        else:
-            print(f"Warning: failed to add monitor for {container}: {r.get('msg')}", file=sys.stderr)
-    print(f"Added {added} new container monitors")
-
-sio.disconnect()
-print("Bootstrap complete")
-PYEOF
-
-    docker run --rm \
-        --network frontend \
-        -v "$py_script:/bootstrap.py:ro" \
-        -e UPTIME_KUMA_URL="$UPTIME_KUMA_URL_DOCKER" \
+    docker exec -i \
         -e NTFY_UPTIME_KUMA_PASSWORD="$ntfy_password" \
         -e NTFY_TOPIC="$ntfy_topic" \
-        "$PYTHON_IMAGE" \
-        sh -c 'pip install "python-socketio[client]" "websocket-client" -q && python3 /bootstrap.py'
+        pi-uptime-kuma node - < "$js_script"
 
-    rm -f "$py_script"
+    rm -f "$js_script"
     trap - EXIT INT TERM
 }
 
