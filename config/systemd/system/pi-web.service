@@ -8,6 +8,7 @@ Type=oneshot
 WorkingDirectory=__PROJECT_PATH__
 EnvironmentFile=__PROJECT_PATH__/.env
 ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/headscale-pre-start.sh
+ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/authelia-pre-start.sh
 ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/backrest-pre-start.sh
 ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/ntfy-pre-start.sh
 ExecStart=/usr/bin/docker compose up -d

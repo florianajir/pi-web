@@ -72,6 +72,13 @@
           }
         },
         {
+          "conditions": ["CONDITION_SNAPSHOT_START"],
+          "onError": "ON_ERROR_IGNORE",
+          "actionCommand": {
+            "command": "/bin/sh /hooks/authelia-db-backup.sh"
+          }
+        },
+        {
           "conditions": ["CONDITION_SNAPSHOT_SUCCESS"],
           "onError": "ON_ERROR_IGNORE",
           "actionCommand": {

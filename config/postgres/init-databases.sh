@@ -53,6 +53,29 @@ GRANT ALL ON SCHEMA public TO nextcloud;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO nextcloud;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO nextcloud;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO nextcloud;
+
+-- Create Authelia database and user
+DO \$\$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authelia') THEN
+		CREATE USER authelia WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
+	ELSE
+		ALTER USER authelia WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
+	END IF;
+END
+\$\$;
+SELECT 'CREATE DATABASE authelia'
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'authelia')
+\gexec
+GRANT ALL PRIVILEGES ON DATABASE authelia TO authelia;
+ALTER DATABASE authelia OWNER TO authelia;
+
+-- Set proper permissions for Authelia user on Authelia DB
+\connect authelia
+GRANT ALL ON SCHEMA public TO authelia;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO authelia;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO authelia;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO authelia;
 EOF
 
 # Execute the SQL file

@@ -1,0 +1,80 @@
+server:
+  address: 'tcp://0.0.0.0:9091'
+
+log:
+  level: info
+
+theme: dark
+
+totp:
+  issuer: __HOST_NAME__
+
+identity_validation:
+  reset_password:
+    jwt_secret_file: /config/secrets/jwt_secret
+
+authentication_backend:
+  ldap:
+    implementation: lldap
+    address: ldap://lldap:3890
+    base_dn: dc=home,dc=ldap
+    additional_users_dn: ou=people
+    users_filter: (&({username_attribute}={input})(objectClass=person))
+    additional_groups_dn: ou=groups
+    groups_filter: (member={dn})
+    attributes:
+      group_name: cn
+      mail: mail
+      display_name: displayName
+      username: uid
+    user: uid=admin,ou=people,dc=home,dc=ldap
+    password_file: /config/secrets/ldap_password
+
+access_control:
+  default_policy: one_factor
+  rules:
+    # Bypass Authelia for its own portal to prevent redirect loops
+    - domain: 'auth.__HOST_NAME__'
+      policy: bypass
+
+session:
+  name: authelia_session
+  same_site: lax
+  inactivity: '45m'
+  expiration: '12h'
+  remember_me: '1M'
+  secret_file: /config/secrets/session_secret
+  cookies:
+    - domain: '__HOST_NAME__'
+      authelia_url: 'https://auth.__HOST_NAME__'
+  redis:
+    host: redis
+    port: 6379
+    database_index: 1
+
+regulation:
+  max_retries: 3
+  find_time: '2m'
+  ban_time: '5m'
+
+storage:
+  encryption_key_file: /config/secrets/storage_encryption_key
+  postgres:
+    address: 'tcp://postgres:5432'
+    database: authelia
+    username: authelia
+    password_file: /config/secrets/db_password
+
+notifier:
+  filesystem:
+    filename: /config/data/notification.txt
+
+identity_providers:
+  oidc:
+    hmac_secret_file: /config/secrets/oidc_hmac_secret
+    jwks:
+      - key_id: main
+        algorithm: RS256
+        use: sig
+        key_file: /config/secrets/oidc_private_key.pem
+    clients: []

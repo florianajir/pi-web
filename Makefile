@@ -73,6 +73,7 @@ uninstall:
 	@echo "⚠️  WARNING: This will remove ALL data including:"
 	@echo "   - Docker volumes (Pi-hole, Headscale, etc.)"
 	@echo "   - Bind-mount data dirs: ./data/nextcloud, ./data/postgres, ./data/n8n, ./data/immich"
+	@echo "   - Generated config: ./config/authelia/configuration.yml"
 	@echo "   - Generated config: ./config/headplane/config.yaml" 
 	@echo "   - Generated config: ./config/headscale/config.yaml"
 	@echo "   - Generated config: ./config/headscale/policy.hujson"
@@ -88,8 +89,9 @@ uninstall:
 	@echo "🐳 Removing containers and volumes..."
 	-$(COMPOSE) down -v --remove-orphans 2>/dev/null || true
 	@echo "🧹 Removing bind-mount data directories..."
-	-sudo rm -rf ./data/nextcloud ./data/postgres ./data/n8n ./data/immich
+	-sudo rm -rf ./data/nextcloud ./data/postgres ./data/n8n ./data/immich ./data/lldap ./data/authelia-config
 	@echo "🧹 Removing generated config files..."
+	-rm -f ./config/authelia/configuration.yml
 	-rm -f ./config/headplane/config.yaml
 	-rm -f ./config/headscale/config.yaml
 	-rm -f ./config/headscale/policy.hujson

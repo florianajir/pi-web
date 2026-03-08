@@ -11,6 +11,7 @@ It includes:
 - Personal DNS filtering (`pihole`)
 - VPN Connectivity (`tailscale`, `headscale`, `headplane`)
 - Secured network access using reverse proxy + TLS (`traefik` with Cloudflare DNS challenge and DDNS updater)
+- **Single Sign-On (SSO)** authentication via OIDC with `authelia` (backed by `lldap` user directory)
 - Monitoring (`beszel`) and container management (`portainer`)
 - Backup management (`backrest`)
 - Internal data services (`postgres`, `redis`)
@@ -70,6 +71,8 @@ flowchart LR
       Backrest[backrest]
       Ntfy[ntfy]
       PiholeWeb[pihole web]
+      Authelia[authelia]
+      Lldap[lldap]
     end
 
     subgraph Internal["Internal app services"]
@@ -91,11 +94,16 @@ flowchart LR
   Traefik --> Backrest
   Traefik --> Ntfy
   Traefik --> PiholeWeb
+  Traefik --> Authelia
+  Traefik --> Lldap
 
   Nextcloud --> Postgres
   Nextcloud --> Redis
   Immich --> Postgres
   Immich --> Redis
+  Authelia --> Postgres
+  Authelia --> Redis
+  Authelia --> Lldap
   Backrest --> Nextcloud
   Backrest --> Immich
   Backrest --> Postgres
@@ -214,6 +222,12 @@ make status
 make logs
 ```
 
+> **Note:** On first start, `authelia-pre-start.sh` automatically generates all Authelia and lldap
+> secrets (JWT, session, storage encryption key, OIDC HMAC, RSA private key) and stores them in
+> `${DATA_LOCATION}/authelia-config/secrets/`. The lldap admin username is `admin` and the
+> password is the `PASSWORD` value from `.env`. The Authelia SSO portal is available at
+> `https://auth.<HOST_NAME>`.
+
 ---
 
 
@@ -285,6 +299,12 @@ Your device will now be connected to your private VPN network managed by Headsca
 
 ### Backup tuning (optional)
 - `NEXTCLOUD_SQL_BACKUP_KEEP` (default: `2`)
+
+### Authentication (auto-configured, optional overrides)
+- `USER` and `PASSWORD` from the personal section are used for lldap admin and Authelia LDAP bind.
+  All Authelia secrets (JWT, session, storage encryption key, OIDC HMAC, RSA key, lldap JWT) are
+  auto-generated on first start by `scripts/authelia-pre-start.sh` and stored in
+  `${DATA_LOCATION}/authelia-config/secrets/`.
 
 ---
 

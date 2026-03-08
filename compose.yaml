@@ -103,6 +103,7 @@ services:
       - immich
       - ntfy
       - nextcloud
+      - auth
     expose:
       - 9898
     environment:
@@ -121,6 +122,11 @@ services:
       - NEXTCLOUD_SQL_BACKUP_DIR=/userdata/nextcloud-config/backups
       - NEXTCLOUD_SQL_BACKUP_KEEP=${NEXTCLOUD_SQL_BACKUP_KEEP:-30}
       - NEXTCLOUD_HOOK_STATE_FILE=/tmp/nextcloud-maintenance.state
+      - AUTHELIA_DB_NAME=authelia
+      - AUTHELIA_DB_USER=authelia
+      - AUTHELIA_DB_PASSWORD=${PASSWORD}
+      - AUTHELIA_SQL_BACKUP_DIR=/userdata/authelia-config/backups
+      - AUTHELIA_SQL_BACKUP_KEEP=7
       - RESTIC_PACK_SIZE=32
     env_file:
       - path: ./config/ntfy/ntfy.env
@@ -137,7 +143,10 @@ services:
       - ${DATA_LOCATION:-./data}/nextcloud-config:/userdata/nextcloud-config
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/userdata/nextcloud-themes:ro
       - ${DATA_LOCATION:-./data}/uptime-kuma:/userdata/uptime-kuma:ro
+      - ${DATA_LOCATION:-./data}/lldap:/userdata/lldap:ro
+      - ${DATA_LOCATION:-./data}/authelia-config:/userdata/authelia-config
       - ./scripts/nextcloud-db-backup.sh:/hooks/nextcloud-db-backup.sh:ro
+      - ./scripts/authelia-db-backup.sh:/hooks/authelia-db-backup.sh:ro
       - ./scripts/backrest-post-hook.sh:/hooks/backrest-post-hook.sh:ro
       - ./scripts/backrest-unlock.sh:/hooks/backrest-unlock.sh:ro
     tmpfs:
@@ -149,6 +158,8 @@ services:
       nextcloud:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+      authelia:
         condition: service_healthy
     labels:
       - "com.example.description=Backrest backup management"
@@ -162,7 +173,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.backrest.rule=Host(`backrest.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.backrest.entrypoints=websecure"
-      - "traefik.http.routers.backrest.middlewares=lan@docker"
+      - "traefik.http.routers.backrest.middlewares=lan@docker,authelia@docker"
       - "traefik.http.routers.backrest.tls=true"
       - "traefik.http.services.backrest.loadbalancer.server.port=9898"
     healthcheck:
@@ -363,7 +374,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.uptime-kuma.rule=Host(`uptime.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.uptime-kuma.entrypoints=websecure"
-      - "traefik.http.routers.uptime-kuma.middlewares=lan@docker"
+      - "traefik.http.routers.uptime-kuma.middlewares=lan@docker,authelia@docker"
       - "traefik.http.routers.uptime-kuma.tls=true"
       - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
     healthcheck:
@@ -401,7 +412,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.portainer.rule=Host(`portainer.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.portainer.entrypoints=websecure"
-      - "traefik.http.routers.portainer.middlewares=lan@docker"
+      - "traefik.http.routers.portainer.middlewares=lan@docker,authelia@docker"
       - "traefik.http.routers.portainer.tls=true"
       - "traefik.http.services.portainer.loadbalancer.server.port=9000"
     healthcheck:
@@ -487,7 +498,7 @@ services:
       - "traefik.http.routers.pihole.rule=Host(`pihole.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.pihole.entrypoints=websecure"
       - "traefik.http.routers.pihole.tls=true"
-      - "traefik.http.routers.pihole.middlewares=lan@docker"
+      - "traefik.http.routers.pihole.middlewares=lan@docker,authelia@docker"
       - "traefik.http.services.pihole.loadbalancer.server.port=8082"
     healthcheck:
       test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
@@ -854,7 +865,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.homepage.rule=Host(`homepage.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.homepage.entrypoints=websecure"
-      - "traefik.http.routers.homepage.middlewares=lan@docker"
+      - "traefik.http.routers.homepage.middlewares=lan@docker,authelia@docker"
       - "traefik.http.routers.homepage.tls=true"
       - "traefik.http.services.homepage.loadbalancer.server.port=3000"
     depends_on:
@@ -920,6 +931,106 @@ services:
     mem_limit: 128m
     oom_score_adj: *oom-score-important
 
+  # Authentication & SSO
+  lldap:
+    <<: *default-logging
+    image: lldap/lldap:stable
+    container_name: pi-lldap
+    restart: unless-stopped
+    networks:
+      - frontend
+      - auth
+    expose:
+      - 3890
+      - 17170
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - LLDAP_LDAP_BASE_DN=dc=home,dc=ldap
+      - LLDAP_LDAP_USER_EMAIL=${EMAIL}
+      - LLDAP_LDAP_USER_PASS=${PASSWORD}
+      - LLDAP_HTTP_URL=https://lldap.${HOST_NAME:-pi.lan}
+      - LLDAP_VERBOSE=false
+    env_file:
+      - path: ${DATA_LOCATION:-./data}/lldap/lldap.env
+        required: false
+    volumes:
+      - ${DATA_LOCATION:-./data}/lldap:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:17170/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "com.example.description=Lightweight LDAP user directory"
+      - "com.example.service=lldap"
+      - "homepage.group=Management"
+      - "homepage.name=LLDAP"
+      - "homepage.icon=ldap.png"
+      - "homepage.href=https://lldap.${HOST_NAME:-pi.lan}"
+      - "homepage.description=User directory management"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.lldap.rule=Host(`lldap.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.lldap.entrypoints=websecure"
+      - "traefik.http.routers.lldap.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.lldap.tls=true"
+      - "traefik.http.services.lldap.loadbalancer.server.port=17170"
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-important
+
+  authelia:
+    <<: *default-logging
+    image: authelia/authelia:4.39.15
+    container_name: pi-authelia
+    restart: unless-stopped
+    networks:
+      - frontend
+      - auth
+    expose:
+      - 9091
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+    volumes:
+      - ./config/authelia/configuration.yml:/config/configuration.yml:ro
+      - ${DATA_LOCATION:-./data}/authelia-config/secrets:/config/secrets:ro
+      - ${DATA_LOCATION:-./data}/authelia-config:/config/data
+    depends_on:
+      lldap:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9091/api/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "com.example.description=Authelia SSO and OIDC authentication portal"
+      - "com.example.service=authelia"
+      - "homepage.group=Management"
+      - "homepage.name=Authelia"
+      - "homepage.icon=authelia.png"
+      - "homepage.href=https://auth.${HOST_NAME:-pi.lan}"
+      - "homepage.description=SSO authentication portal"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.authelia.rule=Host(`auth.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.authelia.entrypoints=websecure"
+      - "traefik.http.routers.authelia.tls=true"
+      - "traefik.http.services.authelia.loadbalancer.server.port=9091"
+      - "traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/authz/forward-auth"
+      # trustForwardHeader is safe here: Traefik is the only trusted upstream on the internal frontend network
+      - "traefik.http.middlewares.authelia.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-important
+
   # Database & Cache
   postgres:
     <<: *default-logging
@@ -937,6 +1048,7 @@ services:
     networks:
       - immich
       - nextcloud
+      - auth
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
       interval: 30s
@@ -949,7 +1061,7 @@ services:
     shm_size: 256mb
     oom_score_adj: *oom-score-important
     labels:
-      - "com.example.description=PostgreSQL database for Immich & Nextcloud"
+      - "com.example.description=PostgreSQL database for Immich, Nextcloud & Authelia"
       - "com.example.service=postgres"
 
   redis:
@@ -966,8 +1078,9 @@ services:
     networks:
       - immich
       - nextcloud
+      - auth
     labels:
-      - "com.example.description=Redis cache for Immich & Nextcloud"
+      - "com.example.description=Redis cache for Immich, Nextcloud & Authelia"
       - "com.example.service=redis"
     deploy: *cpu-request-small
     mem_limit: 256m
@@ -1091,3 +1204,10 @@ networks:
     labels:
       - "com.example.description=Internal notifications network"
       - "com.example.service=ntfy"
+  auth:
+    driver: bridge
+    name: auth
+    internal: true
+    labels:
+      - "com.example.description=Authentication network (Authelia, lldap, Postgres, Redis)"
+      - "com.example.service=authelia"
