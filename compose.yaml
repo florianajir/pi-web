@@ -130,7 +130,6 @@ services:
     volumes:
       - ${DATA_LOCATION:-./data}/backrest/data:/data
       - ${DATA_LOCATION:-./data}/backrest/config:/config/backrest
-      - ./config/backrest/config.json:/config/backrest/config.json
       - ${DATA_LOCATION:-./data}/backrest/repos:/repos
       - ${DATA_LOCATION:-./data}/immich:/userdata/immich:ro
       - ${DATA_LOCATION:-./data}/nextcloud:/userdata/nextcloud-data:ro

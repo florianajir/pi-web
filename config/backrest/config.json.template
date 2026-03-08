@@ -38,8 +38,6 @@
       "paths": ["/userdata/"],
       "excludes": [
         "/userdata/immich/thumbs",
-        "/userdata/immich/encoded-video",
-        "/userdata/immich/upload",
         "/userdata/immich/model-cache",
         "/userdata/nextcloud-data/appdata_*/preview",
         "/userdata/nextcloud-data/appdata_*/thumbnails",
