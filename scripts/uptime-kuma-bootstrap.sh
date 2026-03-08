@@ -197,8 +197,13 @@ main() {
     fi
 
     if [ -z "$NTFY_UPTIME_KUMA_PASSWORD" ]; then
-        log "WARNING: NTFY_UPTIME_KUMA_PASSWORD not in ntfy.env; skipping bootstrap"
-        exit 0
+        log "NTFY_UPTIME_KUMA_PASSWORD not in ntfy.env; running ntfy-pre-start.sh to update..."
+        sh "$SCRIPT_DIR/ntfy-pre-start.sh"
+        NTFY_UPTIME_KUMA_PASSWORD=$(get_ntfy_env_value NTFY_UPTIME_KUMA_PASSWORD)
+        if [ -z "$NTFY_UPTIME_KUMA_PASSWORD" ]; then
+            log "ERROR: NTFY_UPTIME_KUMA_PASSWORD still missing after ntfy-pre-start.sh"
+            exit 1
+        fi
     fi
 
     [ -n "$NTFY_TOPIC" ] || NTFY_TOPIC="$DEFAULT_NTFY_TOPIC"
