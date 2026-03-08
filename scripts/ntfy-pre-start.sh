@@ -42,6 +42,7 @@ main() {
     PASSWORD_VALUE=$(grep '^PASSWORD=' "$ENV_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
     NTFY_BACKREST_PASSWORD_VALUE=""
     NTFY_BESZEL_PASSWORD_VALUE=""
+    NTFY_UPTIME_KUMA_PASSWORD_VALUE=""
 
     if [ -f "$OUTPUT_FILE" ]; then
         NTFY_BACKREST_PASSWORD_VALUE=$(grep '^NTFY_BACKREST_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
@@ -50,6 +51,7 @@ main() {
         fi
 
         NTFY_BESZEL_PASSWORD_VALUE=$(grep '^NTFY_BESZEL_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
+        NTFY_UPTIME_KUMA_PASSWORD_VALUE=$(grep '^NTFY_UPTIME_KUMA_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
     fi
 
     if [ -z "$USER_VALUE" ]; then
@@ -72,20 +74,27 @@ main() {
         log "Generated NTFY_BESZEL_PASSWORD for beszel ntfy user"
     fi
 
+    if [ -z "$NTFY_UPTIME_KUMA_PASSWORD_VALUE" ]; then
+        NTFY_UPTIME_KUMA_PASSWORD_VALUE="$(generate_password)"
+        log "Generated NTFY_UPTIME_KUMA_PASSWORD for uptime-kuma ntfy user"
+    fi
+
     log "Generating bcrypt hashes for ntfy predefined users"
     USER_HASH="$(hash_password "$PASSWORD_VALUE")"
     BACKREST_HASH="$(hash_password "$NTFY_BACKREST_PASSWORD_VALUE")"
     BESZEL_HASH="$(hash_password "$NTFY_BESZEL_PASSWORD_VALUE")"
+    UPTIME_KUMA_HASH="$(hash_password "$NTFY_UPTIME_KUMA_PASSWORD_VALUE")"
 
     mkdir -p "$OUTPUT_DIR"
 
-    AUTH_USERS_VALUE="${USER_VALUE}:${USER_HASH}:admin,backrest:${BACKREST_HASH}:user,beszel:${BESZEL_HASH}:user"
-    AUTH_ACCESS_VALUE="backrest:${NTFY_AUTO_TOPIC}:rw,beszel:${NTFY_AUTO_TOPIC}:rw"
+    AUTH_USERS_VALUE="${USER_VALUE}:${USER_HASH}:admin,backrest:${BACKREST_HASH}:user,beszel:${BESZEL_HASH}:user,uptime-kuma:${UPTIME_KUMA_HASH}:user"
+    AUTH_ACCESS_VALUE="backrest:${NTFY_AUTO_TOPIC}:rw,beszel:${NTFY_AUTO_TOPIC}:rw,uptime-kuma:${NTFY_AUTO_TOPIC}:rw"
 
     {
         printf '# Managed by scripts/ntfy-pre-start.sh\n'
         printf 'NTFY_BACKREST_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_BACKREST_PASSWORD_VALUE")"
         printf 'NTFY_BESZEL_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_BESZEL_PASSWORD_VALUE")"
+        printf 'NTFY_UPTIME_KUMA_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_UPTIME_KUMA_PASSWORD_VALUE")"
         printf 'NTFY_BESZEL_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_AUTO_TOPIC")"
         printf 'NTFY_AUTH_USERS=%s\n' "$(escape_compose_env_value "$AUTH_USERS_VALUE")"
         printf 'NTFY_AUTH_ACCESS=%s\n' "$(escape_compose_env_value "$AUTH_ACCESS_VALUE")"

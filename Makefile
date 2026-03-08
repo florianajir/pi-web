@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset beszel-bootstrap
+.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset beszel-bootstrap uptime-kuma-bootstrap
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -22,6 +22,7 @@ help:
 	@echo "  logs      Follow compose logs"
 	@echo "  preflight Quick env readiness check"
 	@echo "  beszel-bootstrap Ensure Beszel universal token + agent registration"
+	@echo "  uptime-kuma-bootstrap Ensure Uptime Kuma ntfy notification"
 	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  headscale-reset Reset all Headscale nodes, preauth keys, and IP allocations"
 	@echo "  check-env Validate required .env variables"
@@ -113,6 +114,7 @@ start:
 	@echo "🚀 Starting Pi-Web stack..."
 	sudo systemctl start $(UNIT)
 	@$(MAKE) beszel-bootstrap
+	@$(MAKE) uptime-kuma-bootstrap
 	@echo "✅ Stack started"
 
 stop:
@@ -164,3 +166,9 @@ beszel-bootstrap:
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
 	@sh ./scripts/beszel-agent-bootstrap.sh
 	@echo "✅ Beszel agent bootstrap complete"
+
+uptime-kuma-bootstrap:
+	@echo "📡 Ensuring Uptime Kuma ntfy notification..."
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	@sh ./scripts/uptime-kuma-bootstrap.sh
+	@echo "✅ Uptime Kuma bootstrap complete"

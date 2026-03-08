@@ -326,6 +326,45 @@ services:
     deploy: *cpu-request-small
     mem_limit: 64m
 
+  uptime-kuma:
+    <<: *default-logging
+    image: louislam/uptime-kuma:1
+    container_name: pi-uptime-kuma
+    restart: unless-stopped
+    networks:
+      - frontend
+      - ntfy
+    expose:
+      - 3001
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+    volumes:
+      - uptime_kuma_data:/app/data
+    labels:
+      - "com.example.description=Uptime Kuma uptime monitoring"
+      - "com.example.service=uptime-kuma"
+      - "homepage.group=Monitoring"
+      - "homepage.name=Uptime Kuma"
+      - "homepage.icon=uptime-kuma.png"
+      - "homepage.href=https://uptime.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Service uptime monitoring"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.uptime-kuma.rule=Host(`uptime.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.uptime-kuma.entrypoints=websecure"
+      - "traefik.http.routers.uptime-kuma.middlewares=lan@docker"
+      - "traefik.http.routers.uptime-kuma.tls=true"
+      - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3001/api/entry-page"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy: *cpu-request-small
+    mem_limit: 256m
+    oom_score_adj: *oom-score-deprioritize
+
   portainer:
     <<: *default-logging
     image: portainer/portainer-ce:lts
@@ -948,6 +987,10 @@ volumes:
     labels:
       - "com.example.description=n8n persistent data"
       - "com.example.service=n8n"
+  uptime_kuma_data:
+    labels:
+      - "com.example.description=Uptime Kuma persistent data"
+      - "com.example.service=uptime-kuma"
   ntfy_cache:
     labels:
       - "com.example.description=ntfy cache and queue state"
