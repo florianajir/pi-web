@@ -28,6 +28,15 @@ generate_password() {
     head -c 24 /dev/urandom | base64 | tr -d '\r\n'
 }
 
+generate_token() {
+    if command -v openssl >/dev/null 2>&1; then
+        printf 'tk_%s' "$(openssl rand -hex 20 | tr -d '\r\n')"
+        return
+    fi
+
+    printf 'tk_%s' "$(head -c 20 /dev/urandom | od -A n -t x1 | tr -d ' \n')"
+}
+
 escape_compose_env_value() {
     printf '%s' "$1" | sed 's/[$]/$$/g'
 }
@@ -43,6 +52,7 @@ main() {
     NTFY_BACKREST_PASSWORD_VALUE=""
     NTFY_BESZEL_PASSWORD_VALUE=""
     NTFY_UPTIME_KUMA_PASSWORD_VALUE=""
+    NTFY_UPTIME_KUMA_TOKEN_VALUE=""
 
     if [ -f "$OUTPUT_FILE" ]; then
         NTFY_BACKREST_PASSWORD_VALUE=$(grep '^NTFY_BACKREST_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
@@ -52,6 +62,7 @@ main() {
 
         NTFY_BESZEL_PASSWORD_VALUE=$(grep '^NTFY_BESZEL_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
         NTFY_UPTIME_KUMA_PASSWORD_VALUE=$(grep '^NTFY_UPTIME_KUMA_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
+        NTFY_UPTIME_KUMA_TOKEN_VALUE=$(grep '^NTFY_UPTIME_KUMA_TOKEN=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
     fi
 
     if [ -z "$USER_VALUE" ]; then
@@ -79,6 +90,11 @@ main() {
         log "Generated NTFY_UPTIME_KUMA_PASSWORD for uptime-kuma ntfy user"
     fi
 
+    if [ -z "$NTFY_UPTIME_KUMA_TOKEN_VALUE" ]; then
+        NTFY_UPTIME_KUMA_TOKEN_VALUE="$(generate_token)"
+        log "Generated NTFY_UPTIME_KUMA_TOKEN for uptime-kuma ntfy user"
+    fi
+
     log "Generating bcrypt hashes for ntfy predefined users"
     USER_HASH="$(hash_password "$PASSWORD_VALUE")"
     BACKREST_HASH="$(hash_password "$NTFY_BACKREST_PASSWORD_VALUE")"
@@ -89,15 +105,18 @@ main() {
 
     AUTH_USERS_VALUE="${USER_VALUE}:${USER_HASH}:admin,backrest:${BACKREST_HASH}:user,beszel:${BESZEL_HASH}:user,uptime-kuma:${UPTIME_KUMA_HASH}:user"
     AUTH_ACCESS_VALUE="backrest:${NTFY_AUTO_TOPIC}:rw,beszel:${NTFY_AUTO_TOPIC}:rw,uptime-kuma:${NTFY_AUTO_TOPIC}:rw"
+    AUTH_TOKENS_VALUE="uptime-kuma:${NTFY_UPTIME_KUMA_TOKEN_VALUE}:Uptime Kuma notification token"
 
     {
         printf '# Managed by scripts/ntfy-pre-start.sh\n'
         printf 'NTFY_BACKREST_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_BACKREST_PASSWORD_VALUE")"
         printf 'NTFY_BESZEL_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_BESZEL_PASSWORD_VALUE")"
         printf 'NTFY_UPTIME_KUMA_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_UPTIME_KUMA_PASSWORD_VALUE")"
+        printf 'NTFY_UPTIME_KUMA_TOKEN=%s\n' "$NTFY_UPTIME_KUMA_TOKEN_VALUE"
         printf 'NTFY_BESZEL_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_AUTO_TOPIC")"
         printf 'NTFY_AUTH_USERS=%s\n' "$(escape_compose_env_value "$AUTH_USERS_VALUE")"
         printf 'NTFY_AUTH_ACCESS=%s\n' "$(escape_compose_env_value "$AUTH_ACCESS_VALUE")"
+        printf 'NTFY_AUTH_TOKENS=%s\n' "$(escape_compose_env_value "$AUTH_TOKENS_VALUE")"
     } > "$OUTPUT_FILE"
 
     chmod 600 "$OUTPUT_FILE"

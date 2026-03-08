@@ -135,6 +135,7 @@ services:
       - ${DATA_LOCATION:-./data}/nextcloud:/userdata/nextcloud-data:ro
       - ${DATA_LOCATION:-./data}/nextcloud-config:/userdata/nextcloud-config
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/userdata/nextcloud-themes:ro
+      - ${DATA_LOCATION:-./data}/uptime-kuma:/userdata/uptime-kuma:ro
       - ./scripts/nextcloud-db-backup.sh:/hooks/nextcloud-db-backup.sh:ro
       - ./scripts/backrest-post-hook.sh:/hooks/backrest-post-hook.sh:ro
       - ./scripts/backrest-unlock.sh:/hooks/backrest-unlock.sh:ro
@@ -343,8 +344,11 @@ services:
       - APP_URL=https://uptime.${HOST_NAME:-pi.lan}
       - UPTIME_KUMA_DB_TYPE=sqlite
       - UPTIME_KUMA_DISABLE_AUTH=1
+    env_file:
+      - path: ./config/ntfy/ntfy.env
+        required: false
     volumes:
-      - uptime_kuma_data:/app/data
+      - ${DATA_LOCATION:-./data}/uptime-kuma:/app/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
     labels:
       - "com.example.description=Uptime Kuma uptime monitoring"
@@ -997,10 +1001,6 @@ volumes:
     labels:
       - "com.example.description=n8n persistent data"
       - "com.example.service=n8n"
-  uptime_kuma_data:
-    labels:
-      - "com.example.description=Uptime Kuma persistent data (SQLite + uploads)"
-      - "com.example.service=uptime-kuma"
   ntfy_cache:
     labels:
       - "com.example.description=ntfy cache and queue state"
