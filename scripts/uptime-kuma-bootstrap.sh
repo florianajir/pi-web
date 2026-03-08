@@ -2,7 +2,7 @@
 # Auto-initialization script for Uptime Kuma.
 # Waits for the container to be healthy, then:
 #   1. Creates the admin account on first run (via /api/need-setup + /api/setup)
-#   2. Configures ntfy notification using the uptime-kuma-api Python library
+#   2. Configures ntfy notification via Socket.IO (python-socketio)
 # Idempotent: skips setup/notification if already configured.
 
 set -e
@@ -92,69 +92,98 @@ configure_ntfy_notification() {
     local ntfy_topic="$4"
     local py_script
 
-    log "Configuring ntfy notification via uptime-kuma-api..."
+    log "Configuring ntfy notification via Socket.IO..."
 
     py_script=$(mktemp /tmp/uptime-kuma-bootstrap-XXXXXX.py)
     trap 'rm -f "$py_script"' EXIT INT TERM
 
     cat > "$py_script" << 'PYEOF'
-import sys
-import os
+import sys, os, threading
+import socketio
 
-url = os.environ["UPTIME_KUMA_URL"]
-username = os.environ["ADMIN_USERNAME"]
-password = os.environ["ADMIN_PASSWORD"]
+url          = os.environ["UPTIME_KUMA_URL"]
+username     = os.environ["ADMIN_USERNAME"]
+password     = os.environ["ADMIN_PASSWORD"]
 ntfy_password = os.environ["NTFY_UPTIME_KUMA_PASSWORD"]
-ntfy_topic = os.environ["NTFY_TOPIC"]
+ntfy_topic   = os.environ["NTFY_TOPIC"]
 
-try:
-    from uptime_kuma_api import UptimeKumaApi, NotificationType
-except ImportError as e:
-    print(f"Import error: {e}", file=sys.stderr)
-    sys.exit(1)
+sio = socketio.Client(logger=False, engineio_logger=False)
+done  = threading.Event()
+error = [None]
+# Guard so we only act on the first notificationList push (login),
+# not the one re-emitted by the server after addNotification succeeds.
+_notification_list_handled = [False]
 
-api = UptimeKumaApi(url, wait_events=1)
+def on_add_cb(data):
+    if not data.get("ok"):
+        error[0] = f"Failed to add notification: {data.get('msg', 'unknown')}"
+    else:
+        print(f"ntfy notification added: id={data.get('id')}")
+    done.set()
 
-try:
-    api.login(username, password)
-    print("Logged in to uptime-kuma")
-except Exception as e:
-    print(f"Login failed: {e}", file=sys.stderr)
-    api.disconnect()
-    sys.exit(1)
+@sio.on("notificationList")
+def on_notification_list(notifications):
+    if _notification_list_handled[0]:
+        return
+    _notification_list_handled[0] = True
 
-# Check if ntfy notification already configured
-try:
-    notifications = api.get_notifications()
+    if not isinstance(notifications, list):
+        notifications = []
     existing = [n for n in notifications if n.get("type") == "ntfy"]
     if existing:
         print(f"ntfy notification already configured (id={existing[0]['id']}), skipping")
-        api.disconnect()
-        sys.exit(0)
-except Exception as e:
-    print(f"Warning: could not list notifications: {e}", file=sys.stderr)
+        done.set()
+        return
 
-# Add ntfy notification
+    notif = {
+        "id": None,
+        "name": "ntfy",
+        "type": "ntfy",
+        "isDefault": True,
+        "applyExisting": True,
+        "ntfyserverurl": "http://ntfy",
+        "ntfytopic": ntfy_topic,
+        "ntfyAuthenticationMethod": "usernamePassword",
+        "ntfyusername": "uptime-kuma",
+        "ntfypassword": ntfy_password,
+        "ntfyPriority": 3,
+    }
+    sio.emit("addNotification", (notif, None), callback=on_add_cb)
+
+def on_login_cb(data):
+    if not data.get("ok"):
+        error[0] = f"Login failed: {data.get('msg', 'unknown')}"
+        done.set()
+        return
+    print("Logged in to uptime-kuma")
+    # notificationList will be pushed by the server automatically after login
+
+@sio.event
+def connect():
+    sio.emit("login", {"username": username, "password": password, "token": ""}, callback=on_login_cb)
+
+@sio.event
+def connect_error(e):
+    error[0] = f"Connection failed: {e}"
+    done.set()
+
 try:
-    result = api.add_notification(
-        type=NotificationType.NTFY,
-        name="ntfy",
-        isDefault=True,
-        applyExisting=True,
-        ntfyserverurl="http://ntfy",
-        ntfytopic=ntfy_topic,
-        ntfyAuthenticationMethod=1,
-        ntfyusername="uptime-kuma",
-        ntfypassword=ntfy_password,
-        ntfyPriority=3,
-    )
-    print(f"ntfy notification added: id={result.get('id')}")
+    sio.connect(url, transports=["websocket"])
 except Exception as e:
-    print(f"Error adding ntfy notification: {e}", file=sys.stderr)
-    api.disconnect()
+    print(f"Failed to connect: {e}", file=sys.stderr)
     sys.exit(1)
 
-api.disconnect()
+if not done.wait(timeout=60):
+    print("Timeout waiting for bootstrap to complete", file=sys.stderr)
+    sio.disconnect()
+    sys.exit(1)
+
+sio.disconnect()
+
+if error[0]:
+    print(f"Error: {error[0]}", file=sys.stderr)
+    sys.exit(1)
+
 print("Bootstrap complete")
 PYEOF
 
@@ -167,7 +196,7 @@ PYEOF
         -e NTFY_UPTIME_KUMA_PASSWORD="$ntfy_password" \
         -e NTFY_TOPIC="$ntfy_topic" \
         "$PYTHON_IMAGE" \
-        sh -c 'pip install "uptime-kuma-api==1.2.1" -q 2>/dev/null && python3 /bootstrap.py'
+        sh -c 'pip install "python-socketio[client]" "websocket-client" -q && python3 /bootstrap.py'
 
     rm -f "$py_script"
     trap - EXIT INT TERM
