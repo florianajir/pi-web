@@ -15,5 +15,13 @@
       "src": ["*"],
       "dst": ["*:*" ]
     }
+  ],
+  "ssh": [
+    {
+      "action": "accept",
+      "src": ["pi@ajir.dev"],
+      "dst": ["tag:router"],
+      "users": ["root"]
+    }
   ]
 }
