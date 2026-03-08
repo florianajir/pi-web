@@ -53,29 +53,6 @@ GRANT ALL ON SCHEMA public TO nextcloud;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO nextcloud;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO nextcloud;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO nextcloud;
-
--- Create Uptime Kuma database and user
-\connect postgres
-DO \$\$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'uptime_kuma') THEN
-		CREATE USER uptime_kuma WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
-	ELSE
-		ALTER USER uptime_kuma WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
-	END IF;
-END
-\$\$;
-SELECT 'CREATE DATABASE uptime_kuma'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'uptime_kuma')
-\gexec
-GRANT ALL PRIVILEGES ON DATABASE uptime_kuma TO uptime_kuma;
-ALTER DATABASE uptime_kuma OWNER TO uptime_kuma;
-
-\connect uptime_kuma
-GRANT ALL ON SCHEMA public TO uptime_kuma;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO uptime_kuma;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO uptime_kuma;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO uptime_kuma;
 EOF
 
 # Execute the SQL file
