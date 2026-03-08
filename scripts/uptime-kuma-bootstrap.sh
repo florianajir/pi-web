@@ -86,10 +86,8 @@ setup_admin_if_needed() {
 }
 
 configure_uptime_kuma() {
-    local username="$1"
-    local password="$2"
-    local ntfy_password="$3"
-    local ntfy_topic="$4"
+    local ntfy_password="$1"
+    local ntfy_topic="$2"
     local py_script
 
     log "Configuring Uptime Kuma via Socket.IO (ntfy + Docker host + monitors)..."
@@ -102,8 +100,6 @@ import sys, os, threading
 import socketio
 
 url           = os.environ["UPTIME_KUMA_URL"]
-username      = os.environ["ADMIN_USERNAME"]
-password      = os.environ["ADMIN_PASSWORD"]
 ntfy_password = os.environ["NTFY_UPTIME_KUMA_PASSWORD"]
 ntfy_topic    = os.environ["NTFY_TOPIC"]
 
@@ -172,7 +168,8 @@ def on_login_cb(data):
 
 @sio.event
 def connect():
-    sio.emit("login", {"username": username, "password": password, "token": ""}, callback=on_login_cb)
+    # Auth is disabled; send empty credentials — the server accepts them unconditionally.
+    sio.emit("login", {"username": "", "password": "", "token": ""}, callback=on_login_cb)
 
 @sio.event
 def connect_error(e):
@@ -269,8 +266,6 @@ PYEOF
         --network frontend \
         -v "$py_script:/bootstrap.py:ro" \
         -e UPTIME_KUMA_URL="$UPTIME_KUMA_URL_DOCKER" \
-        -e ADMIN_USERNAME="$username" \
-        -e ADMIN_PASSWORD="$password" \
         -e NTFY_UPTIME_KUMA_PASSWORD="$ntfy_password" \
         -e NTFY_TOPIC="$ntfy_topic" \
         "$PYTHON_IMAGE" \
@@ -293,15 +288,8 @@ main() {
         exit 0
     fi
 
-    ADMIN_USERNAME=$(get_env_value USER)
-    ADMIN_PASSWORD=$(get_env_value PASSWORD)
     NTFY_UPTIME_KUMA_PASSWORD=$(get_ntfy_env_value NTFY_UPTIME_KUMA_PASSWORD)
     NTFY_TOPIC=$(get_ntfy_env_value NTFY_BESZEL_TOPIC)
-
-    if [ -z "$ADMIN_USERNAME" ] || [ -z "$ADMIN_PASSWORD" ]; then
-        log "ERROR: USER and PASSWORD must be set in .env"
-        exit 1
-    fi
 
     if [ -z "$NTFY_UPTIME_KUMA_PASSWORD" ]; then
         log "NTFY_UPTIME_KUMA_PASSWORD not in ntfy.env; running ntfy-pre-start.sh to update..."
@@ -317,8 +305,7 @@ main() {
 
     wait_for_container
     wait_for_healthy
-    setup_admin_if_needed "$ADMIN_USERNAME" "$ADMIN_PASSWORD"
-    configure_uptime_kuma "$ADMIN_USERNAME" "$ADMIN_PASSWORD" "$NTFY_UPTIME_KUMA_PASSWORD" "$NTFY_TOPIC"
+    configure_uptime_kuma "$NTFY_UPTIME_KUMA_PASSWORD" "$NTFY_TOPIC"
 
     log "Bootstrap completed successfully"
 }

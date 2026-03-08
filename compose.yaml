@@ -342,6 +342,7 @@ services:
       - TZ=${TIMEZONE:-Europe/Paris}
       - APP_URL=https://uptime.${HOST_NAME:-pi.lan}
       - UPTIME_KUMA_DB_TYPE=sqlite
+      - UPTIME_KUMA_DISABLE_AUTH=1
     volumes:
       - uptime_kuma_data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
