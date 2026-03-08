@@ -344,6 +344,7 @@ services:
       - UPTIME_KUMA_DB_TYPE=sqlite
     volumes:
       - uptime_kuma_data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     labels:
       - "com.example.description=Uptime Kuma uptime monitoring"
       - "com.example.service=uptime-kuma"

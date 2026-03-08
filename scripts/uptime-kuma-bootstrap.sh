@@ -2,8 +2,8 @@
 # Auto-initialization script for Uptime Kuma.
 # Waits for the container to be healthy, then:
 #   1. Creates the admin account on first run (via /api/need-setup + /api/setup)
-#   2. Configures ntfy notification via Socket.IO (python-socketio)
-# Idempotent: skips setup/notification if already configured.
+#   2. Configures ntfy notification, Docker host, and container monitors via Socket.IO
+# Idempotent: each step is skipped if already configured.
 
 set -e
 
@@ -85,14 +85,14 @@ setup_admin_if_needed() {
     fi
 }
 
-configure_ntfy_notification() {
+configure_uptime_kuma() {
     local username="$1"
     local password="$2"
     local ntfy_password="$3"
     local ntfy_topic="$4"
     local py_script
 
-    log "Configuring ntfy notification via Socket.IO..."
+    log "Configuring Uptime Kuma via Socket.IO (ntfy + Docker host + monitors)..."
 
     py_script=$(mktemp /tmp/uptime-kuma-bootstrap-XXXXXX.py)
     trap 'rm -f "$py_script"' EXIT INT TERM
@@ -101,62 +101,74 @@ configure_ntfy_notification() {
 import sys, os, threading
 import socketio
 
-url          = os.environ["UPTIME_KUMA_URL"]
-username     = os.environ["ADMIN_USERNAME"]
-password     = os.environ["ADMIN_PASSWORD"]
+url           = os.environ["UPTIME_KUMA_URL"]
+username      = os.environ["ADMIN_USERNAME"]
+password      = os.environ["ADMIN_PASSWORD"]
 ntfy_password = os.environ["NTFY_UPTIME_KUMA_PASSWORD"]
-ntfy_topic   = os.environ["NTFY_TOPIC"]
+ntfy_topic    = os.environ["NTFY_TOPIC"]
+
+DOCKER_SOCKET = "/var/run/docker.sock"
+DOCKER_CONTAINERS = [
+    "pi-backrest", "pi-beszel", "pi-beszel-agent", "pi-ddns-updater",
+    "pi-headplane", "pi-headscale", "pi-homepage", "pi-immich",
+    "pi-n8n", "pi-nextcloud", "pi-ntfy", "pi-pihole",
+    "pi-portainer", "pi-postgres", "pi-redis", "pi-tailscale",
+    "pi-traefik", "pi-unbound", "pi-uptime-kuma", "pi-watchtower",
+]
 
 sio = socketio.Client(logger=False, engineio_logger=False)
-done  = threading.Event()
-error = [None]
-# Guard so we only act on the first notificationList push (login),
-# not the one re-emitted by the server after addNotification succeeds.
-_notification_list_handled = [False]
 
-def on_add_cb(data):
-    if not data.get("ok"):
-        error[0] = f"Failed to add notification: {data.get('msg', 'unknown')}"
-    else:
-        print(f"ntfy notification added: id={data.get('id')}")
-    done.set()
+# State received from server after login
+_state      = {"notificationList": None, "dockerHostList": None, "monitorList": None}
+_state_lock = threading.Lock()
+_all_received = threading.Event()
+_login_done   = threading.Event()
+_login_ok     = [False]
+error         = [None]
+
+def _as_list(data):
+    if isinstance(data, dict):
+        return list(data.values())
+    return data if isinstance(data, list) else []
+
+def _mark(key, value):
+    with _state_lock:
+        if _state[key] is None:
+            _state[key] = value
+            if all(v is not None for v in _state.values()):
+                _all_received.set()
 
 @sio.on("notificationList")
-def on_notification_list(notifications):
-    if _notification_list_handled[0]:
-        return
-    _notification_list_handled[0] = True
+def on_notification_list(data):
+    _mark("notificationList", _as_list(data))
 
-    if not isinstance(notifications, list):
-        notifications = []
-    existing = [n for n in notifications if n.get("type") == "ntfy"]
-    if existing:
-        print(f"ntfy notification already configured (id={existing[0]['id']}), skipping")
-        done.set()
-        return
+@sio.on("dockerHostList")
+def on_docker_host_list(data):
+    _mark("dockerHostList", _as_list(data))
 
-    notif = {
-        "id": None,
-        "name": "ntfy",
-        "type": "ntfy",
-        "isDefault": True,
-        "applyExisting": True,
-        "ntfyserverurl": "http://ntfy",
-        "ntfytopic": ntfy_topic,
-        "ntfyAuthenticationMethod": "usernamePassword",
-        "ntfyusername": "uptime-kuma",
-        "ntfypassword": ntfy_password,
-        "ntfyPriority": 3,
-    }
-    sio.emit("addNotification", (notif, None), callback=on_add_cb)
+@sio.on("monitorList")
+def on_monitor_list(data):
+    _mark("monitorList", _as_list(data))
+
+def emit_sync(event, data, timeout=30):
+    result = [{}]
+    ev = threading.Event()
+    def cb(*args):
+        result[0] = args[0] if args else {}
+        ev.set()
+    sio.emit(event, data, callback=cb)
+    if not ev.wait(timeout=timeout):
+        raise TimeoutError(f"No ack for '{event}' within {timeout}s")
+    return result[0]
 
 def on_login_cb(data):
-    if not data.get("ok"):
+    _login_ok[0] = data.get("ok", False)
+    if not _login_ok[0]:
         error[0] = f"Login failed: {data.get('msg', 'unknown')}"
-        done.set()
-        return
-    print("Logged in to uptime-kuma")
-    # notificationList will be pushed by the server automatically after login
+        _all_received.set()  # unblock main thread
+    else:
+        print("Logged in to uptime-kuma")
+    _login_done.set()
 
 @sio.event
 def connect():
@@ -165,26 +177,91 @@ def connect():
 @sio.event
 def connect_error(e):
     error[0] = f"Connection failed: {e}"
-    done.set()
+    _login_done.set()
+    _all_received.set()
 
 try:
-    # Use polling first (required for Socket.IO handshake), then upgrade to websocket
     sio.connect(url, transports=["polling", "websocket"])
 except Exception as e:
     print(f"Failed to connect to {url}: {e}", file=sys.stderr)
     sys.exit(1)
 
-if not done.wait(timeout=60):
-    print("Timeout waiting for bootstrap to complete", file=sys.stderr)
-    sio.disconnect()
-    sys.exit(1)
-
-sio.disconnect()
+if not _login_done.wait(timeout=30):
+    print("Timeout waiting for login", file=sys.stderr)
+    sio.disconnect(); sys.exit(1)
 
 if error[0]:
     print(f"Error: {error[0]}", file=sys.stderr)
-    sys.exit(1)
+    sio.disconnect(); sys.exit(1)
 
+if not _all_received.wait(timeout=30):
+    print("Timeout waiting for server state after login", file=sys.stderr)
+    sio.disconnect(); sys.exit(1)
+
+notifications = _state["notificationList"]
+docker_hosts  = _state["dockerHostList"]
+monitors      = _state["monitorList"]
+
+# ── 1. ntfy notification ────────────────────────────────────────────────────
+existing_ntfy = [n for n in notifications if n.get("type") == "ntfy"]
+if existing_ntfy:
+    print(f"ntfy notification already configured (id={existing_ntfy[0]['id']}), skipping")
+else:
+    r = emit_sync("addNotification", ({
+        "id": None, "name": "ntfy", "type": "ntfy",
+        "isDefault": True, "applyExisting": True,
+        "ntfyserverurl": "http://ntfy", "ntfytopic": ntfy_topic,
+        "ntfyAuthenticationMethod": "usernamePassword",
+        "ntfyusername": "uptime-kuma", "ntfypassword": ntfy_password,
+        "ntfyPriority": 3,
+    }, None))
+    if not r.get("ok"):
+        print(f"Error adding ntfy notification: {r.get('msg')}", file=sys.stderr)
+        sio.disconnect(); sys.exit(1)
+    print(f"ntfy notification added: id={r.get('id')}")
+
+# ── 2. Docker host ──────────────────────────────────────────────────────────
+local_host = next((h for h in docker_hosts if h.get("dockerDaemon") == DOCKER_SOCKET), None)
+if local_host:
+    docker_host_id = local_host["id"]
+    print(f"Docker host already configured (id={docker_host_id}), skipping")
+else:
+    r = emit_sync("addDockerHost", (
+        {"name": "local", "dockerType": "socket", "dockerDaemon": DOCKER_SOCKET}, None
+    ))
+    if not r.get("ok"):
+        print(f"Warning: failed to add Docker host: {r.get('msg')}", file=sys.stderr)
+        docker_host_id = None
+    else:
+        docker_host_id = r.get("id")
+        print(f"Docker host added: id={docker_host_id}")
+
+# ── 3. Container monitors ───────────────────────────────────────────────────
+if docker_host_id is not None:
+    existing = {m.get("dockerContainer") for m in monitors if m.get("type") == "docker"}
+    added = 0
+    for container in DOCKER_CONTAINERS:
+        if container in existing:
+            continue
+        r = emit_sync("addMonitor", {
+            "type": "docker",
+            "name": container.removeprefix("pi-"),
+            "dockerContainer": container,
+            "dockerDaemon": docker_host_id,
+            "interval": 60,
+            "retryInterval": 60,
+            "resendInterval": 0,
+            "maxretries": 1,
+            "active": True,
+        })
+        if r.get("ok"):
+            print(f"Monitor added for {container}: id={r.get('monitorID')}")
+            added += 1
+        else:
+            print(f"Warning: failed to add monitor for {container}: {r.get('msg')}", file=sys.stderr)
+    print(f"Added {added} new container monitors")
+
+sio.disconnect()
 print("Bootstrap complete")
 PYEOF
 
@@ -241,7 +318,7 @@ main() {
     wait_for_container
     wait_for_healthy
     setup_admin_if_needed "$ADMIN_USERNAME" "$ADMIN_PASSWORD"
-    configure_ntfy_notification "$ADMIN_USERNAME" "$ADMIN_PASSWORD" "$NTFY_UPTIME_KUMA_PASSWORD" "$NTFY_TOPIC"
+    configure_uptime_kuma "$ADMIN_USERNAME" "$ADMIN_PASSWORD" "$NTFY_UPTIME_KUMA_PASSWORD" "$NTFY_TOPIC"
 
     log "Bootstrap completed successfully"
 }
