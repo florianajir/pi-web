@@ -168,9 +168,10 @@ def connect_error(e):
     done.set()
 
 try:
-    sio.connect(url, transports=["websocket"])
+    # Use polling first (required for Socket.IO handshake), then upgrade to websocket
+    sio.connect(url, transports=["polling", "websocket"])
 except Exception as e:
-    print(f"Failed to connect: {e}", file=sys.stderr)
+    print(f"Failed to connect to {url}: {e}", file=sys.stderr)
     sys.exit(1)
 
 if not done.wait(timeout=60):
