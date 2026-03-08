@@ -334,12 +334,18 @@ services:
     networks:
       - frontend
       - ntfy
+      - uptime_kuma
     expose:
       - 3001
     environment:
       - TZ=${TIMEZONE:-Europe/Paris}
+      - APP_URL=https://uptime.${HOST_NAME:-pi.lan}
+      - DATABASE_URL=postgresql://uptime_kuma:${PASSWORD}@postgres:5432/uptime_kuma
     volumes:
       - uptime_kuma_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     labels:
       - "com.example.description=Uptime Kuma uptime monitoring"
       - "com.example.service=uptime-kuma"
@@ -356,7 +362,7 @@ services:
       - "traefik.http.routers.uptime-kuma.tls=true"
       - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3001/api/entry-page"]
+      test: ["CMD", "extra/healthcheck"]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -922,6 +928,7 @@ services:
     networks:
       - immich
       - nextcloud
+      - uptime_kuma
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
       interval: 30s
@@ -934,7 +941,7 @@ services:
     shm_size: 256mb
     oom_score_adj: *oom-score-important
     labels:
-      - "com.example.description=PostgreSQL database for Immich & Nextcloud"
+      - "com.example.description=PostgreSQL database for Immich, Nextcloud & Uptime Kuma"
       - "com.example.service=postgres"
 
   redis:
@@ -989,7 +996,7 @@ volumes:
       - "com.example.service=n8n"
   uptime_kuma_data:
     labels:
-      - "com.example.description=Uptime Kuma persistent data"
+      - "com.example.description=Uptime Kuma persistent files (uploads, screenshots)"
       - "com.example.service=uptime-kuma"
   ntfy_cache:
     labels:
@@ -1080,3 +1087,10 @@ networks:
     labels:
       - "com.example.description=Internal notifications network"
       - "com.example.service=ntfy"
+  uptime_kuma:
+    driver: bridge
+    name: uptime_kuma
+    internal: true
+    labels:
+      - "com.example.description=Uptime Kuma database network"
+      - "com.example.service=uptime-kuma"
