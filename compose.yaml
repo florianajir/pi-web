@@ -127,6 +127,11 @@ services:
       - AUTHELIA_DB_PASSWORD=${PASSWORD}
       - AUTHELIA_SQL_BACKUP_DIR=/userdata/authelia-config/backups
       - AUTHELIA_SQL_BACKUP_KEEP=7
+      - LLDAP_DB_NAME=lldap
+      - LLDAP_DB_USER=lldap
+      - LLDAP_DB_PASSWORD=${PASSWORD}
+      - LLDAP_SQL_BACKUP_DIR=/userdata/lldap/backups
+      - LLDAP_SQL_BACKUP_KEEP=7
       - RESTIC_PACK_SIZE=32
     env_file:
       - path: ./config/ntfy/ntfy.env
@@ -144,9 +149,11 @@ services:
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/userdata/nextcloud-themes:ro
       - ${DATA_LOCATION:-./data}/uptime-kuma:/userdata/uptime-kuma:ro
       - ${DATA_LOCATION:-./data}/lldap:/userdata/lldap:ro
+      - ${DATA_LOCATION:-./data}/lldap/backups:/userdata/lldap/backups
       - ${DATA_LOCATION:-./data}/authelia-config:/userdata/authelia-config
       - ./scripts/nextcloud-db-backup.sh:/hooks/nextcloud-db-backup.sh:ro
       - ./scripts/authelia-db-backup.sh:/hooks/authelia-db-backup.sh:ro
+      - ./scripts/lldap-db-backup.sh:/hooks/lldap-db-backup.sh:ro
       - ./scripts/backrest-post-hook.sh:/hooks/backrest-post-hook.sh:ro
       - ./scripts/backrest-unlock.sh:/hooks/backrest-unlock.sh:ro
     tmpfs:
@@ -234,7 +241,7 @@ services:
       - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
       - "traefik.http.middlewares.security-headers.headers.referrerPolicy=same-origin"
       - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}"
-      - "traefik.http.routers.traefik.middlewares=lan@docker"
+      - "traefik.http.routers.traefik.middlewares=lan@docker,authelia@docker"
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.rule=Host(`traefik.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.traefik.service=api@internal"
@@ -276,7 +283,7 @@ services:
       - APP_URL=https://beszel.${HOST_NAME:-pi.lan}
       - USER_EMAIL=${EMAIL}
       - USER_PASSWORD=${PASSWORD}
-      - AUTO_LOGIN=${EMAIL}
+      - USER_CREATION=true
     volumes:
       - beszel_data:/beszel_data
       - beszel_socket:/beszel_socket
@@ -355,7 +362,6 @@ services:
       - TZ=${TIMEZONE:-Europe/Paris}
       - APP_URL=https://uptime.${HOST_NAME:-pi.lan}
       - UPTIME_KUMA_DB_TYPE=sqlite
-      - UPTIME_KUMA_DISABLE_AUTH=1
     env_file:
       - path: ./config/ntfy/ntfy.env
         required: false
@@ -412,7 +418,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.portainer.rule=Host(`portainer.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.portainer.entrypoints=websecure"
-      - "traefik.http.routers.portainer.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.portainer.middlewares=lan@docker"
       - "traefik.http.routers.portainer.tls=true"
       - "traefik.http.services.portainer.loadbalancer.server.port=9000"
     healthcheck:
@@ -582,11 +588,21 @@ services:
     volumes:
       - ./config/headplane/config.yaml:/etc/headplane/config.yaml:ro
       - ./config/headscale:/etc/headscale:ro
+      - ${DATA_LOCATION:-./data}/authelia-config/secrets/oidc_headplane_secret.txt:/run/secrets/oidc_headplane_secret:ro
+      - ./config/headplane/headscale_api_key:/run/secrets/headplane_headscale_api_key:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - headplane_data:/var/lib/headplane
     environment:
       - HEADPLANE_LOAD_ENV_OVERRIDES=true
       - HEADPLANE_HEADSCALE__URL=https://headscale.${HOST_NAME:-pi.lan}
+      - HEADPLANE_OIDC__ISSUER=https://auth.${HOST_NAME:-pi.lan}
+      - HEADPLANE_OIDC__CLIENT_ID=headplane
+      - HEADPLANE_OIDC__CLIENT_SECRET_PATH=/run/secrets/oidc_headplane_secret
+      - HEADPLANE_OIDC__TOKEN_ENDPOINT_AUTH_METHOD=client_secret_basic
+      - HEADPLANE_OIDC__REDIRECT_URI=https://headscale.${HOST_NAME:-pi.lan}/admin/oidc/callback
+      - HEADPLANE_OIDC__DISABLE_API_KEY_LOGIN=true
+      - HEADPLANE_OIDC__HEADSCALE_API_KEY_PATH=/run/secrets/headplane_headscale_api_key
+      - HEADPLANE_OIDC__SCOPE=openid email profile
     depends_on:
       - headscale
     labels:
@@ -607,11 +623,12 @@ services:
       - "traefik.http.services.headplane.loadbalancer.server.port=3000"
     healthcheck:
       test:
-        - "CMD"
-        - "/nodejs/bin/node"
-        - "-e"
-        - >-
-          const net=require('node:net');const s=net.connect({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.setTimeout(5000,()=>{s.destroy();process.exit(1)});s.on('error',()=>process.exit(1));
+        [
+          "CMD",
+          "/nodejs/bin/node",
+          "-e",
+          "const net=require('node:net');const s=net.connect({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.setTimeout(5000,()=>{s.destroy();process.exit(1)});s.on('error',()=>process.exit(1));",
+        ]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -727,6 +744,7 @@ services:
     restart: unless-stopped
     volumes:
       - ${DATA_LOCATION:-./data}/immich:/data
+      - ${DATA_LOCATION:-./data}/authelia-config/immich-oauth-config.yaml:/immich-oauth-config.yaml:ro
       - /etc/localtime:/etc/localtime:ro
     environment:
       DB_HOSTNAME: postgres
@@ -734,6 +752,7 @@ services:
       DB_USERNAME: immich
       DB_PASSWORD: ${PASSWORD}
       REDIS_HOSTNAME: redis
+      IMMICH_CONFIG_FILE: /immich-oauth-config.yaml
       TZ: ${TIMEZONE:-Europe/Paris}
     networks:
       - frontend
@@ -817,7 +836,6 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.nextcloud.entrypoints=websecure"
-      - "traefik.http.routers.nextcloud.middlewares=lan@docker"
       - "traefik.http.routers.nextcloud.tls=true"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
     healthcheck:
@@ -834,6 +852,36 @@ services:
     cpuset: "1-3"
     deploy: *cpu-request-large
     mem_limit: 768m
+    oom_score_adj: *oom-score-deprioritize
+
+  nextcloud-oidc-bootstrap:
+    <<: *default-logging
+    image: docker:28-cli
+    container_name: pi-nextcloud-oidc-bootstrap
+    restart: "no"
+    depends_on:
+      nextcloud:
+        condition: service_healthy
+      authelia:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        /opt/bootstrap/nextcloud-oidc-configure.sh
+    environment:
+      - HOST_NAME=${HOST_NAME:-pi.lan}
+      - NEXTCLOUD_CONTAINER=pi-nextcloud
+      - AUTHELIA_CONTAINER=pi-authelia
+      - OIDC_PROVIDER_ID=authelia
+      - OIDC_CLIENT_ID=nextcloud
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./scripts/nextcloud-oidc-configure.sh:/opt/bootstrap/nextcloud-oidc-configure.sh:ro
+    labels:
+      - "com.example.description=Automatic Nextcloud OIDC bootstrap"
+      - "com.example.service=nextcloud-oidc-bootstrap"
+    deploy: *cpu-request-tiny
+    mem_limit: 64m
     oom_score_adj: *oom-score-deprioritize
 
   homepage:
@@ -949,12 +997,16 @@ services:
       - LLDAP_LDAP_USER_EMAIL=${EMAIL}
       - LLDAP_LDAP_USER_PASS=${PASSWORD}
       - LLDAP_HTTP_URL=https://lldap.${HOST_NAME:-pi.lan}
+      - LLDAP_DATABASE_URL=postgres://lldap:${PASSWORD}@postgres/lldap
       - LLDAP_VERBOSE=false
     env_file:
       - path: ${DATA_LOCATION:-./data}/lldap/lldap.env
         required: false
     volumes:
       - ${DATA_LOCATION:-./data}/lldap:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:17170/"]
       interval: 60s
@@ -973,12 +1025,12 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.lldap.rule=Host(`lldap.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.lldap.entrypoints=websecure"
-      - "traefik.http.routers.lldap.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.lldap.middlewares=lan@docker"
       - "traefik.http.routers.lldap.tls=true"
       - "traefik.http.services.lldap.loadbalancer.server.port=17170"
     deploy: *cpu-request-small
     mem_limit: 128m
-    oom_score_adj: *oom-score-important
+    oom_score_adj: *oom-score-critical
 
   authelia:
     <<: *default-logging
@@ -992,8 +1044,13 @@ services:
       - 9091
     environment:
       - TZ=${TIMEZONE:-Europe/Paris}
+      - X_AUTHELIA_CONFIG_FILTERS=template
+      - SMTP_ADDRESS=${SMTP_ADDRESS:-smtp://127.0.0.1:25}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL=${EMAIL:-authelia@localhost}
     volumes:
-      - ./config/authelia/configuration.yml:/config/configuration.yml:ro
+      - ${DATA_LOCATION:-./data}/authelia-config/configuration.yml:/config/configuration.yml:ro
       - ${DATA_LOCATION:-./data}/authelia-config/secrets:/config/secrets:ro
       - ${DATA_LOCATION:-./data}/authelia-config:/config/data
     depends_on:
@@ -1004,7 +1061,15 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9091/api/health"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:9091/api/health",
+        ]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -1029,7 +1094,7 @@ services:
       - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
     deploy: *cpu-request-small
     mem_limit: 128m
-    oom_score_adj: *oom-score-important
+    oom_score_adj: *oom-score-critical
 
   # Database & Cache
   postgres:
@@ -1059,7 +1124,7 @@ services:
     cpuset: "1-3"
     deploy: *cpu-request-xlarge
     shm_size: 256mb
-    oom_score_adj: *oom-score-important
+    oom_score_adj: *oom-score-critical
     labels:
       - "com.example.description=PostgreSQL database for Immich, Nextcloud & Authelia"
       - "com.example.service=postgres"
@@ -1084,7 +1149,7 @@ services:
       - "com.example.service=redis"
     deploy: *cpu-request-small
     mem_limit: 256m
-    oom_score_adj: *oom-score-important
+    oom_score_adj: *oom-score-critical
 
 volumes:
   ddns_data:

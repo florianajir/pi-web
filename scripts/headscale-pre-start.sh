@@ -20,6 +20,7 @@ main() {
     # If the file is missing, Docker would create a directory at the bind-mount path
     # causing headplane to crash with EISDIR on startup.
     HEADPLANE_CONFIG="$PROJECT_DIR/config/headplane/config.yaml"
+    HEADPLANE_API_KEY_FILE="$PROJECT_DIR/config/headplane/headscale_api_key"
     mkdir -p "$(dirname "$HEADPLANE_CONFIG")"
     if [ -d "$HEADPLANE_CONFIG" ]; then
         log "WARNING: headplane config.yaml is a directory (Docker bind-mount artifact). Removing..."
@@ -28,6 +29,17 @@ main() {
     if [ ! -e "$HEADPLANE_CONFIG" ]; then
         touch "$HEADPLANE_CONFIG"
         log "Created placeholder $HEADPLANE_CONFIG (will be populated by headscale-init.sh)"
+    fi
+
+    # Ensure the Headscale API key file bind-mounted by Headplane is a file.
+    if [ -d "$HEADPLANE_API_KEY_FILE" ]; then
+        log "WARNING: headplane headscale_api_key is a directory (Docker bind-mount artifact). Removing..."
+        rm -rf "$HEADPLANE_API_KEY_FILE"
+    fi
+    if [ ! -e "$HEADPLANE_API_KEY_FILE" ]; then
+        printf 'pending-headscale-api-key\n' > "$HEADPLANE_API_KEY_FILE"
+        chmod 600 "$HEADPLANE_API_KEY_FILE" 2>/dev/null || true
+        log "Created placeholder $HEADPLANE_API_KEY_FILE (will be populated by headscale-init.sh)"
     fi
 
     if [ ! -f "$POLICY_TEMPLATE_FILE" ]; then
