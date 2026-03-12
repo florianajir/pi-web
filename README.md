@@ -184,24 +184,212 @@ flowchart LR
 
 ---
 
-## Connecting Devices with Tailscale
-This stack includes Headscale for managing your private Tailscale network. To connect new devices:
+## Security & Authentication
 
-### Quick Command
+This stack implements a defense-in-depth authentication architecture with multiple layers: network-level IP filtering, a VPN mesh, a central SSO portal, and per-service OIDC integration — all backed by a lightweight LDAP directory.
 
-```bash
-make headscale-register <key>
+### Components overview
+
+| Component | Role |
+|-----------|------|
+| **Traefik** | Reverse proxy — terminates TLS, applies middleware chains (IP allowlist, forward-auth) |
+| **Tailscale / Headscale** | WireGuard VPN mesh — only devices on the tailnet can reach services behind the `lan` middleware |
+| **Authelia** | SSO portal & OIDC provider — handles login, session management, 2FA, and issues OIDC tokens |
+| **LLDAP** | Lightweight LDAP directory — single source of truth for user identities and group memberships |
+| **Redis** | Session store for Authelia (cookie-based sessions with inactivity/absolute timeouts) |
+| **PostgreSQL** | Persistent storage for Authelia (user preferences, TOTP devices, WebAuthn credentials) |
+
+### Authentication flow
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant T as Traefik
+    participant A as Authelia
+    participant L as LLDAP
+    participant S as Service
+
+    B->>T: HTTPS request to service.example.com
+    T->>T: lan middleware — check IP in allowlist
+
+    alt IP not in ALLOW_IP_RANGES
+        T-->>B: 403 Forbidden
+    else IP allowed
+        T->>A: Forward-auth check (session cookie)
+        alt Valid session
+            A-->>T: 200 + Remote-User / Remote-Groups headers
+            T->>S: Proxy request with identity headers
+            S-->>B: Response
+        else No session or expired
+            A-->>T: 302 Redirect to login
+            T-->>B: Redirect to https://auth.example.com
+            B->>A: User submits credentials
+            A->>L: LDAP bind (verify password)
+            L-->>A: Bind success + group memberships
+            A->>A: Evaluate access policy (one_factor / two_factor)
+            opt two_factor required
+                B->>A: TOTP code or WebAuthn assertion
+            end
+            A-->>B: Set session cookie + redirect back
+            B->>T: Original request (with cookie)
+            T->>A: Forward-auth check (valid cookie)
+            A-->>T: 200 + identity headers
+            T->>S: Proxy request
+            S-->>B: Response
+        end
+    end
 ```
 
-### Detailed Steps
-```bash
-make headscale-register <key>
+### OIDC single sign-on
+
+Services that support OpenID Connect bypass forward-auth and authenticate directly against Authelia as an OIDC provider. This gives each service its own token-based session while the user only logs in once.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant S as Service (e.g. Nextcloud)
+    participant A as Authelia (OIDC Provider)
+    participant L as LLDAP
+
+    B->>S: Click "Login with SSO"
+    S-->>B: 302 to Authelia /authorize (client_id, redirect_uri, scope)
+    B->>A: Authorization request
+
+    alt Already authenticated (session cookie)
+        A->>A: Check consent & policy
+    else Not authenticated
+        A->>A: Show login form
+        B->>A: Submit credentials
+        A->>L: LDAP bind + group lookup
+        L-->>A: Identity + groups
+    end
+
+    A-->>B: 302 back to Service with authorization code
+    B->>S: Callback with code
+    S->>A: Exchange code for tokens (server-to-server)
+    A-->>S: ID token (JWT, RS256) + access token + refresh token
+    S->>S: Verify JWT signature, provision/update user
+    S-->>B: Authenticated session
 ```
-Replace `<key>` with the actual key from the client.
 
-Your device will now be connected to your private VPN network managed by Headscale.
+**Registered OIDC clients:**
 
-  
+| Client | Scopes | Auth method | Consent | Policy | Notes |
+|--------|--------|-------------|---------|--------|-------|
+| Nextcloud | openid profile email groups offline_access | client_secret_post | implicit | one_factor | Group provisioning enabled |
+| Immich | openid profile email | client_secret_post | implicit | one_factor | Mobile app callback supported |
+| Beszel | openid profile email | client_secret_basic | implicit | one_factor | PKCE (S256) enabled |
+| Portainer | openid profile email groups | client_secret_basic | implicit | one_factor | Auto-team provisioning |
+| Headplane | openid profile email | client_secret_basic | implicit | **two_factor** | VPN admin — stricter policy |
+
+### Traefik middleware layers
+
+Every incoming request passes through Traefik, which applies a chain of middlewares before reaching the backend service.
+
+```mermaid
+flowchart LR
+    R[Request] --> TLS["TLS termination"]
+    TLS --> Compress["gzip compression"]
+    Compress --> Headers["Security headers\n(HSTS, X-Frame-Options,\nX-Content-Type-Options)"]
+    Headers --> LAN{"lan middleware\n(IP allowlist)"}
+    LAN -->|Denied| Block[403]
+    LAN -->|Allowed| Auth{"authelia middleware\n(forward-auth)"}
+    Auth -->|No session| Login["Redirect to\nauth portal"]
+    Auth -->|Valid session| Backend["Backend service"]
+```
+
+**Middleware assignment per service:**
+
+| Service | `lan` (IP allowlist) | `authelia` (forward-auth) | Own OIDC | Notes |
+|---------|:---:|:---:|:---:|-------|
+| Authelia portal | — | — | — | Public entry point for login |
+| Nextcloud | — | — | yes | Handles auth via OIDC plugin |
+| Immich | yes | — | yes | LAN-only + built-in OIDC |
+| Portainer | yes | — | yes | LAN-only + API-configured OIDC |
+| Beszel | yes | — | yes | LAN-only + PKCE OIDC |
+| n8n | yes | — | — | LAN-only, own auth |
+| Ntfy | yes | — | — | LAN-only, own auth |
+| Traefik dashboard | yes | yes | — | Admin: requires 2FA |
+| Pi-hole | yes | yes | — | Admin: requires 2FA |
+| Uptime Kuma | yes | yes | — | Admin: requires 2FA |
+| Backrest | yes | yes | — | Admin: requires 2FA |
+| Homepage | yes | yes | — | Admin: requires 2FA |
+| LLDAP | yes | — | — | LAN-only (avoids double auth) |
+| Headplane | yes | — | yes | LAN-only + two_factor OIDC |
+
+### Access control policies
+
+Authelia enforces group-based access rules defined per domain:
+
+| Domain pattern | Required group | Policy | Description |
+|----------------|---------------|--------|-------------|
+| `auth.*` | — | bypass | Login portal itself |
+| `backrest.*`, `pihole.*`, `traefik.*`, `uptime.*` | admin or lldap_admin | one_factor | Admin tools |
+| `headscale.*/admin` | admin or lldap_admin | **two_factor** | VPN administration |
+| `*.*` (catch-all) | users | one_factor | All other services |
+
+### Network segmentation
+
+Docker networks enforce east-west isolation between services:
+
+```mermaid
+flowchart TB
+    subgraph frontend["frontend network (172.30.11.0/24)"]
+        Traefik
+        Authelia
+        Services["Nextcloud, Immich, Portainer,\nBeszel, n8n, Ntfy, Backrest,\nHeadplane, Homepage, Uptime Kuma"]
+    end
+
+    subgraph auth["auth network (internal)"]
+        AutheliaB[Authelia]
+        LLDAP
+        PG_Auth[(Postgres)]
+        Redis_Auth[(Redis)]
+    end
+
+    subgraph nextcloud_net["nextcloud network (internal)"]
+        NC[Nextcloud]
+        PG_NC[(Postgres)]
+        Redis_NC[(Redis)]
+    end
+
+    subgraph immich_net["immich network (internal)"]
+        IM[Immich]
+        PG_IM[(Postgres)]
+        Redis_IM[(Redis)]
+    end
+
+    subgraph dns["dns_internal (172.30.53.0/24, no gateway)"]
+        PH[Pi-hole]
+        UB[Unbound]
+    end
+
+    subgraph lan_net["macvlan (physical LAN)"]
+        PH_LAN[Pi-hole LAN interface]
+    end
+
+    Traefik -->|"reverse proxy"| Services
+    Traefik -->|"forward-auth"| Authelia
+    AutheliaB -->|"LDAP bind"| LLDAP
+    AutheliaB --> PG_Auth
+    AutheliaB --> Redis_Auth
+```
+
+### Secret management
+
+All secrets are **auto-generated on first start** by `scripts/authelia-pre-start.sh` and stored under `${DATA_LOCATION}/authelia-config/secrets/` with `600` permissions:
+
+| Secret | Purpose |
+|--------|---------|
+| `jwt_secret` | Authelia identity validation tokens |
+| `session_secret` | Session cookie signing |
+| `storage_encryption_key` | Database credential encryption |
+| `oidc_hmac_secret` | OIDC token HMAC signing |
+| `oidc_private_key.pem` | RSA-2048 key for JWT RS256 signatures |
+| `oidc_<client>_secret.txt` | Per-client OIDC shared secrets |
+| `ldap_password` | LDAP bind password (= `PASSWORD` from `.env`) |
+
+OIDC client secrets are injected into services via Docker volume mounts (read-only). No secrets are baked into images or committed to the repository.
 
 ---
 
@@ -215,18 +403,16 @@ Your device will now be connected to your private VPN network managed by Headsca
 ```bash
 git clone https://github.com/florianajir/pi-web.git
 cd pi-web
-cp .env.dist .env
+cp .env.dist .env # Edit .env with your values
 make preflight
 make install
 make status
 make logs
 ```
 
-> **Note:** On first start, `authelia-pre-start.sh` automatically generates all Authelia and lldap
-> secrets (JWT, session, storage encryption key, OIDC HMAC, RSA private key) and stores them in
-> `${DATA_LOCATION}/authelia-config/secrets/`. The lldap admin username is `admin` and the
-> password is the `PASSWORD` value from `.env`. The Authelia SSO portal is available at
-> `https://auth.<HOST_NAME>`.
+> **Note:** On first start, all authentication secrets and OIDC configuration are auto-generated
+> (see [Security & Authentication](#security--authentication) for details). The LLDAP admin
+> username is `admin` with the `PASSWORD` from `.env`. The SSO portal is at `https://auth.<HOST_NAME>`.
 
 ---
 
@@ -300,11 +486,32 @@ Your device will now be connected to your private VPN network managed by Headsca
 ### Backup tuning (optional)
 - `NEXTCLOUD_SQL_BACKUP_KEEP` (default: `2`)
 
-### Authentication (auto-configured, optional overrides)
+### Authentication (auto-configured)
 - `USER` and `PASSWORD` from the personal section are used for lldap admin and Authelia LDAP bind.
   All Authelia secrets (JWT, session, storage encryption key, OIDC HMAC, RSA key, lldap JWT) are
   auto-generated on first start by `scripts/authelia-pre-start.sh` and stored in
   `${DATA_LOCATION}/authelia-config/secrets/`.
+- Headplane OIDC SSO uses Authelia as issuer and loads:
+  - client secret from `${DATA_LOCATION}/authelia-config/secrets/oidc_headplane_secret.txt`
+  - Headscale API key from `config/headplane/headscale_api_key` (auto-generated by `scripts/headscale-init.sh`)
+- Portainer OIDC bootstrap is enabled by default and uses `EMAIL` / `PASSWORD` from `.env`
+  (`USER` then `admin` are used as fallback usernames).
+- Portainer OAuth auto-provisioning also ensures a default `oidc-users` team exists when needed,
+  uses it as the default team for newly created OAuth users, backfills existing teamless standard
+  users, and only grants that team endpoint access when no explicit endpoint/group access policies
+  are already present.
+- SMTP settings for admin users 2FA email notifications (set in `.env`):
+  - `SMTP_ADDRESS` (example: `submission://smtp.example.com:587`)
+  - `SMTP_USERNAME`
+  - `SMTP_PASSWORD`
+- Default behavior keeps startup resilient by using a local placeholder SMTP address with startup
+  checks disabled; set `SMTP_ADDRESS` and SMTP credentials to your real provider to actually
+  deliver emails. Sender address is the existing `EMAIL` value.
+- Administration web UIs (`traefik`, `portainer`, `backrest`, `pihole`, `beszel`,
+  `uptime`, and `headscale/admin` via `headplane`) are protected by Authelia and require an admin
+  account with 2FA.
+- `lldap` keeps its own native login flow and is restricted to allowed network ranges via Traefik `lan`
+  middleware (to avoid double authentication prompts).
 
 ---
 

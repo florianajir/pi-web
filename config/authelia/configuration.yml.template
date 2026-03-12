@@ -51,7 +51,7 @@ access_control:
         - 'traefik.__HOST_NAME__'
         - 'uptime.__HOST_NAME__'
       subject:
-        - 'group:admins'
+        - 'group:admin'
         - 'group:lldap_admin'
       policy: one_factor
 
@@ -59,7 +59,7 @@ access_control:
       resources:
         - '^/admin([/?].*)?$'
       subject:
-        - 'group:admins'
+        - 'group:admin'
         - 'group:lldap_admin'
       policy: two_factor
 
@@ -120,6 +120,7 @@ __OIDC_PRIVATE_KEY__
         - 'https://nextcloud.__HOST_NAME__'
         - 'https://immich.__HOST_NAME__'
         - 'https://beszel.__HOST_NAME__'
+        - 'https://portainer.__HOST_NAME__'
         - 'https://headscale.__HOST_NAME__'
     clients:
       - client_id: nextcloud
@@ -127,6 +128,7 @@ __OIDC_PRIVATE_KEY__
         client_secret: '{{ secret "/config/secrets/oidc_nextcloud_secret.txt" }}'
         public: false
         authorization_policy: one_factor
+        consent_mode: implicit
         redirect_uris:
           - 'https://nextcloud.__HOST_NAME__/index.php/apps/user_oidc/code'
           - 'https://nextcloud.__HOST_NAME__/apps/user_oidc/code'
@@ -152,6 +154,7 @@ __OIDC_PRIVATE_KEY__
         client_secret: '{{ secret "/config/secrets/oidc_immich_secret.txt" }}'
         public: false
         authorization_policy: one_factor
+        consent_mode: implicit
         redirect_uris:
           - 'https://immich.__HOST_NAME__/auth/login'
           - 'https://immich.__HOST_NAME__/user-settings'
@@ -173,6 +176,7 @@ __OIDC_PRIVATE_KEY__
         client_secret: '{{ secret "/config/secrets/oidc_beszel_secret.txt" }}'
         public: false
         authorization_policy: one_factor
+        consent_mode: implicit
         require_pkce: true
         pkce_challenge_method: S256
         redirect_uris:
@@ -188,11 +192,34 @@ __OIDC_PRIVATE_KEY__
         token_endpoint_auth_method: client_secret_basic
         userinfo_signed_response_alg: none
 
+      - client_id: portainer
+        client_name: Portainer
+        client_secret: '{{ secret "/config/secrets/oidc_portainer_secret.txt" }}'
+        public: false
+        authorization_policy: one_factor
+        consent_mode: implicit
+        redirect_uris:
+          - 'https://portainer.__HOST_NAME__'
+          - 'https://portainer.__HOST_NAME__/'
+        scopes:
+          - openid
+          - profile
+          - email
+          - groups
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+          - refresh_token
+        token_endpoint_auth_method: client_secret_basic
+        userinfo_signed_response_alg: none
+
       - client_id: headplane
         client_name: Headplane
         client_secret: '{{ secret "/config/secrets/oidc_headplane_secret.txt" }}'
         public: false
         authorization_policy: two_factor
+        consent_mode: implicit
         redirect_uris:
           - 'https://headscale.__HOST_NAME__/admin/oidc/callback'
         scopes:

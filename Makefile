@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset beszel-bootstrap
+.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -21,7 +21,6 @@ help:
 	@echo "  status    Show systemd status"
 	@echo "  logs      Follow compose logs"
 	@echo "  preflight Quick env readiness check"
-	@echo "  beszel-bootstrap Ensure Beszel universal token + agent registration"
 	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  headscale-reset Reset all Headscale nodes, preauth keys, and IP allocations"
 	@echo "  check-env Validate required .env variables"
@@ -113,7 +112,6 @@ uninstall:
 start:
 	@echo "🚀 Starting Pi-Web stack..."
 	sudo systemctl start $(UNIT)
-	@$(MAKE) beszel-bootstrap
 	@echo "✅ Stack started"
 
 stop:
@@ -160,8 +158,3 @@ headscale-reset:
 	-docker compose restart headscale
 	@echo "✅ Headscale reset complete"
 
-beszel-bootstrap:
-	@echo "🔑 Ensuring Beszel agent registration token..."
-	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
-	@sh ./scripts/beszel-agent-bootstrap.sh
-	@echo "✅ Beszel agent bootstrap complete"

@@ -143,6 +143,12 @@ main() {
         log "Generated oidc_beszel_secret"
     fi
 
+    if [ ! -f "$SECRETS_DIR/oidc_portainer_secret.txt" ]; then
+        generate_secret > "$SECRETS_DIR/oidc_portainer_secret.txt"
+        safe_chmod 600 "$SECRETS_DIR/oidc_portainer_secret.txt"
+        log "Generated oidc_portainer_secret"
+    fi
+
     if [ ! -f "$SECRETS_DIR/oidc_headplane_secret.txt" ]; then
         generate_secret > "$SECRETS_DIR/oidc_headplane_secret.txt"
         safe_chmod 600 "$SECRETS_DIR/oidc_headplane_secret.txt"

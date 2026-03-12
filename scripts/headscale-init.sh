@@ -224,7 +224,7 @@ main() {
         EMAIL=$(grep "^EMAIL=" "$ENV_FILE" | cut -d'=' -f2 | tr -d '\r' | tail -n1)
     fi
     HOST_NAME="${HOST_NAME:-pi.lan}"
-    HEADSCALE_USER="${EMAIL:-admin}"
+    HEADSCALE_USER="${EMAIL}"
     if [ -z "$HEADSCALE_USER" ]; then
         log "ERROR: HEADSCALE_USER (EMAIL) is not set."
         exit 1
