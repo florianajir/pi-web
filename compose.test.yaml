@@ -26,6 +26,10 @@ services:
     # Requires valid Cloudflare zone and API token.
     profiles: [ci-excluded]
 
+  unbound:
+    # ARM-only image (mvance/unbound-rpi); cannot run on x86_64 CI runners.
+    profiles: [ci-excluded]
+
   backrest:
     # Installs apk packages on every start and depends on the full healthy stack.
     profiles: [ci-excluded]
@@ -78,6 +82,7 @@ services:
       start_period: 120s
 
   # --- pihole: disable host port bindings, fix static IP for CI bridge network ---
+  # In CI, unbound is excluded (ARM-only image), so use public DNS as upstream.
   pihole:
     # Port 53 is occupied by systemd-resolved in CI; drop host port bindings.
     # Use !reset so Docker Compose does not inherit 53:53 bindings from compose.yaml.
@@ -85,6 +90,11 @@ services:
     expose:
       - 53
       - 8082
+    # Remove the unbound dependency (unbound is excluded from CI).
+    depends_on: !override {}
+    environment:
+      # Unbound is not running in CI; use public DNS resolvers instead.
+      FTLCONF_dns_upstreams: "8.8.8.8;8.8.4.4"
     healthcheck:
       test: ["CMD", "nslookup", "cloudflare.com", "127.0.0.1"]
       interval: 30s

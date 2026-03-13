@@ -432,7 +432,7 @@ services:
 
   unbound:
     <<: *default-logging
-    image: klutchell/unbound:latest
+    image: mvance/unbound-rpi:1.22.0
     container_name: pi-unbound
     restart: unless-stopped
     networks:
@@ -442,7 +442,7 @@ services:
     expose:
       - 5335
     volumes:
-      - ./config/unbound/unbound.conf:/etc/unbound/custom.conf.d/pi-web.conf:ro
+      - ./config/unbound/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
     healthcheck:
       test: ["CMD", "drill", "@127.0.0.1", "-p", "5335", "cloudflare.com"]
       interval: 60s
@@ -998,7 +998,7 @@ services:
       - LLDAP_SMTP_OPTIONS__PASSWORD=${SMTP_PASSWORD:-}
       - LLDAP_SMTP_OPTIONS__FROM=${EMAIL:-noreply@localhost}
     env_file:
-      - path: ${DATA_LOCATION:-./data}/lldap.env
+      - path: ${DATA_LOCATION:-./data}/lldap/lldap.env
         required: false
     volumes:
       - ${DATA_LOCATION:-./data}/lldap:/data
