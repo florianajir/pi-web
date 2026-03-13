@@ -29,12 +29,7 @@ generate_password() {
 }
 
 generate_token() {
-    if command -v openssl >/dev/null 2>&1; then
-        printf 'tk_%s' "$(openssl rand -hex 20 | tr -d '\r\n')"
-        return
-    fi
-
-    printf 'tk_%s' "$(head -c 20 /dev/urandom | od -A n -t x1 | tr -d ' \n')"
+    docker run --rm --entrypoint sh "$NTFY_IMAGE" -c 'ntfy token generate'
 }
 
 escape_compose_env_value() {

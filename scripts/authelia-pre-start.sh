@@ -155,6 +155,12 @@ main() {
         log "Generated oidc_headplane_secret"
     fi
 
+    if [ ! -f "$SECRETS_DIR/oidc_headscale_secret.txt" ]; then
+        generate_secret > "$SECRETS_DIR/oidc_headscale_secret.txt"
+        safe_chmod 600 "$SECRETS_DIR/oidc_headscale_secret.txt"
+        log "Generated oidc_headscale_secret"
+    fi
+
     # Generate lldap JWT secret (stored in lldap data dir for lldap service)
     LLDAP_DATA_DIR="$DATA_LOCATION/lldap"
     mkdir -p "$LLDAP_DATA_DIR"

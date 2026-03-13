@@ -55,6 +55,7 @@ main() {
     if [ -f "$ENV_FILE" ]; then
         EMAIL=$(grep "^EMAIL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
         HOST_NAME=$(grep "^HOST_NAME=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
+        DATA_LOCATION=$(grep "^DATA_LOCATION=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
     fi
 
     if [ -z "$EMAIL" ]; then
@@ -63,6 +64,20 @@ main() {
     fi
 
     HOST_NAME="${HOST_NAME:-pi.lan}"
+    DATA_LOCATION="${DATA_LOCATION:-./data}"
+    case "$DATA_LOCATION" in
+        /*) : ;;
+        *)  DATA_LOCATION="$PROJECT_DIR/$DATA_LOCATION" ;;
+    esac
+
+    # Read OIDC client secret for Headscale node registration
+    OIDC_SECRET_FILE="$DATA_LOCATION/authelia-config/secrets/oidc_headscale_secret.txt"
+    OIDC_HEADSCALE_SECRET=""
+    if [ -f "$OIDC_SECRET_FILE" ]; then
+        OIDC_HEADSCALE_SECRET=$(cat "$OIDC_SECRET_FILE")
+    else
+        log "WARNING: OIDC secret not found at $OIDC_SECRET_FILE (run authelia-pre-start.sh first)"
+    fi
 
     UPDATED_POLICY=$(sed -e "s|__HEADSCALE_USER__|$EMAIL|g" "$POLICY_TEMPLATE_FILE")
 
@@ -75,6 +90,7 @@ main() {
 
     UPDATED_CONFIG=$(sed \
         -e "s|__HOST_NAME__|$HOST_NAME|g" \
+        -e "s|__OIDC_HEADSCALE_SECRET__|$OIDC_HEADSCALE_SECRET|g" \
         "$CONFIG_TEMPLATE_FILE")
 
     if [ -f "$CONFIG_FILE" ] && [ "$UPDATED_CONFIG" = "$(cat "$CONFIG_FILE")" ]; then

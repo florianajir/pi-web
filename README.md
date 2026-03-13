@@ -393,6 +393,73 @@ OIDC client secrets are injected into services via Docker volume mounts (read-on
 
 ---
 
+## Email & SMTP Configuration
+
+The stack supports outbound email for notifications, password resets, and workflow automation. All services share a single set of SMTP credentials defined in `.env`.
+
+### Environment variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SMTP_HOST` | SMTP server hostname | `localhost` |
+| `SMTP_PORT` | SMTP server port | `587` |
+| `SMTP_USERNAME` | SMTP authentication username | *(empty)* |
+| `SMTP_PASSWORD` | SMTP authentication password | *(empty)* |
+| `EMAIL` | Sender address (also used as admin email across services) | `noreply@localhost` |
+
+Optional per-service overrides (rarely needed):
+
+| Variable | Used by | Description | Default |
+|----------|---------|-------------|---------|
+| `SMTP_SECURE` | Nextcloud | Connection security (`tls`, `ssl`, or empty) | `tls` |
+| `SMTP_AUTHTYPE` | Nextcloud | Authentication method | `LOGIN` |
+| `SMTP_ENCRYPTION` | LLDAP, Authelia | Encryption mode | `STARTTLS` |
+| `SMTP_SSL` | n8n | Enable SSL | `false` |
+| `SMTP_ENABLED` | LLDAP | Enable password-reset emails | `false` |
+| `MAIL_FROM_ADDRESS` | Nextcloud | Local part of sender address | `nextcloud` |
+| `MAIL_DOMAIN` | Nextcloud | Domain part of sender address | `${HOST_NAME}` |
+
+### Services using SMTP
+
+#### Auto-configured from `.env`
+
+These services read SMTP settings directly from environment variables at startup — no manual configuration needed:
+
+| Service | Purpose | Notes |
+|---------|---------|-------|
+| **Authelia** | 2FA enrollment emails, password reset, identity verification | Uses `submission://` URI scheme; `disable_startup_check` is enabled so the stack starts even without valid SMTP |
+| **Nextcloud** | Sharing notifications, activity digests, password resets | Sender is `${MAIL_FROM_ADDRESS}@${MAIL_DOMAIN}` (e.g. `nextcloud@pi.example.com`) |
+| **LLDAP** | Self-service password reset emails | Disabled by default (`SMTP_ENABLED=false`); set to `true` in `.env` to enable |
+| **n8n** | Workflow email nodes (Send Email action), error notifications | Standard SMTP envelope; uses `N8N_SMTP_*` env vars mapped from the shared variables |
+| **Ntfy** | Outbound email notifications for push topics | Sends via `${SMTP_HOST}:${SMTP_PORT}` as the sender relay |
+
+#### Manual setup via UI
+
+These services support email notifications but must be configured through their web interface:
+
+| Service | Where to configure | Notes |
+|---------|-------------------|-------|
+| **Uptime Kuma** | *Settings → Notifications → Add* | Add an SMTP notification type with your server details |
+| **Beszel** | *Settings → Notifications* | Configure email alerts for host monitoring events |
+| **Immich** | Not currently supported | Immich does not have built-in email notifications |
+| **Portainer** | Not currently supported | Portainer does not expose SMTP settings for notifications |
+
+### Quick setup example
+
+To enable email across all services, add your SMTP provider credentials to `.env`:
+
+```env
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=you@example.com
+SMTP_PASSWORD=app-password-here
+EMAIL=noreply@example.com
+```
+
+> **Note:** If `SMTP_HOST` is left unset or set to `localhost`, services will start normally but email delivery will silently fail. Authelia disables its SMTP startup check to keep the stack resilient in this case.
+
+---
+
 ## Install guide
 
 1. Clone the repository.
@@ -500,13 +567,7 @@ Your device will now be connected to your private VPN network managed by Headsca
   uses it as the default team for newly created OAuth users, backfills existing teamless standard
   users, and only grants that team endpoint access when no explicit endpoint/group access policies
   are already present.
-- SMTP settings for admin users 2FA email notifications (set in `.env`):
-  - `SMTP_ADDRESS` (example: `submission://smtp.example.com:587`)
-  - `SMTP_USERNAME`
-  - `SMTP_PASSWORD`
-- Default behavior keeps startup resilient by using a local placeholder SMTP address with startup
-  checks disabled; set `SMTP_ADDRESS` and SMTP credentials to your real provider to actually
-  deliver emails. Sender address is the existing `EMAIL` value.
+- SMTP configuration is shared across services — see [Email & SMTP Configuration](#email--smtp-configuration) for details.
 - Administration web UIs (`traefik`, `portainer`, `backrest`, `pihole`, `beszel`,
   `uptime`, and `headscale/admin` via `headplane`) are protected by Authelia and require an admin
   account with 2FA.

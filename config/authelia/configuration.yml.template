@@ -233,10 +233,29 @@ __OIDC_PRIVATE_KEY__
           - refresh_token
         token_endpoint_auth_method: client_secret_basic
 
+      - client_id: headscale
+        client_name: Headscale
+        client_secret: '{{ secret "/config/secrets/oidc_headscale_secret.txt" }}'
+        public: false
+        authorization_policy: one_factor
+        consent_mode: implicit
+        redirect_uris:
+          - 'https://headscale.__HOST_NAME__/oidc/callback'
+        scopes:
+          - openid
+          - profile
+          - email
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+        token_endpoint_auth_method: client_secret_basic
+        userinfo_signed_response_alg: none
+
 notifier:
   disable_startup_check: true
   smtp:
-    address: '{{ env "SMTP_ADDRESS" }}'
+    address: 'submission://{{ env "SMTP_HOST" }}:{{ env "SMTP_PORT" }}'
     username: '{{ env "SMTP_USERNAME" }}'
     password: '{{ env "SMTP_PASSWORD" }}'
     sender: '{{ env "EMAIL" }}'

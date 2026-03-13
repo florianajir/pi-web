@@ -171,7 +171,7 @@ services:
     labels:
       - "com.example.description=Backrest backup management"
       - "com.example.service=backrest"
-      - "homepage.group=Management"
+      - "homepage.group=Backup"
       - "homepage.name=Backrest"
       - "homepage.icon=backrest.png"
       - "homepage.href=https://backrest.${HOST_NAME:-pi.lan}"
@@ -226,7 +226,7 @@ services:
     labels:
       - "com.example.description=Traefik reverse proxy"
       - "com.example.service=traefik"
-      - "homepage.group=Management"
+      - "homepage.group=Network"
       - "homepage.name=Traefik"
       - "homepage.icon=traefik.png"
       - "homepage.href=https://traefik.${HOST_NAME:-pi.lan}"
@@ -409,7 +409,7 @@ services:
     labels:
       - "com.example.description=Portainer container management"
       - "com.example.service=portainer"
-      - "homepage.group=Management"
+      - "homepage.group=Monitoring"
       - "homepage.name=Portainer"
       - "homepage.icon=portainer.png"
       - "homepage.href=https://portainer.${HOST_NAME:-pi.lan}"
@@ -550,6 +550,13 @@ services:
       - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=${N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS:-true}
       - DB_TYPE=sqlite
       - DB_SQLITE_POOL_SIZE=2
+      - N8N_EMAIL_MODE=smtp
+      - N8N_SMTP_HOST=${SMTP_HOST:-localhost}
+      - N8N_SMTP_PORT=${SMTP_PORT:-587}
+      - N8N_SMTP_USER=${SMTP_USERNAME:-}
+      - N8N_SMTP_PASS=${SMTP_PASSWORD:-}
+      - N8N_SMTP_SENDER=${EMAIL:-noreply@localhost}
+      - N8N_SMTP_SSL=${SMTP_SSL:-false}
     volumes:
       - n8n_data:/home/node/.n8n
       - ${DATA_LOCATION:-./data}/n8n:/files
@@ -660,6 +667,9 @@ services:
       - ./config/headscale:/etc/headscale:ro
       - headscale_data:/var/lib/headscale
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      authelia:
+        condition: service_healthy
     tmpfs:
       - /var/run/headscale
     labels:
@@ -814,6 +824,14 @@ services:
       - POSTGRES_PASSWORD=${PASSWORD}
       - REDIS_HOST=redis
       - TZ=${TIMEZONE:-Europe/Paris}
+      - SMTP_HOST=${SMTP_HOST:-localhost}
+      - SMTP_SECURE=${SMTP_SECURE:-tls}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_AUTHTYPE=${SMTP_AUTHTYPE:-LOGIN}
+      - SMTP_NAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - MAIL_FROM_ADDRESS=${MAIL_FROM_ADDRESS:-nextcloud}
+      - MAIL_DOMAIN=${HOST_NAME:-pi.lan}
     volumes:
       - nextcloud_html:/var/www/html
       - ${DATA_LOCATION:-./data}/nextcloud:/var/www/html/data
@@ -874,7 +892,7 @@ services:
     labels:
       - "com.example.description=Homepage service dashboard"
       - "com.example.service=homepage"
-      - "homepage.group=Management"
+      - "homepage.group=Dashboard"
       - "homepage.name=Homepage"
       - "homepage.icon=homepage.png"
       - "homepage.href=https://homepage.${HOST_NAME:-pi.lan}"
@@ -917,6 +935,10 @@ services:
       - NTFY_AUTH_FILE=/var/lib/ntfy/user.db
       - NTFY_ENABLE_LOGIN=true
       - NTFY_AUTH_DEFAULT_ACCESS=deny-all
+      - NTFY_SMTP_SENDER_ADDR=${SMTP_HOST:-localhost}:${SMTP_PORT:-587}
+      - NTFY_SMTP_SENDER_USER=${SMTP_USERNAME:-}
+      - NTFY_SMTP_SENDER_PASS=${SMTP_PASSWORD:-}
+      - NTFY_SMTP_SENDER_FROM=${EMAIL:-noreply@localhost}
     env_file:
       - path: ./config/ntfy/ntfy.env
         required: false
@@ -926,7 +948,7 @@ services:
     labels:
       - "com.example.description=ntfy push notifications"
       - "com.example.service=ntfy"
-      - "homepage.group=Automation"
+      - "homepage.group=Alerts"
       - "homepage.name=ntfy"
       - "homepage.icon=ntfy.png"
       - "homepage.href=https://ntfy.${HOST_NAME:-pi.lan}"
@@ -969,6 +991,13 @@ services:
       - LLDAP_HTTP_URL=https://lldap.${HOST_NAME:-pi.lan}
       - LLDAP_DATABASE_URL=postgres://lldap:${PASSWORD}@postgres/lldap
       - LLDAP_VERBOSE=false
+      - LLDAP_SMTP_OPTIONS__ENABLE_PASSWORD_RESET=${SMTP_ENABLED:-false}
+      - LLDAP_SMTP_OPTIONS__SERVER=${SMTP_HOST:-localhost}
+      - LLDAP_SMTP_OPTIONS__PORT=${SMTP_PORT:-587}
+      - LLDAP_SMTP_OPTIONS__SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-STARTTLS}
+      - LLDAP_SMTP_OPTIONS__USER=${SMTP_USERNAME:-}
+      - LLDAP_SMTP_OPTIONS__PASSWORD=${SMTP_PASSWORD:-}
+      - LLDAP_SMTP_OPTIONS__FROM=${EMAIL:-noreply@localhost}
     env_file:
       - path: ${DATA_LOCATION:-./data}/lldap/lldap.env
         required: false
@@ -986,9 +1015,8 @@ services:
     labels:
       - "com.example.description=Lightweight LDAP user directory"
       - "com.example.service=lldap"
-      - "homepage.group=Management"
+      - "homepage.group=User Management"
       - "homepage.name=LLDAP"
-      - "homepage.icon=ldap.png"
       - "homepage.href=https://lldap.${HOST_NAME:-pi.lan}"
       - "homepage.description=User directory management"
       - "traefik.enable=true"
@@ -1015,7 +1043,9 @@ services:
     environment:
       - TZ=${TIMEZONE:-Europe/Paris}
       - X_AUTHELIA_CONFIG_FILTERS=template
-      - SMTP_ADDRESS=${SMTP_ADDRESS:-smtp://127.0.0.1:25}
+      - SMTP_HOST=${SMTP_HOST:-localhost}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-STARTTLS}
       - SMTP_USERNAME=${SMTP_USERNAME:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - EMAIL=${EMAIL:-authelia@localhost}
@@ -1043,11 +1073,11 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 20s
     labels:
       - "com.example.description=Authelia SSO and OIDC authentication portal"
       - "com.example.service=authelia"
-      - "homepage.group=Management"
+      - "homepage.group=User Management"
       - "homepage.name=Authelia"
       - "homepage.icon=authelia.png"
       - "homepage.href=https://auth.${HOST_NAME:-pi.lan}"
