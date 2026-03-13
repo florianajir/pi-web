@@ -998,7 +998,7 @@ services:
       - LLDAP_SMTP_OPTIONS__PASSWORD=${SMTP_PASSWORD:-}
       - LLDAP_SMTP_OPTIONS__FROM=${EMAIL:-noreply@localhost}
     env_file:
-      - path: ${DATA_LOCATION:-./data}/lldap/lldap.env
+      - path: ${DATA_LOCATION:-./data}/lldap.env
         required: false
     volumes:
       - ${DATA_LOCATION:-./data}/lldap:/data
