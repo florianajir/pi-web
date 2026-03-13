@@ -3,6 +3,7 @@
 /config/headscale/policy.hujson
 /config/headscale/config.yaml
 /config/headplane/config.yaml
+/config/headplane/headscale_api_key
 /config/pihole/dnsmasq.d
 /config/beszel-agent/agent.env
 /config/ntfy/ntfy.env

@@ -10,6 +10,7 @@ ENV_FILE="$PROJECT_DIR/.env"
 MAX_RETRIES=60
 RETRY_INTERVAL=2
 HEADSCALE_BIN="/ko-app/headscale"
+HEADPLANE_OIDC_KEY_UPDATED=0
 
 log() {
     echo "[headscale-init] $(date '+%H:%M:%S') $*" >&2
@@ -86,6 +87,51 @@ create_preauthkey() {
     log "Creating one-time preauthkey (expires in 30m) with tag:router..."
     docker exec pi-headscale "$HEADSCALE_BIN" preauthkeys create --user "$user_id" --expiration 30m --tags tag:router --output json 2>/dev/null | \
         grep -o '"key": *"[^"]*"' | sed 's/"key": *"\([^"]*\)"/\1/'
+}
+
+create_headscale_api_key() {
+    # One-year key used by Headplane in OIDC mode to call Headscale APIs.
+    raw_output=$(docker exec pi-headscale "$HEADSCALE_BIN" apikeys create --expiration 8760h --output json 2>/dev/null | tr -d '\r\n')
+
+    # Headscale 0.28 returns a plain quoted string in JSON mode.
+    api_key=$(printf '%s' "$raw_output" | sed -n -E 's/^"([^"]+)"$/\1/p')
+
+    # Fallback for object-shaped JSON outputs.
+    if [ -z "$api_key" ]; then
+        api_key=$(printf '%s' "$raw_output" | grep -oE '"(api_key|apiKey|key)"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/^"[^"]+"[[:space:]]*:[[:space:]]*"([^"]+)"$/\1/')
+    fi
+
+    printf '%s' "$api_key"
+}
+
+ensure_headplane_oidc_api_key() {
+    local key_file="$PROJECT_DIR/config/headplane/headscale_api_key"
+    local current_key=""
+    local new_key=""
+
+    mkdir -p "$(dirname "$key_file")"
+
+    if [ -f "$key_file" ]; then
+        current_key=$(tr -d '\r\n' < "$key_file")
+    fi
+
+    if [ -n "$current_key" ] && [ "$current_key" != "pending-headscale-api-key" ]; then
+        log "Headplane OIDC Headscale API key already exists"
+        return 0
+    fi
+
+    log "Creating Headscale API key for Headplane OIDC (expires in 1 year)..."
+    new_key=$(create_headscale_api_key)
+
+    if [ -z "$new_key" ]; then
+        log "ERROR: Failed to create Headscale API key for Headplane OIDC"
+        return 1
+    fi
+
+    printf '%s\n' "$new_key" > "$key_file"
+    chmod 600 "$key_file" 2>/dev/null || true
+    HEADPLANE_OIDC_KEY_UPDATED=1
+    log "Stored Headplane OIDC Headscale API key at $key_file"
 }
 
 init_headplane_config() {
@@ -178,7 +224,7 @@ main() {
         EMAIL=$(grep "^EMAIL=" "$ENV_FILE" | cut -d'=' -f2 | tr -d '\r' | tail -n1)
     fi
     HOST_NAME="${HOST_NAME:-pi.lan}"
-    HEADSCALE_USER="${EMAIL:-admin}"
+    HEADSCALE_USER="${EMAIL}"
     if [ -z "$HEADSCALE_USER" ]; then
         log "ERROR: HEADSCALE_USER (EMAIL) is not set."
         exit 1
@@ -207,8 +253,19 @@ main() {
     fi
     log "Using user ID: $USER_ID"
 
+    # Ensure Headplane OIDC Headscale API key exists for SSO mode.
+    if ! ensure_headplane_oidc_api_key; then
+        log "WARNING: Headplane OIDC key initialization failed; API-token login may still be required"
+    fi
+
     # Initialize Headplane config if not already done
     init_headplane_config "$USER_ID"
+
+    if [ "$HEADPLANE_OIDC_KEY_UPDATED" -eq 1 ]; then
+        log "Restarting Headplane container to apply OIDC Headscale API key..."
+        docker restart pi-headplane >/dev/null 2>&1 || true
+        log "Headplane restarted"
+    fi
 
     # Wait for Tailscale container to start (first boot can be slow)
     if ! wait_for_tailscale_container; then

@@ -43,7 +43,7 @@ services:
       - nextcloud_ci_data:/var/www/html/data
       - nextcloud_ci_config:/var/www/html/config
       - nextcloud_ci_themes:/var/www/html/themes
-      - ./config/nextcloud/reverse-proxy.config.php:/var/www/html/config/reverse-proxy.config.php:ro
+      - ./config/nextcloud/custom.config.php:/var/www/html/config/custom.config.php:ro
       - ./config/nextcloud/security-headers.conf:/etc/apache2/conf-enabled/security-headers.conf:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/status.php"]

@@ -20,6 +20,7 @@ main() {
     # If the file is missing, Docker would create a directory at the bind-mount path
     # causing headplane to crash with EISDIR on startup.
     HEADPLANE_CONFIG="$PROJECT_DIR/config/headplane/config.yaml"
+    HEADPLANE_API_KEY_FILE="$PROJECT_DIR/config/headplane/headscale_api_key"
     mkdir -p "$(dirname "$HEADPLANE_CONFIG")"
     if [ -d "$HEADPLANE_CONFIG" ]; then
         log "WARNING: headplane config.yaml is a directory (Docker bind-mount artifact). Removing..."
@@ -28,6 +29,17 @@ main() {
     if [ ! -e "$HEADPLANE_CONFIG" ]; then
         touch "$HEADPLANE_CONFIG"
         log "Created placeholder $HEADPLANE_CONFIG (will be populated by headscale-init.sh)"
+    fi
+
+    # Ensure the Headscale API key file bind-mounted by Headplane is a file.
+    if [ -d "$HEADPLANE_API_KEY_FILE" ]; then
+        log "WARNING: headplane headscale_api_key is a directory (Docker bind-mount artifact). Removing..."
+        rm -rf "$HEADPLANE_API_KEY_FILE"
+    fi
+    if [ ! -e "$HEADPLANE_API_KEY_FILE" ]; then
+        printf 'pending-headscale-api-key\n' > "$HEADPLANE_API_KEY_FILE"
+        chmod 600 "$HEADPLANE_API_KEY_FILE" 2>/dev/null || true
+        log "Created placeholder $HEADPLANE_API_KEY_FILE (will be populated by headscale-init.sh)"
     fi
 
     if [ ! -f "$POLICY_TEMPLATE_FILE" ]; then
@@ -43,6 +55,7 @@ main() {
     if [ -f "$ENV_FILE" ]; then
         EMAIL=$(grep "^EMAIL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
         HOST_NAME=$(grep "^HOST_NAME=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
+        DATA_LOCATION=$(grep "^DATA_LOCATION=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
     fi
 
     if [ -z "$EMAIL" ]; then
@@ -51,6 +64,20 @@ main() {
     fi
 
     HOST_NAME="${HOST_NAME:-pi.lan}"
+    DATA_LOCATION="${DATA_LOCATION:-./data}"
+    case "$DATA_LOCATION" in
+        /*) : ;;
+        *)  DATA_LOCATION="$PROJECT_DIR/$DATA_LOCATION" ;;
+    esac
+
+    # Read OIDC client secret for Headscale node registration
+    OIDC_SECRET_FILE="$DATA_LOCATION/authelia-config/secrets/oidc_headscale_secret.txt"
+    OIDC_HEADSCALE_SECRET=""
+    if [ -f "$OIDC_SECRET_FILE" ]; then
+        OIDC_HEADSCALE_SECRET=$(cat "$OIDC_SECRET_FILE")
+    else
+        log "WARNING: OIDC secret not found at $OIDC_SECRET_FILE (run authelia-pre-start.sh first)"
+    fi
 
     UPDATED_POLICY=$(sed -e "s|__HEADSCALE_USER__|$EMAIL|g" "$POLICY_TEMPLATE_FILE")
 
@@ -63,6 +90,7 @@ main() {
 
     UPDATED_CONFIG=$(sed \
         -e "s|__HOST_NAME__|$HOST_NAME|g" \
+        -e "s|__OIDC_HEADSCALE_SECRET__|$OIDC_HEADSCALE_SECRET|g" \
         "$CONFIG_TEMPLATE_FILE")
 
     if [ -f "$CONFIG_FILE" ] && [ "$UPDATED_CONFIG" = "$(cat "$CONFIG_FILE")" ]; then

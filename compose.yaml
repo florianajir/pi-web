@@ -103,6 +103,7 @@ services:
       - immich
       - ntfy
       - nextcloud
+      - auth
     expose:
       - 9898
     environment:
@@ -121,6 +122,16 @@ services:
       - NEXTCLOUD_SQL_BACKUP_DIR=/userdata/nextcloud-config/backups
       - NEXTCLOUD_SQL_BACKUP_KEEP=${NEXTCLOUD_SQL_BACKUP_KEEP:-30}
       - NEXTCLOUD_HOOK_STATE_FILE=/tmp/nextcloud-maintenance.state
+      - AUTHELIA_DB_NAME=authelia
+      - AUTHELIA_DB_USER=authelia
+      - AUTHELIA_DB_PASSWORD=${PASSWORD}
+      - AUTHELIA_SQL_BACKUP_DIR=/userdata/authelia-config/backups
+      - AUTHELIA_SQL_BACKUP_KEEP=7
+      - LLDAP_DB_NAME=lldap
+      - LLDAP_DB_USER=lldap
+      - LLDAP_DB_PASSWORD=${PASSWORD}
+      - LLDAP_SQL_BACKUP_DIR=/userdata/lldap/backups
+      - LLDAP_SQL_BACKUP_KEEP=7
       - RESTIC_PACK_SIZE=32
     env_file:
       - path: ./config/ntfy/ntfy.env
@@ -136,7 +147,12 @@ services:
       - ${DATA_LOCATION:-./data}/nextcloud-config:/userdata/nextcloud-config
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/userdata/nextcloud-themes:ro
       - ${DATA_LOCATION:-./data}/uptime-kuma:/userdata/uptime-kuma:ro
+      - ${DATA_LOCATION:-./data}/lldap:/userdata/lldap:ro
+      - ${DATA_LOCATION:-./data}/lldap/backups:/userdata/lldap/backups
+      - ${DATA_LOCATION:-./data}/authelia-config:/userdata/authelia-config
       - ./scripts/nextcloud-db-backup.sh:/hooks/nextcloud-db-backup.sh:ro
+      - ./scripts/authelia-db-backup.sh:/hooks/authelia-db-backup.sh:ro
+      - ./scripts/lldap-db-backup.sh:/hooks/lldap-db-backup.sh:ro
       - ./scripts/backrest-post-hook.sh:/hooks/backrest-post-hook.sh:ro
       - ./scripts/backrest-unlock.sh:/hooks/backrest-unlock.sh:ro
     tmpfs:
@@ -149,10 +165,12 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      authelia:
+        condition: service_healthy
     labels:
       - "com.example.description=Backrest backup management"
       - "com.example.service=backrest"
-      - "homepage.group=Management"
+      - "homepage.group=Backup"
       - "homepage.name=Backrest"
       - "homepage.icon=backrest.png"
       - "homepage.href=https://backrest.${HOST_NAME:-pi.lan}"
@@ -161,7 +179,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.backrest.rule=Host(`backrest.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.backrest.entrypoints=websecure"
-      - "traefik.http.routers.backrest.middlewares=lan@docker"
+      - "traefik.http.routers.backrest.middlewares=lan@docker,authelia@docker"
       - "traefik.http.routers.backrest.tls=true"
       - "traefik.http.services.backrest.loadbalancer.server.port=9898"
     healthcheck:
@@ -207,7 +225,7 @@ services:
     labels:
       - "com.example.description=Traefik reverse proxy"
       - "com.example.service=traefik"
-      - "homepage.group=Management"
+      - "homepage.group=Network"
       - "homepage.name=Traefik"
       - "homepage.icon=traefik.png"
       - "homepage.href=https://traefik.${HOST_NAME:-pi.lan}"
@@ -222,7 +240,7 @@ services:
       - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
       - "traefik.http.middlewares.security-headers.headers.referrerPolicy=same-origin"
       - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}"
-      - "traefik.http.routers.traefik.middlewares=lan@docker"
+      - "traefik.http.routers.traefik.middlewares=lan@docker,authelia@docker"
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.rule=Host(`traefik.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.traefik.service=api@internal"
@@ -264,7 +282,7 @@ services:
       - APP_URL=https://beszel.${HOST_NAME:-pi.lan}
       - USER_EMAIL=${EMAIL}
       - USER_PASSWORD=${PASSWORD}
-      - AUTO_LOGIN=${EMAIL}
+      - USER_CREATION=true
     volumes:
       - beszel_data:/beszel_data
       - beszel_socket:/beszel_socket
@@ -343,7 +361,6 @@ services:
       - TZ=${TIMEZONE:-Europe/Paris}
       - APP_URL=https://uptime.${HOST_NAME:-pi.lan}
       - UPTIME_KUMA_DB_TYPE=sqlite
-      - UPTIME_KUMA_DISABLE_AUTH=1
     env_file:
       - path: ./config/ntfy/ntfy.env
         required: false
@@ -362,7 +379,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.uptime-kuma.rule=Host(`uptime.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.uptime-kuma.entrypoints=websecure"
-      - "traefik.http.routers.uptime-kuma.middlewares=lan@docker"
+      - "traefik.http.routers.uptime-kuma.middlewares=lan@docker,authelia@docker"
       - "traefik.http.routers.uptime-kuma.tls=true"
       - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
     healthcheck:
@@ -391,7 +408,7 @@ services:
     labels:
       - "com.example.description=Portainer container management"
       - "com.example.service=portainer"
-      - "homepage.group=Management"
+      - "homepage.group=Monitoring"
       - "homepage.name=Portainer"
       - "homepage.icon=portainer.png"
       - "homepage.href=https://portainer.${HOST_NAME:-pi.lan}"
@@ -486,7 +503,7 @@ services:
       - "traefik.http.routers.pihole.rule=Host(`pihole.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.pihole.entrypoints=websecure"
       - "traefik.http.routers.pihole.tls=true"
-      - "traefik.http.routers.pihole.middlewares=lan@docker"
+      - "traefik.http.routers.pihole.middlewares=lan@docker,authelia@docker"
       - "traefik.http.services.pihole.loadbalancer.server.port=8082"
     healthcheck:
       test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
@@ -532,6 +549,13 @@ services:
       - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=${N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS:-true}
       - DB_TYPE=sqlite
       - DB_SQLITE_POOL_SIZE=2
+      - N8N_EMAIL_MODE=smtp
+      - N8N_SMTP_HOST=${SMTP_HOST:-localhost}
+      - N8N_SMTP_PORT=${SMTP_PORT:-587}
+      - N8N_SMTP_USER=${SMTP_USERNAME:-}
+      - N8N_SMTP_PASS=${SMTP_PASSWORD:-}
+      - N8N_SMTP_SENDER=${EMAIL:-noreply@localhost}
+      - N8N_SMTP_SSL=${SMTP_SSL:-false}
     volumes:
       - n8n_data:/home/node/.n8n
       - ${DATA_LOCATION:-./data}/n8n:/files
@@ -570,11 +594,21 @@ services:
     volumes:
       - ./config/headplane/config.yaml:/etc/headplane/config.yaml:ro
       - ./config/headscale:/etc/headscale:ro
+      - ${DATA_LOCATION:-./data}/authelia-config/secrets/oidc_headplane_secret.txt:/run/secrets/oidc_headplane_secret:ro
+      - ./config/headplane/headscale_api_key:/run/secrets/headplane_headscale_api_key:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - headplane_data:/var/lib/headplane
     environment:
       - HEADPLANE_LOAD_ENV_OVERRIDES=true
       - HEADPLANE_HEADSCALE__URL=https://headscale.${HOST_NAME:-pi.lan}
+      - HEADPLANE_OIDC__ISSUER=https://auth.${HOST_NAME:-pi.lan}
+      - HEADPLANE_OIDC__CLIENT_ID=headplane
+      - HEADPLANE_OIDC__CLIENT_SECRET_PATH=/run/secrets/oidc_headplane_secret
+      - HEADPLANE_OIDC__TOKEN_ENDPOINT_AUTH_METHOD=client_secret_basic
+      - HEADPLANE_OIDC__REDIRECT_URI=https://headscale.${HOST_NAME:-pi.lan}/admin/oidc/callback
+      - HEADPLANE_OIDC__DISABLE_API_KEY_LOGIN=true
+      - HEADPLANE_OIDC__HEADSCALE_API_KEY_PATH=/run/secrets/headplane_headscale_api_key
+      - HEADPLANE_OIDC__SCOPE=openid email profile
     depends_on:
       - headscale
     labels:
@@ -595,11 +629,12 @@ services:
       - "traefik.http.services.headplane.loadbalancer.server.port=3000"
     healthcheck:
       test:
-        - "CMD"
-        - "/nodejs/bin/node"
-        - "-e"
-        - >-
-          const net=require('node:net');const s=net.connect({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.setTimeout(5000,()=>{s.destroy();process.exit(1)});s.on('error',()=>process.exit(1));
+        [
+          "CMD",
+          "/nodejs/bin/node",
+          "-e",
+          "const net=require('node:net');const s=net.connect({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.setTimeout(5000,()=>{s.destroy();process.exit(1)});s.on('error',()=>process.exit(1));",
+        ]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -631,6 +666,9 @@ services:
       - ./config/headscale:/etc/headscale:ro
       - headscale_data:/var/lib/headscale
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      authelia:
+        condition: service_healthy
     tmpfs:
       - /var/run/headscale
     labels:
@@ -715,6 +753,7 @@ services:
     restart: unless-stopped
     volumes:
       - ${DATA_LOCATION:-./data}/immich:/data
+      - ${DATA_LOCATION:-./data}/authelia-config/immich-oauth-config.yaml:/immich-oauth-config.yaml:ro
       - /etc/localtime:/etc/localtime:ro
     environment:
       DB_HOSTNAME: postgres
@@ -722,6 +761,7 @@ services:
       DB_USERNAME: immich
       DB_PASSWORD: ${PASSWORD}
       REDIS_HOSTNAME: redis
+      IMMICH_CONFIG_FILE: /immich-oauth-config.yaml
       TZ: ${TIMEZONE:-Europe/Paris}
     networks:
       - frontend
@@ -783,12 +823,20 @@ services:
       - POSTGRES_PASSWORD=${PASSWORD}
       - REDIS_HOST=redis
       - TZ=${TIMEZONE:-Europe/Paris}
+      - SMTP_HOST=${SMTP_HOST:-localhost}
+      - SMTP_SECURE=${SMTP_SECURE:-tls}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_AUTHTYPE=${SMTP_AUTHTYPE:-LOGIN}
+      - SMTP_NAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - MAIL_FROM_ADDRESS=${MAIL_FROM_ADDRESS:-nextcloud}
+      - MAIL_DOMAIN=${HOST_NAME:-pi.lan}
     volumes:
       - nextcloud_html:/var/www/html
       - ${DATA_LOCATION:-./data}/nextcloud:/var/www/html/data
       - ${DATA_LOCATION:-./data}/nextcloud-config:/var/www/html/config
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/var/www/html/themes
-      - ./config/nextcloud/reverse-proxy.config.php:/var/www/html/config/reverse-proxy.config.php:ro
+      - ./config/nextcloud/custom.config.php:/var/www/html/config/custom.config.php:ro
       - ./config/nextcloud/security-headers.conf:/etc/apache2/conf-enabled/security-headers.conf:ro
     networks:
       - frontend
@@ -805,7 +853,6 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.nextcloud.entrypoints=websecure"
-      - "traefik.http.routers.nextcloud.middlewares=lan@docker"
       - "traefik.http.routers.nextcloud.tls=true"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
     healthcheck:
@@ -844,7 +891,7 @@ services:
     labels:
       - "com.example.description=Homepage service dashboard"
       - "com.example.service=homepage"
-      - "homepage.group=Management"
+      - "homepage.group=Dashboard"
       - "homepage.name=Homepage"
       - "homepage.icon=homepage.png"
       - "homepage.href=https://homepage.${HOST_NAME:-pi.lan}"
@@ -853,7 +900,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.homepage.rule=Host(`homepage.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.homepage.entrypoints=websecure"
-      - "traefik.http.routers.homepage.middlewares=lan@docker"
+      - "traefik.http.routers.homepage.middlewares=lan@docker,authelia@docker"
       - "traefik.http.routers.homepage.tls=true"
       - "traefik.http.services.homepage.loadbalancer.server.port=3000"
     depends_on:
@@ -887,6 +934,10 @@ services:
       - NTFY_AUTH_FILE=/var/lib/ntfy/user.db
       - NTFY_ENABLE_LOGIN=true
       - NTFY_AUTH_DEFAULT_ACCESS=deny-all
+      - NTFY_SMTP_SENDER_ADDR=${SMTP_HOST:-localhost}:${SMTP_PORT:-587}
+      - NTFY_SMTP_SENDER_USER=${SMTP_USERNAME:-}
+      - NTFY_SMTP_SENDER_PASS=${SMTP_PASSWORD:-}
+      - NTFY_SMTP_SENDER_FROM=${EMAIL:-noreply@localhost}
     env_file:
       - path: ./config/ntfy/ntfy.env
         required: false
@@ -896,7 +947,7 @@ services:
     labels:
       - "com.example.description=ntfy push notifications"
       - "com.example.service=ntfy"
-      - "homepage.group=Automation"
+      - "homepage.group=Notification"
       - "homepage.name=ntfy"
       - "homepage.icon=ntfy.png"
       - "homepage.href=https://ntfy.${HOST_NAME:-pi.lan}"
@@ -919,6 +970,131 @@ services:
     mem_limit: 128m
     oom_score_adj: *oom-score-important
 
+  # Authentication & SSO
+  lldap:
+    <<: *default-logging
+    image: lldap/lldap:stable
+    container_name: pi-lldap
+    restart: unless-stopped
+    networks:
+      - frontend
+      - auth
+    expose:
+      - 3890
+      - 17170
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - LLDAP_LDAP_BASE_DN=dc=home,dc=ldap
+      - LLDAP_LDAP_USER_EMAIL=${EMAIL}
+      - LLDAP_LDAP_USER_PASS=${PASSWORD}
+      - LLDAP_HTTP_URL=https://lldap.${HOST_NAME:-pi.lan}
+      - LLDAP_DATABASE_URL=postgres://lldap:${PASSWORD}@postgres/lldap
+      - LLDAP_VERBOSE=false
+      - LLDAP_SMTP_OPTIONS__ENABLE_PASSWORD_RESET=${SMTP_ENABLED:-false}
+      - LLDAP_SMTP_OPTIONS__SERVER=${SMTP_HOST:-localhost}
+      - LLDAP_SMTP_OPTIONS__PORT=${SMTP_PORT:-587}
+      - LLDAP_SMTP_OPTIONS__SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-STARTTLS}
+      - LLDAP_SMTP_OPTIONS__USER=${SMTP_USERNAME:-}
+      - LLDAP_SMTP_OPTIONS__PASSWORD=${SMTP_PASSWORD:-}
+      - LLDAP_SMTP_OPTIONS__FROM=${EMAIL:-noreply@localhost}
+    env_file:
+      - path: ${DATA_LOCATION:-./data}/lldap/lldap.env
+        required: false
+    volumes:
+      - ${DATA_LOCATION:-./data}/lldap:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:17170/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "com.example.description=Lightweight LDAP user directory"
+      - "com.example.service=lldap"
+      - "homepage.group=User Management"
+      - "homepage.name=LLDAP"
+      - "homepage.href=https://lldap.${HOST_NAME:-pi.lan}"
+      - "homepage.description=User directory management"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.lldap.rule=Host(`lldap.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.lldap.entrypoints=websecure"
+      - "traefik.http.routers.lldap.middlewares=lan@docker"
+      - "traefik.http.routers.lldap.tls=true"
+      - "traefik.http.services.lldap.loadbalancer.server.port=17170"
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-critical
+
+  authelia:
+    <<: *default-logging
+    image: authelia/authelia:4.39.15
+    container_name: pi-authelia
+    restart: unless-stopped
+    networks:
+      - frontend
+      - auth
+    expose:
+      - 9091
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - X_AUTHELIA_CONFIG_FILTERS=template
+      - SMTP_HOST=${SMTP_HOST:-localhost}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-STARTTLS}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL=${EMAIL:-authelia@localhost}
+    volumes:
+      - ${DATA_LOCATION:-./data}/authelia-config/configuration.yml:/config/configuration.yml:ro
+      - ${DATA_LOCATION:-./data}/authelia-config/secrets:/config/secrets:ro
+      - ${DATA_LOCATION:-./data}/authelia-config:/config/data
+    depends_on:
+      lldap:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:9091/api/health",
+        ]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    labels:
+      - "com.example.description=Authelia SSO and OIDC authentication portal"
+      - "com.example.service=authelia"
+      - "homepage.group=User Management"
+      - "homepage.name=Authelia"
+      - "homepage.icon=authelia.png"
+      - "homepage.href=https://auth.${HOST_NAME:-pi.lan}"
+      - "homepage.description=SSO authentication portal"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.authelia.rule=Host(`auth.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.authelia.entrypoints=websecure"
+      - "traefik.http.routers.authelia.tls=true"
+      - "traefik.http.services.authelia.loadbalancer.server.port=9091"
+      - "traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/authz/forward-auth"
+      # trustForwardHeader is safe here: Traefik is the only trusted upstream on the internal frontend network
+      - "traefik.http.middlewares.authelia.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-critical
+
   # Database & Cache
   postgres:
     <<: *default-logging
@@ -936,6 +1112,7 @@ services:
     networks:
       - immich
       - nextcloud
+      - auth
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
       interval: 30s
@@ -946,9 +1123,9 @@ services:
     cpuset: "1-3"
     deploy: *cpu-request-xlarge
     shm_size: 256mb
-    oom_score_adj: *oom-score-important
+    oom_score_adj: *oom-score-critical
     labels:
-      - "com.example.description=PostgreSQL database for Immich & Nextcloud"
+      - "com.example.description=PostgreSQL database for Immich, Nextcloud & Authelia"
       - "com.example.service=postgres"
 
   redis:
@@ -965,12 +1142,13 @@ services:
     networks:
       - immich
       - nextcloud
+      - auth
     labels:
-      - "com.example.description=Redis cache for Immich & Nextcloud"
+      - "com.example.description=Redis cache for Immich, Nextcloud & Authelia"
       - "com.example.service=redis"
     deploy: *cpu-request-small
     mem_limit: 256m
-    oom_score_adj: *oom-score-important
+    oom_score_adj: *oom-score-critical
 
 volumes:
   ddns_data:
@@ -1090,3 +1268,10 @@ networks:
     labels:
       - "com.example.description=Internal notifications network"
       - "com.example.service=ntfy"
+  auth:
+    driver: bridge
+    name: auth
+    internal: true
+    labels:
+      - "com.example.description=Authentication network (Authelia, lldap, Postgres, Redis)"
+      - "com.example.service=authelia"

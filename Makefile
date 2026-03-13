@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset beszel-bootstrap
+.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -21,7 +21,6 @@ help:
 	@echo "  status    Show systemd status"
 	@echo "  logs      Follow compose logs"
 	@echo "  preflight Quick env readiness check"
-	@echo "  beszel-bootstrap Ensure Beszel universal token + agent registration"
 	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  headscale-reset Reset all Headscale nodes, preauth keys, and IP allocations"
 	@echo "  check-env Validate required .env variables"
@@ -73,6 +72,7 @@ uninstall:
 	@echo "⚠️  WARNING: This will remove ALL data including:"
 	@echo "   - Docker volumes (Pi-hole, Headscale, etc.)"
 	@echo "   - Bind-mount data dirs: ./data/nextcloud, ./data/postgres, ./data/n8n, ./data/immich"
+	@echo "   - Generated config: ./data/authelia-config/configuration.yml"
 	@echo "   - Generated config: ./config/headplane/config.yaml" 
 	@echo "   - Generated config: ./config/headscale/config.yaml"
 	@echo "   - Generated config: ./config/headscale/policy.hujson"
@@ -88,7 +88,7 @@ uninstall:
 	@echo "🐳 Removing containers and volumes..."
 	-$(COMPOSE) down -v --remove-orphans 2>/dev/null || true
 	@echo "🧹 Removing bind-mount data directories..."
-	-sudo rm -rf ./data/nextcloud ./data/postgres ./data/n8n ./data/immich
+	-sudo rm -rf ./data/nextcloud ./data/postgres ./data/n8n ./data/immich ./data/lldap ./data/authelia-config
 	@echo "🧹 Removing generated config files..."
 	-rm -f ./config/headplane/config.yaml
 	-rm -f ./config/headscale/config.yaml
@@ -112,7 +112,6 @@ uninstall:
 start:
 	@echo "🚀 Starting Pi-Web stack..."
 	sudo systemctl start $(UNIT)
-	@$(MAKE) beszel-bootstrap
 	@echo "✅ Stack started"
 
 stop:
@@ -159,8 +158,3 @@ headscale-reset:
 	-docker compose restart headscale
 	@echo "✅ Headscale reset complete"
 
-beszel-bootstrap:
-	@echo "🔑 Ensuring Beszel agent registration token..."
-	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
-	@sh ./scripts/beszel-agent-bootstrap.sh
-	@echo "✅ Beszel agent bootstrap complete"

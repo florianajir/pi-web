@@ -1,0 +1,264 @@
+server:
+  address: 'tcp://0.0.0.0:9091'
+
+log:
+  level: info
+
+theme: auto
+
+telemetry:
+  metrics:
+    enabled: false
+
+webauthn:
+  disable: false
+  enable_passkey_login: true
+  display_name: 'Pi-Web'
+
+totp:
+  issuer: __HOST_NAME__
+
+identity_validation:
+  reset_password:
+    jwt_secret: '{{ secret "/config/secrets/jwt_secret" }}'
+
+authentication_backend:
+  ldap:
+    implementation: lldap
+    address: ldap://lldap:3890
+    base_dn: dc=home,dc=ldap
+    additional_users_dn: ou=people
+    users_filter: (&(|({username_attribute}={input})(mail={input}))(objectClass=person))
+    additional_groups_dn: ou=groups
+    groups_filter: (member={dn})
+    attributes:
+      group_name: cn
+      mail: mail
+      display_name: displayName
+      username: uid
+    user: uid=admin,ou=people,dc=home,dc=ldap
+    password: '{{ secret "/config/secrets/ldap_password" }}'
+
+access_control:
+  default_policy: one_factor
+  rules:
+    - domain: 'auth.__HOST_NAME__'
+      policy: bypass
+
+    - domain:
+        - 'backrest.__HOST_NAME__'
+        - 'pihole.__HOST_NAME__'
+        - 'traefik.__HOST_NAME__'
+        - 'uptime.__HOST_NAME__'
+      subject:
+        - 'group:admin'
+        - 'group:lldap_admin'
+      policy: one_factor
+
+    - domain: 'headscale.__HOST_NAME__'
+      resources:
+        - '^/admin([/?].*)?$'
+      subject:
+        - 'group:admin'
+        - 'group:lldap_admin'
+      policy: two_factor
+
+    - domain: '*.__HOST_NAME__'
+      subject: 'group:users'
+      policy: one_factor
+
+session:
+  name: authelia_session
+  same_site: lax
+  inactivity: '45m'
+  expiration: '12h'
+  remember_me: '1M'
+  secret: '{{ secret "/config/secrets/session_secret" }}'
+  cookies:
+    - domain: '__HOST_NAME__'
+      authelia_url: 'https://auth.__HOST_NAME__'
+  redis:
+    host: redis
+    port: 6379
+    database_index: 1
+
+regulation:
+  max_retries: 3
+  find_time: '2m'
+  ban_time: '5m'
+
+storage:
+  encryption_key: '{{ secret "/config/secrets/storage_encryption_key" }}'
+  postgres:
+    address: 'tcp://postgres:5432'
+    database: authelia
+    username: authelia
+    password: '{{ secret "/config/secrets/db_password" }}'
+
+identity_providers:
+  oidc:
+    hmac_secret: '{{ secret "/config/secrets/oidc_hmac_secret" }}'
+    jwks:
+      - key_id: 'main'
+        algorithm: 'RS256'
+        use: 'sig'
+        key: |
+__OIDC_PRIVATE_KEY__
+    lifespans:
+      access_token: '1h'
+      authorize_code: '1m'
+      id_token: '1h'
+      refresh_token: '90d'
+    enable_client_debug_messages: false
+    cors:
+      endpoints:
+        - authorization
+        - token
+        - revocation
+        - introspection
+      allowed_origins:
+        - 'https://nextcloud.__HOST_NAME__'
+        - 'https://immich.__HOST_NAME__'
+        - 'https://beszel.__HOST_NAME__'
+        - 'https://portainer.__HOST_NAME__'
+        - 'https://headscale.__HOST_NAME__'
+    clients:
+      - client_id: nextcloud
+        client_name: Nextcloud
+        client_secret: '{{ secret "/config/secrets/oidc_nextcloud_secret.txt" }}'
+        public: false
+        authorization_policy: one_factor
+        consent_mode: implicit
+        redirect_uris:
+          - 'https://nextcloud.__HOST_NAME__/index.php/apps/user_oidc/code'
+          - 'https://nextcloud.__HOST_NAME__/apps/user_oidc/code'
+        scopes:
+          - openid
+          - profile
+          - email
+          - groups
+          - offline_access
+        response_types:
+          - code
+        response_modes:
+          - form_post
+          - query
+        grant_types:
+          - authorization_code
+          - refresh_token
+        token_endpoint_auth_method: client_secret_post
+        userinfo_signed_response_alg: none
+
+      - client_id: immich
+        client_name: Immich
+        client_secret: '{{ secret "/config/secrets/oidc_immich_secret.txt" }}'
+        public: false
+        authorization_policy: one_factor
+        consent_mode: implicit
+        redirect_uris:
+          - 'https://immich.__HOST_NAME__/auth/login'
+          - 'https://immich.__HOST_NAME__/user-settings'
+          - 'app.immich:///oauth-callback'
+        scopes:
+          - openid
+          - profile
+          - email
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+        id_token_signed_response_alg: RS256
+        userinfo_signed_response_alg: none
+        token_endpoint_auth_method: client_secret_post
+
+      - client_id: beszel
+        client_name: Beszel
+        client_secret: '{{ secret "/config/secrets/oidc_beszel_secret.txt" }}'
+        public: false
+        authorization_policy: one_factor
+        consent_mode: implicit
+        require_pkce: true
+        pkce_challenge_method: S256
+        redirect_uris:
+          - 'https://beszel.__HOST_NAME__/api/oauth2-redirect'
+        scopes:
+          - openid
+          - profile
+          - email
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+        token_endpoint_auth_method: client_secret_basic
+        userinfo_signed_response_alg: none
+
+      - client_id: portainer
+        client_name: Portainer
+        client_secret: '{{ secret "/config/secrets/oidc_portainer_secret.txt" }}'
+        public: false
+        authorization_policy: one_factor
+        consent_mode: implicit
+        redirect_uris:
+          - 'https://portainer.__HOST_NAME__'
+          - 'https://portainer.__HOST_NAME__/'
+        scopes:
+          - openid
+          - profile
+          - email
+          - groups
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+          - refresh_token
+        token_endpoint_auth_method: client_secret_basic
+        userinfo_signed_response_alg: none
+
+      - client_id: headplane
+        client_name: Headplane
+        client_secret: '{{ secret "/config/secrets/oidc_headplane_secret.txt" }}'
+        public: false
+        authorization_policy: two_factor
+        consent_mode: implicit
+        redirect_uris:
+          - 'https://headscale.__HOST_NAME__/admin/oidc/callback'
+        scopes:
+          - openid
+          - profile
+          - email
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+          - refresh_token
+        token_endpoint_auth_method: client_secret_basic
+
+      - client_id: headscale
+        client_name: Headscale
+        client_secret: '{{ secret "/config/secrets/oidc_headscale_secret.txt" }}'
+        public: false
+        authorization_policy: one_factor
+        consent_mode: implicit
+        redirect_uris:
+          - 'https://headscale.__HOST_NAME__/oidc/callback'
+        scopes:
+          - openid
+          - profile
+          - email
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+        token_endpoint_auth_method: client_secret_basic
+        userinfo_signed_response_alg: none
+
+notifier:
+  disable_startup_check: true
+  smtp:
+    address: 'submission://{{ env "SMTP_HOST" }}:{{ env "SMTP_PORT" }}'
+    username: '{{ env "SMTP_USERNAME" }}'
+    password: '{{ env "SMTP_PASSWORD" }}'
+    sender: '{{ env "EMAIL" }}'
+    identifier: 'auth.__HOST_NAME__'
+    disable_require_tls: false
+    disable_starttls: false

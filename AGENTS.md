@@ -6,5 +6,8 @@ Pi Web is a self-hosted web application stack designed for Raspberry Pi devices.
 
 - Use docker compose for execution and management of services.
 - Changes should be made in the docker compose file or the service configurations and scripts provided in the repository to ensure idempotency and functionality on fresh installs.
+- Stack is run by systemd service, so the scripts in the scripts directory should be used for any pre-start, post-start, or pre-stop operations to ensure they run correctly in the service lifecycle.
 - Makefile is provided for convenience.
 - Never use make uninstall or any destructive operation on a path other than the project path.
+- Avoid creating new env vars in .env and .env.dist, use the provided configuration files and scripts to manage environment variables. For authentication, use USER and PASSWORD env vars.
+- Avoid adding new docker containers for running scripts that can be written in scripts directory and run in systemd service ExecStartPre and ExecStartPost

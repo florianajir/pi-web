@@ -29,12 +29,7 @@ generate_password() {
 }
 
 generate_token() {
-    if command -v openssl >/dev/null 2>&1; then
-        printf 'tk_%s' "$(openssl rand -hex 20 | tr -d '\r\n')"
-        return
-    fi
-
-    printf 'tk_%s' "$(head -c 20 /dev/urandom | od -A n -t x1 | tr -d ' \n')"
+    docker run --rm --entrypoint sh "$NTFY_IMAGE" -c 'ntfy token generate'
 }
 
 escape_compose_env_value() {
@@ -53,6 +48,7 @@ main() {
     NTFY_BESZEL_PASSWORD_VALUE=""
     NTFY_UPTIME_KUMA_PASSWORD_VALUE=""
     NTFY_UPTIME_KUMA_TOKEN_VALUE=""
+    UPTIME_KUMA_ADMIN_PASSWORD_VALUE=""
 
     if [ -f "$OUTPUT_FILE" ]; then
         NTFY_BACKREST_PASSWORD_VALUE=$(grep '^NTFY_BACKREST_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
@@ -63,6 +59,7 @@ main() {
         NTFY_BESZEL_PASSWORD_VALUE=$(grep '^NTFY_BESZEL_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
         NTFY_UPTIME_KUMA_PASSWORD_VALUE=$(grep '^NTFY_UPTIME_KUMA_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
         NTFY_UPTIME_KUMA_TOKEN_VALUE=$(grep '^NTFY_UPTIME_KUMA_TOKEN=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
+        UPTIME_KUMA_ADMIN_PASSWORD_VALUE=$(grep '^UPTIME_KUMA_ADMIN_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
     fi
 
     if [ -z "$USER_VALUE" ]; then
@@ -95,6 +92,11 @@ main() {
         log "Generated NTFY_UPTIME_KUMA_TOKEN for uptime-kuma ntfy user"
     fi
 
+    if [ -z "$UPTIME_KUMA_ADMIN_PASSWORD_VALUE" ]; then
+        UPTIME_KUMA_ADMIN_PASSWORD_VALUE="$(generate_password)"
+        log "Generated UPTIME_KUMA_ADMIN_PASSWORD for uptime-kuma admin account"
+    fi
+
     log "Generating bcrypt hashes for ntfy predefined users"
     USER_HASH="$(hash_password "$PASSWORD_VALUE")"
     BACKREST_HASH="$(hash_password "$NTFY_BACKREST_PASSWORD_VALUE")"
@@ -117,6 +119,7 @@ main() {
         printf 'NTFY_AUTH_USERS=%s\n' "$(escape_compose_env_value "$AUTH_USERS_VALUE")"
         printf 'NTFY_AUTH_ACCESS=%s\n' "$(escape_compose_env_value "$AUTH_ACCESS_VALUE")"
         printf 'NTFY_AUTH_TOKENS=%s\n' "$(escape_compose_env_value "$AUTH_TOKENS_VALUE")"
+        printf 'UPTIME_KUMA_ADMIN_PASSWORD=%s\n' "$(escape_compose_env_value "$UPTIME_KUMA_ADMIN_PASSWORD_VALUE")"
     } > "$OUTPUT_FILE"
 
     chmod 600 "$OUTPUT_FILE"
