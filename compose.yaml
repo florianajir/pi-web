@@ -339,6 +339,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /dev:/dev
       - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro
+      - /run/udev/data:/run/udev/data:ro
+      - /proc:/host/proc:ro
+      - /mnt/sdcard:/host/sdcard:ro,rslave
       - beszel_socket:/beszel_socket
       - beszel_agent_data:/var/lib/beszel-agent
     env_file:
@@ -347,6 +350,8 @@ services:
     environment:
       LISTEN: /beszel_socket/beszel.sock
       HUB_URL: https://beszel.${HOST_NAME:-pi.lan}
+      HOST_PROC: /host/proc
+      EXTRA_FILESYSTEMS: /host/sdcard
     healthcheck:
       test: ["CMD", "/agent", "health"]
       interval: 90s
