@@ -11,6 +11,11 @@ services:
     # Requires /dev/net/tun, SYS_MODULE capability, and real VPN auth.
     profiles: [ci-excluded]
 
+  headscale:
+    # Tries to fetch OIDC config from auth.<HOST_NAME> at startup; DNS for
+    # test.local domains does not resolve on CI runners.
+    profiles: [ci-excluded]
+
   headplane:
     profiles: [ci-excluded]
 
