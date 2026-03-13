@@ -604,6 +604,8 @@ services:
     restart: unless-stopped
     networks:
       - frontend
+    extra_hosts:
+      - "headscale.${HOST_NAME:-pi.lan}:172.30.11.1"
     expose:
       - 3000
     volumes:
@@ -1008,7 +1010,7 @@ services:
       - LLDAP_HTTP_URL=https://lldap.${HOST_NAME:-pi.lan}
       - LLDAP_DATABASE_URL=postgres://lldap:${PASSWORD}@postgres/lldap
       - LLDAP_VERBOSE=false
-      - LLDAP_SMTP_OPTIONS__ENABLE_PASSWORD_RESET=${SMTP_ENABLED:-false}
+      - LLDAP_SMTP_OPTIONS__ENABLE_PASSWORD_RESET=true
       - LLDAP_SMTP_OPTIONS__SERVER=${SMTP_HOST:-localhost}
       - LLDAP_SMTP_OPTIONS__PORT=${SMTP_PORT:-587}
       - LLDAP_SMTP_OPTIONS__SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-STARTTLS}

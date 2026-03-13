@@ -468,7 +468,6 @@ Optional per-service overrides (rarely needed):
 | `SMTP_AUTHTYPE` | Nextcloud | Authentication method | `LOGIN` |
 | `SMTP_ENCRYPTION` | LLDAP, Authelia | Encryption mode | `STARTTLS` |
 | `SMTP_SSL` | n8n | Enable SSL | `false` |
-| `SMTP_ENABLED` | LLDAP | Enable password-reset emails | `false` |
 | `MAIL_FROM_ADDRESS` | Nextcloud | Local part of sender address | `nextcloud` |
 | `MAIL_DOMAIN` | Nextcloud | Domain part of sender address | `${HOST_NAME}` |
 
@@ -482,7 +481,7 @@ These services read SMTP settings directly from environment variables at startup
 |---------|---------|-------|
 | **Authelia** | 2FA enrollment emails, password reset, identity verification | Uses `submission://` URI scheme; `disable_startup_check` is enabled so the stack starts even without valid SMTP |
 | **Nextcloud** | Sharing notifications, activity digests, password resets | Sender is `${MAIL_FROM_ADDRESS}@${MAIL_DOMAIN}` (e.g. `nextcloud@pi.example.com`) |
-| **LLDAP** | Self-service password reset emails | Disabled by default (`SMTP_ENABLED=false`); set to `true` in `.env` to enable |
+| **LLDAP** | Self-service password reset emails |  |
 | **n8n** | Workflow email nodes (Send Email action), error notifications | Standard SMTP envelope; uses `N8N_SMTP_*` env vars mapped from the shared variables |
 | **Ntfy** | Outbound email notifications for push topics | Sends via `${SMTP_HOST}:${SMTP_PORT}` as the sender relay |
 | **Beszel** | Host monitoring alerts and notifications | Auto-configured via PocketBase settings API by `scripts/beszel-agent-bootstrap.sh` |
