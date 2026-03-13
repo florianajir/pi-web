@@ -40,32 +40,34 @@ authentication_backend:
     password: '{{ secret "/config/secrets/ldap_password" }}'
 
 access_control:
-  default_policy: one_factor
+  default_policy: deny
   rules:
     - domain: 'auth.__HOST_NAME__'
       policy: bypass
 
     - domain:
-        - 'backrest.__HOST_NAME__'
-        - 'pihole.__HOST_NAME__'
-        - 'traefik.__HOST_NAME__'
         - 'uptime.__HOST_NAME__'
-      subject:
-        - 'group:admin'
-        - 'group:lldap_admin'
+        - 'homepage.__HOST_NAME__'
       policy: one_factor
 
     - domain: 'headscale.__HOST_NAME__'
       resources:
-        - '^/admin([/?].*)?$'
+        - '^/admin(/.*)?$'
       subject:
         - 'group:admin'
-        - 'group:lldap_admin'
       policy: two_factor
 
-    - domain: '*.__HOST_NAME__'
-      subject: 'group:users'
-      policy: one_factor
+    - domain:
+        - 'backrest.__HOST_NAME__'
+        - 'pihole.__HOST_NAME__'
+        - 'traefik.__HOST_NAME__'
+        - 'lldap.__HOST_NAME__'
+      subject:
+        - 'group:admin'
+      policy: two_factor
+
+    - domain: 'lldap.__HOST_NAME__'
+      policy: two_factor
 
 session:
   name: authelia_session
@@ -109,6 +111,12 @@ __OIDC_PRIVATE_KEY__
       authorize_code: '1m'
       id_token: '1h'
       refresh_token: '90d'
+    authorization_policies:
+      admin_only:
+        default_policy: 'deny'
+        rules:
+          - policy: 'two_factor'
+            subject: 'group:admin'
     enable_client_debug_messages: false
     cors:
       endpoints:
@@ -196,7 +204,7 @@ __OIDC_PRIVATE_KEY__
         client_name: Portainer
         client_secret: '{{ secret "/config/secrets/oidc_portainer_secret.txt" }}'
         public: false
-        authorization_policy: one_factor
+        authorization_policy: admin_only
         consent_mode: implicit
         redirect_uris:
           - 'https://portainer.__HOST_NAME__'
@@ -218,7 +226,7 @@ __OIDC_PRIVATE_KEY__
         client_name: Headplane
         client_secret: '{{ secret "/config/secrets/oidc_headplane_secret.txt" }}'
         public: false
-        authorization_policy: two_factor
+        authorization_policy: admin_only
         consent_mode: implicit
         redirect_uris:
           - 'https://headscale.__HOST_NAME__/admin/oidc/callback'

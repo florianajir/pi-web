@@ -121,9 +121,8 @@ stop:
 	@echo "✅ Stack stopped"
 
 restart:
-	@echo "🔄 Restart"
-	-sudo systemctl restart $(UNIT)
-	@echo "✅ Restarted"
+	$(MAKE) stop
+	$(MAKE) start
 
 update:
 	@echo "🔄 Update (git pull + restart)"

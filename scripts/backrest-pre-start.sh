@@ -10,19 +10,27 @@ ENV_FILE="${BACKREST_ENV_FILE:-./.env}"
 # and if required variables are not already exported by the current environment.
 if [ -f "${ENV_FILE}" ]; then
   if [ -z "${BACKREST_S3_URI:-}" ] || [ -z "${BACKREST_S3_REPO_PASSWORD:-}" ] || \
-     [ -z "${BACKREST_S3_ACCESS_KEY_ID:-}" ] || [ -z "${BACKREST_S3_SECRET_ACCESS_KEY:-}" ]; then
+     { [ -z "${S3_ACCESS_KEY_ID:-}" ] && [ -z "${BACKREST_S3_ACCESS_KEY_ID:-}" ]; } || \
+     { [ -z "${S3_SECRET_ACCESS_KEY:-}" ] && [ -z "${BACKREST_S3_SECRET_ACCESS_KEY:-}" ]; }; then
     set -a
     . "${ENV_FILE}"
     set +a
   fi
 fi
 
-# Defaults from .env.dist
+# Shared S3 credentials (fall back to legacy BACKREST_S3_* for backward compat)
+S3_ENDPOINT="${S3_ENDPOINT:-}"
+S3_BUCKET="${S3_BUCKET:-}"
+S3_ACCESS_KEY_ID="${S3_ACCESS_KEY_ID:-${BACKREST_S3_ACCESS_KEY_ID:-}}"
+S3_SECRET_ACCESS_KEY="${S3_SECRET_ACCESS_KEY:-${BACKREST_S3_SECRET_ACCESS_KEY:-}}"
+S3_REGION="${S3_REGION:-${BACKREST_S3_REGION:-fr-par}}"
+
+# Backrest-specific (derive URI from shared S3 vars if not set explicitly)
+if [ -z "${BACKREST_S3_URI:-}" ] && [ -n "${S3_ENDPOINT}" ] && [ -n "${S3_BUCKET}" ]; then
+  BACKREST_S3_URI="s3:${S3_ENDPOINT}/${S3_BUCKET}/restic"
+fi
 BACKREST_S3_URI="${BACKREST_S3_URI:-}"
 BACKREST_S3_REPO_PASSWORD="${BACKREST_S3_REPO_PASSWORD:-}"
-BACKREST_S3_ACCESS_KEY_ID="${BACKREST_S3_ACCESS_KEY_ID:-}"
-BACKREST_S3_SECRET_ACCESS_KEY="${BACKREST_S3_SECRET_ACCESS_KEY:-}"
-BACKREST_S3_REGION="${BACKREST_S3_REGION:-fr-par}"
 BACKREST_INSTANCE="${BACKREST_INSTANCE:-${HOST_NAME:-$(hostname 2>/dev/null || echo pi-web)}}"
 
 # Fix ownership of a path to match the project directory owner.
@@ -67,9 +75,9 @@ mkdir -p "${CONFIG_DIR}"
 
 # Check for required S3 credentials if we're going to initialize
 if [ -z "${BACKREST_S3_URI}" ] || [ -z "${BACKREST_S3_REPO_PASSWORD}" ] || \
-   [ -z "${BACKREST_S3_ACCESS_KEY_ID}" ] || [ -z "${BACKREST_S3_SECRET_ACCESS_KEY}" ]; then
+   [ -z "${S3_ACCESS_KEY_ID}" ] || [ -z "${S3_SECRET_ACCESS_KEY}" ]; then
   echo "[backrest-pre-start] ⚠️  S3 credentials incomplete; Backrest will start but S3 repo may not be available" >&2
-  echo "[backrest-pre-start] Set: BACKREST_S3_URI, BACKREST_S3_REPO_PASSWORD, BACKREST_S3_ACCESS_KEY_ID, BACKREST_S3_SECRET_ACCESS_KEY" >&2
+  echo "[backrest-pre-start] Set: BACKREST_S3_URI, BACKREST_S3_REPO_PASSWORD, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY" >&2
 fi
 
 # Render template with sed
@@ -80,9 +88,9 @@ sed \
   -e "s|__BACKREST_INSTANCE__|${BACKREST_INSTANCE}|g" \
   -e "s|__BACKREST_S3_URI__|${BACKREST_S3_URI}|g" \
   -e "s|__BACKREST_S3_REPO_PASSWORD__|${BACKREST_S3_REPO_PASSWORD}|g" \
-  -e "s|__BACKREST_S3_ACCESS_KEY_ID__|${BACKREST_S3_ACCESS_KEY_ID}|g" \
-  -e "s|__BACKREST_S3_SECRET_ACCESS_KEY__|${BACKREST_S3_SECRET_ACCESS_KEY}|g" \
-  -e "s|__BACKREST_S3_REGION__|${BACKREST_S3_REGION}|g" \
+  -e "s|__BACKREST_S3_ACCESS_KEY_ID__|${S3_ACCESS_KEY_ID}|g" \
+  -e "s|__BACKREST_S3_SECRET_ACCESS_KEY__|${S3_SECRET_ACCESS_KEY}|g" \
+  -e "s|__BACKREST_S3_REGION__|${S3_REGION}|g" \
   "${TEMPLATE_FILE}" > "${tmp_file}"
 
 # Validate JSON

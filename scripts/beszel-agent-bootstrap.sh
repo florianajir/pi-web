@@ -678,6 +678,139 @@ restart_agent_if_needed() {
     log "beszel-agent is up"
 }
 
+build_pocketbase_settings_payload() {
+    # Build a JSON payload for PATCH /api/settings with SMTP, S3, backups,
+    # and trustedProxy configuration.  Empty/unset values cause the
+    # corresponding block to be omitted so PocketBase keeps its current config.
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 1
+    fi
+
+    python3 -c '
+import json, sys, os
+
+def env(k):
+    return os.environ.get(k, "").strip()
+
+def truthy(v):
+    return v.lower() in ("1", "true", "yes", "on")
+
+payload = {}
+
+# ── SMTP ──────────────────────────────────────────────────────────────
+smtp_host = env("SMTP_HOST")
+if smtp_host:
+    smtp_port = env("SMTP_PORT") or "587"
+    smtp = {
+        "enabled": True,
+        "host": smtp_host,
+        "port": int(smtp_port),
+    }
+    smtp_user = env("SMTP_USERNAME")
+    smtp_pass = env("SMTP_PASSWORD")
+    if smtp_user:
+        smtp["username"] = smtp_user
+    if smtp_pass:
+        smtp["password"] = smtp_pass
+    # STARTTLS on port 587, implicit TLS on 465
+    smtp["tls"] = smtp_port == "465"
+    payload["smtp"] = smtp
+
+    # sender info in meta
+    email = env("EMAIL")
+    host_name = env("HOST_NAME") or "pi.lan"
+    if email:
+        payload["meta"] = {
+            "senderName": "Beszel",
+            "senderAddress": email,
+        }
+
+# ── S3 file storage ──────────────────────────────────────────────────
+s3_endpoint = env("S3_ENDPOINT")
+s3_bucket   = env("S3_BUCKET")
+if s3_endpoint and s3_bucket:
+    s3 = {
+        "enabled": True,
+        "endpoint": s3_endpoint,
+        "bucket": s3_bucket,
+        "region": env("S3_REGION"),
+        "accessKey": env("S3_ACCESS_KEY_ID"),
+        "secret": env("S3_SECRET_ACCESS_KEY"),
+        "forcePathStyle": truthy(env("BESZEL_S3_FORCE_PATH_STYLE") or "true"),
+    }
+    payload["s3"] = s3
+
+# ── Backups (PocketBase built-in) ────────────────────────────────────
+backup_cron = env("BESZEL_BACKUP_CRON")
+if backup_cron:
+    backups = {
+        "cron": backup_cron,
+        "cronMaxKeep": int(env("BESZEL_BACKUP_MAX_KEEP") or "7"),
+    }
+    # Use the same S3 config for backup storage if available
+    if s3_endpoint and s3_bucket:
+        backups["s3"] = {
+            "enabled": True,
+            "endpoint": s3_endpoint,
+            "bucket": s3_bucket,
+            "region": env("S3_REGION"),
+            "accessKey": env("S3_ACCESS_KEY_ID"),
+            "secret": env("S3_SECRET_ACCESS_KEY"),
+            "forcePathStyle": truthy(env("BESZEL_S3_FORCE_PATH_STYLE") or "true"),
+        }
+    payload["backups"] = backups
+
+# ── Trusted proxy (Traefik → Beszel) ────────────────────────────────
+payload["trustedProxy"] = {
+    "headers": ["X-Forwarded-For"],
+    "useLeftmostIP": True,
+}
+
+# ── Logs: persist client IP now that proxy header is trusted ────────
+payload["logs"] = {
+    "logIP": True,
+}
+
+if not payload:
+    sys.exit(1)
+
+print(json.dumps(payload, separators=(",", ":")))
+'
+}
+
+configure_pocketbase_settings() {
+    local auth_token payload current_settings
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        log "WARNING: python3 not found; skipping PocketBase settings bootstrap"
+        return 0
+    fi
+
+    auth_token=$(login_and_get_superuser_token) || {
+        log "WARNING: Could not authenticate as superuser; skipping PocketBase settings bootstrap"
+        return 1
+    }
+
+    # Export env vars so the python helper can read them
+    export SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD EMAIL HOST_NAME
+    export S3_ENDPOINT S3_BUCKET S3_REGION S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY BESZEL_S3_FORCE_PATH_STYLE
+    export BESZEL_BACKUP_CRON BESZEL_BACKUP_MAX_KEEP
+
+    payload=$(build_pocketbase_settings_payload) || {
+        log "No PocketBase settings to configure (SMTP/S3 vars not set)"
+        return 0
+    }
+
+    if ! beszel_api_patch_json "$auth_token" "/api/settings" "$payload" >/dev/null; then
+        log "WARNING: Failed to apply PocketBase settings (SMTP/S3/backups/proxy)"
+        return 1
+    fi
+
+    log "PocketBase settings configured (SMTP, S3, backups, trusted proxy)"
+    return 0
+}
+
 configure_ntfy_webhook_and_temperature_alerts() {
     local auth_token="$1"
     local beszel_password beszel_topic
@@ -772,6 +905,21 @@ main() {
         exit 1
     fi
 
+    # Load env vars used by configure_pocketbase_settings
+    HOST_NAME=$(get_env_value HOST_NAME)
+    SMTP_HOST=$(get_env_value SMTP_HOST)
+    SMTP_PORT=$(get_env_value SMTP_PORT)
+    SMTP_USERNAME=$(get_env_value SMTP_USERNAME)
+    SMTP_PASSWORD=$(get_env_value SMTP_PASSWORD)
+    S3_ENDPOINT=$(get_env_value S3_ENDPOINT)
+    S3_BUCKET=$(get_env_value S3_BUCKET)
+    S3_REGION=$(get_env_value S3_REGION)
+    S3_ACCESS_KEY_ID=$(get_env_value S3_ACCESS_KEY_ID)
+    S3_SECRET_ACCESS_KEY=$(get_env_value S3_SECRET_ACCESS_KEY)
+    BESZEL_S3_FORCE_PATH_STYLE=$(get_env_value BESZEL_S3_FORCE_PATH_STYLE)
+    BESZEL_BACKUP_CRON=$(get_env_value BESZEL_BACKUP_CRON)
+    BESZEL_BACKUP_MAX_KEEP=$(get_env_value BESZEL_BACKUP_MAX_KEEP)
+
     wait_for_beszel_container
     wait_for_beszel_health
 
@@ -807,8 +955,8 @@ main() {
 
         persist_agent_config "$UNIVERSAL_TOKEN" "$HUB_PUBLIC_KEY"
         restart_agent_if_needed
+        configure_pocketbase_settings || true
         configure_ntfy_webhook_and_temperature_alerts "$AUTH_TOKEN"
-
         log "Bootstrap completed successfully (superuser fallback in passwordless mode)"
         return 0
     fi
@@ -829,6 +977,7 @@ main() {
 
     persist_agent_config "$UNIVERSAL_TOKEN" "$HUB_PUBLIC_KEY"
     restart_agent_if_needed
+    configure_pocketbase_settings || true
     configure_ntfy_webhook_and_temperature_alerts "$AUTH_TOKEN"
 
     log "Bootstrap completed successfully"

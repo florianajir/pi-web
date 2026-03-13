@@ -106,6 +106,7 @@ flowchart LR
   Authelia --> Lldap
   Backrest --> Nextcloud
   Backrest --> Immich
+  Backrest --> Beszel
   Backrest --> Postgres
 
   LAN -->|DNS 53/tcp+udp| PiholeDNS
@@ -303,19 +304,19 @@ flowchart LR
 | Service | `lan` (IP allowlist) | `authelia` (forward-auth) | Own OIDC | Notes |
 |---------|:---:|:---:|:---:|-------|
 | Authelia portal | — | — | — | Public entry point for login |
-| Nextcloud | — | — | yes | Handles auth via OIDC plugin |
-| Immich | yes | — | yes | LAN-only + built-in OIDC |
-| Portainer | yes | — | yes | LAN-only + API-configured OIDC |
-| Beszel | yes | — | yes | LAN-only + PKCE OIDC |
-| n8n | yes | — | — | LAN-only, own auth |
-| Ntfy | yes | — | — | LAN-only, own auth |
-| Traefik dashboard | yes | yes | — | Admin: requires 2FA |
-| Pi-hole | yes | yes | — | Admin: requires 2FA |
-| Uptime Kuma | yes | yes | — | Admin: requires 2FA |
-| Backrest | yes | yes | — | Admin: requires 2FA |
-| Homepage | yes | yes | — | Admin: requires 2FA |
-| LLDAP | yes | — | — | LAN-only (avoids double auth) |
-| Headplane | yes | — | yes | LAN-only + two_factor OIDC |
+| Nextcloud | — | — | yes | LAN-only + OIDC |
+| Immich | yes | — | yes | LAN-only + OIDC |
+| Beszel | yes | — | yes | LAN-only + OIDC |
+| n8n | yes | — | — | LAN-only + own auth |
+| Ntfy | yes | — | — | LAN-only + own auth |
+| Homepage | yes | yes | — | LAN-only + user |
+| Uptime Kuma | yes | yes | — | LAN-only + user |
+| Traefik dashboard | yes | yes | — | LAN-only + admin + two_factor |
+| Pi-hole | yes | yes | — | LAN-only + admin + two_factor |
+| Backrest | yes | yes | — | LAN-only + admin + two_factor |
+| LLDAP | yes | yes | — | LAN-only + admin + two_factor + own auth |
+| Headplane | yes | — | yes | LAN-only + OIDC + admin + two_factor |
+| Portainer | yes | — | yes | LAN-only + OIDC + admin + two_factor |
 
 ### Access control policies
 
@@ -324,9 +325,10 @@ Authelia enforces group-based access rules defined per domain:
 | Domain pattern | Required group | Policy | Description |
 |----------------|---------------|--------|-------------|
 | `auth.*` | — | bypass | Login portal itself |
-| `backrest.*`, `pihole.*`, `traefik.*`, `uptime.*` | admin or lldap_admin | one_factor | Admin tools |
-| `headscale.*/admin` | admin or lldap_admin | **two_factor** | VPN administration |
-| `*.*` (catch-all) | users | one_factor | All other services |
+| `homepage.*`, `uptime.*` | users | one_factor | General SSO-protected services |
+| `backrest.*`, `pihole.*`, `traefik.*`, `lldap.*` | admin or lldap_admin | two_factor | Admin tools |
+| `lldap.*` | users | two_factor | LDAP directory (also requires valid session) |
+| `*.*` (catch-all) | users | deny | All other services |
 
 ### Network segmentation
 
@@ -393,6 +395,57 @@ OIDC client secrets are injected into services via Docker volume mounts (read-on
 
 ---
 
+## Beszel Monitoring
+
+Beszel provides lightweight server monitoring via a hub + agent architecture, built on PocketBase (embedded SQLite). The bootstrap script (`scripts/beszel-agent-bootstrap.sh`) fully auto-configures the hub on first start.
+
+### Architecture
+
+```mermaid
+flowchart LR
+    subgraph Pi["Raspberry Pi"]
+        Agent["beszel-agent\n(host network)"]
+        Hub["beszel hub\n(PocketBase)"]
+        Traefik["traefik"]
+    end
+
+    subgraph External["External Services"]
+        S3["S3 Storage\n(file storage + backups)"]
+        SMTP["SMTP Server"]
+        Ntfy["ntfy"]
+    end
+
+    Agent -->|metrics via\nUnix socket| Hub
+    Traefik -->|"HTTPS reverse proxy\n(X-Forwarded-For)"| Hub
+    Hub -->|"OIDC auth"| Authelia["authelia"]
+    Hub -->|file storage &\nSQLite backups| S3
+    Hub -->|alert emails| SMTP
+    Hub -->|webhook alerts| Ntfy
+```
+
+### Auto-configured settings
+
+The bootstrap script authenticates as PocketBase superuser and applies settings via `PATCH /api/settings`:
+
+| Setting | Source | Description |
+|---------|--------|-------------|
+| **SMTP** | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `EMAIL` | Transactional emails (alerts, password resets) |
+| **S3 file storage** | `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | PocketBase file uploads stored in S3 |
+| **S3 backups** | Same S3 credentials + `BESZEL_BACKUP_CRON`, `BESZEL_BACKUP_MAX_KEEP` | Built-in PocketBase SQLite backup to S3 |
+| **Trusted proxy** | Always set | `X-Forwarded-For` header trusted, `useLeftmostIP: true` — ensures real client IPs are logged |
+| **OIDC** | Authelia client secret from `authelia-config/secrets/oidc_beszel_secret.txt` | SSO via Authelia |
+| **Ntfy webhook** | `config/ntfy/ntfy.env` | Push notifications for monitoring alerts |
+| **Temperature alerts** | `BESZEL_TEMP_ALERT_VALUE` (default: 70°C), `BESZEL_TEMP_ALERT_MIN` (default: 5 min) | Auto-created for all monitored systems |
+
+### Backup strategy
+
+Beszel data is protected by two independent backup layers:
+
+1. **PocketBase built-in backup** — SQLite snapshots on `BESZEL_BACKUP_CRON` schedule, stored to S3 when configured (or local otherwise), with `BESZEL_BACKUP_MAX_KEEP` retention.
+2. **Backrest (restic)** — The `beszel_data` Docker volume is mounted read-only into the Backrest container and included in the nightly S3 restic backup alongside Nextcloud, Immich, and other service data.
+
+---
+
 ## Email & SMTP Configuration
 
 The stack supports outbound email for notifications, password resets, and workflow automation. All services share a single set of SMTP credentials defined in `.env`.
@@ -432,6 +485,7 @@ These services read SMTP settings directly from environment variables at startup
 | **LLDAP** | Self-service password reset emails | Disabled by default (`SMTP_ENABLED=false`); set to `true` in `.env` to enable |
 | **n8n** | Workflow email nodes (Send Email action), error notifications | Standard SMTP envelope; uses `N8N_SMTP_*` env vars mapped from the shared variables |
 | **Ntfy** | Outbound email notifications for push topics | Sends via `${SMTP_HOST}:${SMTP_PORT}` as the sender relay |
+| **Beszel** | Host monitoring alerts and notifications | Auto-configured via PocketBase settings API by `scripts/beszel-agent-bootstrap.sh` |
 
 #### Manual setup via UI
 
@@ -440,7 +494,6 @@ These services support email notifications but must be configured through their 
 | Service | Where to configure | Notes |
 |---------|-------------------|-------|
 | **Uptime Kuma** | *Settings → Notifications → Add* | Add an SMTP notification type with your server details |
-| **Beszel** | *Settings → Notifications* | Configure email alerts for host monitoring events |
 | **Immich** | Not currently supported | Immich does not have built-in email notifications |
 | **Portainer** | Not currently supported | Portainer does not expose SMTP settings for notifications |
 
@@ -550,8 +603,22 @@ Your device will now be connected to your private VPN network managed by Headsca
 - `CLOUDFLARE_DNS_API_TOKEN`
 - `CLOUDFLARE_ZONE_ID`
 
-### Backup tuning (optional)
-- `NEXTCLOUD_SQL_BACKUP_KEEP` (default: `2`)
+### S3 Storage (shared credentials)
+- `S3_ENDPOINT` — S3-compatible endpoint URL (e.g. `https://s3.fr-par.scw.cloud`)
+- `S3_BUCKET` — S3 bucket name
+- `S3_REGION` — S3 region (e.g. `fr-par`)
+- `S3_ACCESS_KEY_ID` — S3 access key
+- `S3_SECRET_ACCESS_KEY` — S3 secret key
+
+### Backrest (restic backup)
+- `BACKREST_S3_URI` *(optional)* — Restic repository URI; auto-derived as `s3:${S3_ENDPOINT}/${S3_BUCKET}/restic` if not set
+- `BACKREST_S3_REPO_PASSWORD` — Restic repository encryption password
+- `NEXTCLOUD_SQL_BACKUP_KEEP` (default: `7`)
+
+### Beszel (PocketBase)
+- `BESZEL_S3_FORCE_PATH_STYLE` (default: `true`) — Force path-style S3 addressing for PocketBase
+- `BESZEL_BACKUP_CRON` (default: `0 3 * * *`) — PocketBase built-in backup schedule
+- `BESZEL_BACKUP_MAX_KEEP` (default: `7`) — Max PocketBase backup snapshots to retain
 
 ### Authentication (auto-configured)
 - `USER` and `PASSWORD` from the personal section are used for lldap admin and Authelia LDAP bind.
