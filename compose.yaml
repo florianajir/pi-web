@@ -948,7 +948,7 @@ services:
     labels:
       - "com.example.description=ntfy push notifications"
       - "com.example.service=ntfy"
-      - "homepage.group=Alerts"
+      - "homepage.group=Notification"
       - "homepage.name=ntfy"
       - "homepage.icon=ntfy.png"
       - "homepage.href=https://ntfy.${HOST_NAME:-pi.lan}"
