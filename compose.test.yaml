@@ -30,6 +30,31 @@ services:
     # Installs apk packages on every start and depends on the full healthy stack.
     profiles: [ci-excluded]
 
+  # --- traefik: disable ACME certificate resolver in CI ---
+  # In CI there are no valid Cloudflare credentials so the ACME DNS-01 challenge
+  # would fail continuously.  Remove the certresolver so Traefik uses its built-in
+  # self-signed certificate for TLS routes instead of trying to obtain a real cert.
+  # All other Traefik settings are identical to production.
+  traefik:
+    command: !override
+      - "--log.level=INFO"
+      - "--api.dashboard=true"
+      - "--ping=true"
+      # Entry Points
+      - "--entrypoints.web.address=:80/tcp"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443/tcp"
+      - "--entrypoints.websecure.http.middlewares=compress@docker,security-headers@docker"
+      - "--entrypoints.websecure.http3=true"
+      - "--entrypoints.websecure.forwardedHeaders.trustedIPs=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}"
+      # Providers
+      - "--providers.docker=true"
+      - "--providers.docker.watch=true"
+      - "--providers.docker.network=frontend"
+      - "--providers.docker.exposedbydefault=false"
+      # No ACME: Traefik falls back to its built-in self-signed certificate.
+
   # --- nextcloud: replace host bind mounts with named volumes for CI ---
   # In CI the host directories (./data/nextcloud-config, ./data/nextcloud) do not
   # pre-exist, so Docker creates them as root:root.  Nextcloud runs as www-data

@@ -161,15 +161,25 @@ main() {
         log "Generated oidc_headscale_secret"
     fi
 
-    # Generate lldap JWT secret (stored in lldap data dir for lldap service)
+    # Generate lldap JWT secret.
+    # Store outside the /data bind-mount so the lldap container's entrypoint
+    # (which chowns /data to its internal UID) cannot change the file's
+    # ownership and make it unreadable by the host docker-compose process.
     LLDAP_DATA_DIR="$DATA_LOCATION/lldap"
     mkdir -p "$LLDAP_DATA_DIR"
-    LLDAP_ENV_FILE="$LLDAP_DATA_DIR/lldap.env"
+    LLDAP_ENV_FILE="$DATA_LOCATION/lldap.env"
     if [ ! -f "$LLDAP_ENV_FILE" ]; then
         LLDAP_JWT_SECRET=$(generate_secret)
         printf 'LLDAP_JWT_SECRET=%s\n' "$LLDAP_JWT_SECRET" > "$LLDAP_ENV_FILE"
-        safe_chmod 600 "$LLDAP_ENV_FILE"
+        safe_chmod 640 "$LLDAP_ENV_FILE"
         log "Generated lldap JWT secret at $LLDAP_ENV_FILE"
+    fi
+    # Migrate legacy path (inside the bind-mount) to the new location.
+    LLDAP_ENV_FILE_LEGACY="$LLDAP_DATA_DIR/lldap.env"
+    if [ -f "$LLDAP_ENV_FILE_LEGACY" ] && [ ! -f "$LLDAP_ENV_FILE" ]; then
+        mv "$LLDAP_ENV_FILE_LEGACY" "$LLDAP_ENV_FILE"
+        safe_chmod 640 "$LLDAP_ENV_FILE"
+        log "Migrated lldap.env from $LLDAP_ENV_FILE_LEGACY to $LLDAP_ENV_FILE"
     fi
 
     # Render configuration.yml from template
@@ -227,6 +237,7 @@ main() {
     _fix_ownership "$SECRETS_DIR"
     _fix_ownership "$AUTHELIA_DATA_DIR"
     _fix_ownership "$LLDAP_DATA_DIR"
+    _fix_ownership "$LLDAP_ENV_FILE"
 
     log "Authelia pre-start complete"
 }
