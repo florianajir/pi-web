@@ -614,6 +614,8 @@ services:
       - ./config/headplane/headscale_api_key:/run/secrets/headplane_headscale_api_key:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - headplane_data:/var/lib/headplane
+      - ./config/headplane/wasm/wasm_exec.js:/app/build/client/wasm_exec.js:ro
+      - ./config/headplane/wasm/hp_ssh.wasm:/app/build/client/hp_ssh.wasm:ro
     environment:
       - HEADPLANE_LOAD_ENV_OVERRIDES=true
       - HEADPLANE_HEADSCALE__URL=https://headscale.${HOST_NAME:-pi.lan}
@@ -643,6 +645,14 @@ services:
       - "traefik.http.routers.headplane.tls=true"
       - "traefik.http.routers.headplane.tls.certresolver=cloudflare"
       - "traefik.http.services.headplane.loadbalancer.server.port=3000"
+      - "traefik.http.routers.headplane-wasm.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && (Path(`/wasm_exec.js`) || Path(`/hp_ssh.wasm`))"
+      - "traefik.http.routers.headplane-wasm.entrypoints=websecure"
+      - "traefik.http.routers.headplane-wasm.tls=true"
+      - "traefik.http.routers.headplane-wasm.tls.certresolver=cloudflare"
+      - "traefik.http.routers.headplane-wasm.service=headplane"
+      - "traefik.http.routers.headplane-wasm.middlewares=wasm-path@docker"
+      - "traefik.http.middlewares.wasm-path.replacepathregex.regex=/(wasm_exec.js|hp_ssh.wasm)"
+      - "traefik.http.middlewares.wasm-path.replacepathregex.replacement=/admin/$$1"
     healthcheck:
       test:
         [

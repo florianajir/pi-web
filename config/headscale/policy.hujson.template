@@ -19,9 +19,9 @@
   "ssh": [
     {
       "action": "accept",
-      "src": ["pi@ajir.dev"],
-      "dst": ["tag:router"],
-      "users": ["root"]
+      "src": ["autogroup:member"],
+      "dst": ["autogroup:self"],
+      "users": ["autogroup:nonroot", "root"]
     }
   ]
 }
