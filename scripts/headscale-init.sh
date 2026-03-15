@@ -4,33 +4,15 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="${PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}" 
-ENV_FILE="$PROJECT_DIR/.env"
+. "$(dirname "$0")/lib.sh"
+
 MAX_RETRIES=60
 RETRY_INTERVAL=2
 HEADSCALE_BIN="/ko-app/headscale"
 HEADPLANE_OIDC_KEY_UPDATED=0
 
-log() {
-    echo "[headscale-init] $(date '+%H:%M:%S') $*" >&2
-}
-
 check_headscale_ready() {
     docker exec pi-headscale "$HEADSCALE_BIN" users list >/dev/null 2>&1
-}
-
-wait_for_headscale_container() {
-    log "Waiting for Headscale container to appear..."
-    for i in $(seq 1 $MAX_RETRIES); do
-        if docker ps --format '{{.Names}}' | grep -q '^pi-headscale$'; then
-            log "Headscale container is running"
-            return 0
-        fi
-        sleep $RETRY_INTERVAL
-    done
-    log "ERROR: Headscale container did not start in time"
-    return 1
 }
 
 wait_for_headscale() {
@@ -46,26 +28,12 @@ wait_for_headscale() {
     return 1
 }
 
-wait_for_tailscale_container() {
-    log "Waiting for Tailscale container to appear..."
-    for i in $(seq 1 $MAX_RETRIES); do
-        if docker ps --format '{{.Names}}' | grep -q '^pi-tailscale$'; then
-            log "Tailscale container is running"
-            return 0
-        fi
-        sleep $RETRY_INTERVAL
-    done
-    log "ERROR: Tailscale container did not start in time"
-    return 1
-}
-
 user_exists() {
     docker exec pi-headscale "$HEADSCALE_BIN" users list --output json 2>/dev/null | \
         grep -q "\"name\": \"${HEADSCALE_USER}\""
 }
 
 get_user_id() {
-    # Extract the id field from JSON for the configured user
     docker exec pi-headscale "$HEADSCALE_BIN" users list --output json 2>/dev/null | \
         grep "\"name\": \"${HEADSCALE_USER}\"" -B 1 | grep '"id"' | sed 's/[^0-9]*\([0-9]\+\).*/\1/' | head -1
 }
@@ -82,25 +50,17 @@ create_user() {
 
 create_preauthkey() {
     local user_id="$1"
-
-    # One-time, short-lived key for bootstrap only; long-term identity lives in tailscale_state.
     log "Creating one-time preauthkey (expires in 30m) with tag:router..."
     docker exec pi-headscale "$HEADSCALE_BIN" preauthkeys create --user "$user_id" --expiration 30m --tags tag:router --output json 2>/dev/null | \
         grep -o '"key": *"[^"]*"' | sed 's/"key": *"\([^"]*\)"/\1/'
 }
 
 create_headscale_api_key() {
-    # One-year key used by Headplane in OIDC mode to call Headscale APIs.
     raw_output=$(docker exec pi-headscale "$HEADSCALE_BIN" apikeys create --expiration 8760h --output json 2>/dev/null | tr -d '\r\n')
-
-    # Headscale 0.28 returns a plain quoted string in JSON mode.
     api_key=$(printf '%s' "$raw_output" | sed -n -E 's/^"([^"]+)"$/\1/p')
-
-    # Fallback for object-shaped JSON outputs.
     if [ -z "$api_key" ]; then
         api_key=$(printf '%s' "$raw_output" | grep -oE '"(api_key|apiKey|key)"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/^"[^"]+"[[:space:]]*:[[:space:]]*"([^"]+)"$/\1/')
     fi
-
     printf '%s' "$api_key"
 }
 
@@ -146,13 +106,9 @@ init_headplane_config() {
     fi
 
     log "Initializing Headplane config from template..."
-
-    # Generate 32-char cookie secret (16 bytes = 32 hex chars)
     COOKIE_SECRET=$(openssl rand -hex 16)
-
     HEADSCALE_URL="https://headscale.${HOST_NAME}"
 
-    # Create a reusable, long-lived preauthkey for the Headplane agent
     log "Creating preauthkey for Headplane agent (reusable, expires in 1 year)..."
     HEADPLANE_AUTHKEY=$(docker exec pi-headscale "$HEADSCALE_BIN" preauthkeys create \
         --user "$user_id" \
@@ -173,7 +129,6 @@ init_headplane_config() {
         "$template" > "$config"
 
     log "Headplane config written to $config"
-
     log "Restarting Headplane container to apply new config..."
     docker restart pi-headplane
     log "Headplane restarted"
@@ -183,14 +138,12 @@ connect_tailscale_if_needed() {
     local user_id="$1"
     local key=""
 
-    # Check if tailscale is already connected
     if docker exec pi-tailscale tailscale status --peers=false >/dev/null 2>&1; then
         log "Tailscale already connected"
         return 0
     fi
 
     key=$(create_preauthkey "$user_id")
-
     if [ -z "$key" ]; then
         log "ERROR: Failed to create one-time preauthkey"
         return 1
@@ -217,48 +170,35 @@ connect_tailscale_if_needed() {
 
 main() {
     log "=== Headscale Auto-Init ==="
-    
-    # Load HOST_NAME/EMAIL from .env
-    if [ -f "$ENV_FILE" ]; then
-        HOST_NAME=$(grep "^HOST_NAME=" "$ENV_FILE" | cut -d'=' -f2 | tr -d '\r' | tail -n1)
-        EMAIL=$(grep "^EMAIL=" "$ENV_FILE" | cut -d'=' -f2 | tr -d '\r' | tail -n1)
-    fi
+
+    HOST_NAME="$(get_env_value HOST_NAME)"
+    EMAIL="$(get_env_value EMAIL)"
     HOST_NAME="${HOST_NAME:-pi.lan}"
     HEADSCALE_USER="${EMAIL}"
     if [ -z "$HEADSCALE_USER" ]; then
-        log "ERROR: HEADSCALE_USER (EMAIL) is not set."
-        exit 1
+        die "HEADSCALE_USER (EMAIL) is not set."
     fi
 
-    # Wait for Headscale container to start (first boot can be slow)
-    if ! wait_for_headscale_container; then
-        log "Headscale container did not become ready"
-        exit 1
+    if ! wait_for_container "pi-headscale" "$MAX_RETRIES" "$RETRY_INTERVAL"; then
+        die "Headscale container did not become ready"
     fi
-    
-    # Wait for Headscale to be healthy
+
     if ! wait_for_headscale; then
-        log "Failed to connect to Headscale"
-        exit 1
+        die "Failed to connect to Headscale"
     fi
-    
-    # Create user if needed
+
     create_user
-    
-    # Get user ID
+
     USER_ID=$(get_user_id)
     if [ -z "$USER_ID" ]; then
-        log "ERROR: Failed to get user ID"
-        exit 1
+        die "Failed to get user ID"
     fi
     log "Using user ID: $USER_ID"
 
-    # Ensure Headplane OIDC Headscale API key exists for SSO mode.
     if ! ensure_headplane_oidc_api_key; then
         log "WARNING: Headplane OIDC key initialization failed; API-token login may still be required"
     fi
 
-    # Initialize Headplane config if not already done
     init_headplane_config "$USER_ID"
 
     if [ "$HEADPLANE_OIDC_KEY_UPDATED" -eq 1 ]; then
@@ -267,13 +207,10 @@ main() {
         log "Headplane restarted"
     fi
 
-    # Wait for Tailscale container to start (first boot can be slow)
-    if ! wait_for_tailscale_container; then
-        log "Tailscale container did not become ready"
-        exit 1
+    if ! wait_for_container "pi-tailscale" "$MAX_RETRIES" "$RETRY_INTERVAL"; then
+        die "Tailscale container did not become ready"
     fi
 
-    # Bootstrap Tailscale if not connected (key is never persisted)
     connect_tailscale_if_needed "$USER_ID"
 }
 

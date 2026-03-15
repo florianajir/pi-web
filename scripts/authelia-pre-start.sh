@@ -4,44 +4,32 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="${PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}"
-ENV_FILE="$PROJECT_DIR/.env"
+. "$(dirname "$0")/lib.sh"
+
 CONFIG_TEMPLATE="$PROJECT_DIR/config/authelia/configuration.yml.template"
 IMMICH_OAUTH_TEMPLATE="$PROJECT_DIR/config/immich/oauth-config.yaml.template"
 
-log() {
-    echo "[authelia-pre-start] $(date '+%H:%M:%S') $*" >&2
-}
+# Generate a plaintext secret file and its PBKDF2 hash companion.
+# Usage: generate_oidc_secret <name>  (e.g. "oidc_nextcloud_secret")
+# Creates: <name>.txt  (plaintext, for OIDC clients)
+#          <name>_hash (PBKDF2, for Authelia config)
+generate_oidc_secret() {
+    local name="$1"
+    local txt_file="$SECRETS_DIR/${name}.txt"
+    local hash_file="$SECRETS_DIR/${name}_hash"
 
-die() {
-    log "ERROR: $*"
-    exit 1
-}
-
-safe_chmod() {
-    local mode="$1"
-    local path="$2"
-    if ! chmod "$mode" "$path" 2>/dev/null; then
-        log "WARNING: could not chmod $mode $path (insufficient permissions?)"
+    if [ ! -f "$txt_file" ]; then
+        generate_secret > "$txt_file"
+        safe_chmod 600 "$txt_file"
+        log "Generated $name"
     fi
-}
 
-# Fix ownership of a path to match the project directory owner so non-root
-# users can still read the generated files after a root-run systemd start.
-_fix_ownership() {
-    _owner=$(stat -c '%u:%g' "$PROJECT_DIR" 2>/dev/null || true)
-    if [ -n "$_owner" ] && [ "$_owner" != "0:0" ]; then
-        chown -R "$_owner" "$1" 2>/dev/null || true
-    fi
-}
-
-generate_secret() {
-    if command -v openssl >/dev/null 2>&1; then
-        openssl rand -hex 32
-    else
-        log "WARNING: openssl not found; falling back to /dev/urandom for secret generation"
-        head -c 32 /dev/urandom | od -A n -t x1 | tr -d ' \n'
+    if [ ! -f "$hash_file" ]; then
+        local plaintext
+        plaintext="$(cat "$txt_file")"
+        hash_pbkdf2 "$plaintext" > "$hash_file"
+        safe_chmod 600 "$hash_file"
+        log "Generated ${name}_hash"
     fi
 }
 
@@ -70,11 +58,9 @@ ensure_config_target_is_file() {
 
 main() {
     # Load .env if variables are not already set
-    if [ -f "$ENV_FILE" ]; then
-        HOST_NAME="${HOST_NAME:-$(grep '^HOST_NAME=' "$ENV_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)}"
-        DATA_LOCATION="${DATA_LOCATION:-$(grep '^DATA_LOCATION=' "$ENV_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)}"
-        PASSWORD="${PASSWORD:-$(grep '^PASSWORD=' "$ENV_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)}"
-    fi
+    HOST_NAME="${HOST_NAME:-$(get_env_value HOST_NAME)}"
+    DATA_LOCATION="${DATA_LOCATION:-$(get_env_value DATA_LOCATION)}"
+    PASSWORD="${PASSWORD:-$(get_env_value PASSWORD)}"
 
     HOST_NAME="${HOST_NAME:-pi.lan}"
     DATA_LOCATION="${DATA_LOCATION:-./data}"
@@ -124,42 +110,10 @@ main() {
         safe_chmod 600 "$SECRETS_DIR/oidc_private_key.pem"
     fi
 
-    # Generate OIDC client secrets
-    if [ ! -f "$SECRETS_DIR/oidc_nextcloud_secret.txt" ]; then
-        generate_secret > "$SECRETS_DIR/oidc_nextcloud_secret.txt"
-        safe_chmod 600 "$SECRETS_DIR/oidc_nextcloud_secret.txt"
-        log "Generated oidc_nextcloud_secret"
-    fi
-
-    if [ ! -f "$SECRETS_DIR/oidc_immich_secret.txt" ]; then
-        generate_secret > "$SECRETS_DIR/oidc_immich_secret.txt"
-        safe_chmod 600 "$SECRETS_DIR/oidc_immich_secret.txt"
-        log "Generated oidc_immich_secret"
-    fi
-
-    if [ ! -f "$SECRETS_DIR/oidc_beszel_secret.txt" ]; then
-        generate_secret > "$SECRETS_DIR/oidc_beszel_secret.txt"
-        safe_chmod 600 "$SECRETS_DIR/oidc_beszel_secret.txt"
-        log "Generated oidc_beszel_secret"
-    fi
-
-    if [ ! -f "$SECRETS_DIR/oidc_portainer_secret.txt" ]; then
-        generate_secret > "$SECRETS_DIR/oidc_portainer_secret.txt"
-        safe_chmod 600 "$SECRETS_DIR/oidc_portainer_secret.txt"
-        log "Generated oidc_portainer_secret"
-    fi
-
-    if [ ! -f "$SECRETS_DIR/oidc_headplane_secret.txt" ]; then
-        generate_secret > "$SECRETS_DIR/oidc_headplane_secret.txt"
-        safe_chmod 600 "$SECRETS_DIR/oidc_headplane_secret.txt"
-        log "Generated oidc_headplane_secret"
-    fi
-
-    if [ ! -f "$SECRETS_DIR/oidc_headscale_secret.txt" ]; then
-        generate_secret > "$SECRETS_DIR/oidc_headscale_secret.txt"
-        safe_chmod 600 "$SECRETS_DIR/oidc_headscale_secret.txt"
-        log "Generated oidc_headscale_secret"
-    fi
+    # Generate OIDC client secrets (plaintext + PBKDF2 hash)
+    for client in nextcloud immich beszel portainer headplane headscale; do
+        generate_oidc_secret "oidc_${client}_secret"
+    done
 
     # Generate lldap JWT secret (stored in lldap data dir for lldap service)
     LLDAP_DATA_DIR="$DATA_LOCATION/lldap"
@@ -170,6 +124,13 @@ main() {
         printf 'LLDAP_JWT_SECRET=%s\n' "$LLDAP_JWT_SECRET" > "$LLDAP_ENV_FILE"
         safe_chmod 600 "$LLDAP_ENV_FILE"
         log "Generated lldap JWT secret at $LLDAP_ENV_FILE"
+    fi
+
+    # Ensure lldap config silences key_seed/key_file warning
+    LLDAP_CONFIG="$LLDAP_DATA_DIR/lldap_config.toml"
+    if [ -f "$LLDAP_CONFIG" ] && ! grep -q '^key_file' "$LLDAP_CONFIG"; then
+        sed -i '/^key_seed/i key_file = ""' "$LLDAP_CONFIG"
+        log "Added key_file override to lldap_config.toml"
     fi
 
     # Render configuration.yml from template
@@ -224,9 +185,9 @@ main() {
         log "Rendered immich-oauth-config.yaml to $IMMICH_OAUTH_CONFIG_FILE"
     fi
 
-    _fix_ownership "$SECRETS_DIR"
-    _fix_ownership "$AUTHELIA_DATA_DIR"
-    _fix_ownership "$LLDAP_DATA_DIR"
+    fix_ownership "$SECRETS_DIR"
+    fix_ownership "$AUTHELIA_DATA_DIR"
+    fix_ownership "$LLDAP_DATA_DIR"
 
     log "Authelia pre-start complete"
 }

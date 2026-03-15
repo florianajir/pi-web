@@ -1,17 +1,12 @@
 #!/bin/sh
 set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="${PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}" 
-ENV_FILE="${PROJECT_DIR}/.env"
+. "$(dirname "$0")/lib.sh"
+
 OUTPUT_FILE="${PROJECT_DIR}/config/ntfy/ntfy.env"
 OUTPUT_DIR="$(dirname "$OUTPUT_FILE")"
 NTFY_IMAGE="${NTFY_IMAGE:-binwiederhier/ntfy:v2.17.0}"
 NTFY_AUTO_TOPIC="pi"
-
-log() {
-    echo "[ntfy-pre-start] $(date '+%H:%M:%S') $*" >&2
-}
 
 hash_password() {
     _password="$1"
@@ -38,12 +33,11 @@ escape_compose_env_value() {
 
 main() {
     if [ ! -f "$ENV_FILE" ]; then
-        log "ERROR: .env not found at $ENV_FILE"
-        exit 1
+        die ".env not found at $ENV_FILE"
     fi
 
-    USER_VALUE=$(grep '^USER=' "$ENV_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
-    PASSWORD_VALUE=$(grep '^PASSWORD=' "$ENV_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
+    USER_VALUE=$(get_env_value USER)
+    PASSWORD_VALUE=$(get_env_value PASSWORD)
     NTFY_BACKREST_PASSWORD_VALUE=""
     NTFY_BESZEL_PASSWORD_VALUE=""
     NTFY_UPTIME_KUMA_PASSWORD_VALUE=""
@@ -51,25 +45,23 @@ main() {
     UPTIME_KUMA_ADMIN_PASSWORD_VALUE=""
 
     if [ -f "$OUTPUT_FILE" ]; then
-        NTFY_BACKREST_PASSWORD_VALUE=$(grep '^NTFY_BACKREST_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
+        NTFY_BACKREST_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_BACKREST_PASSWORD)
         if [ -z "$NTFY_BACKREST_PASSWORD_VALUE" ]; then
-            NTFY_BACKREST_PASSWORD_VALUE=$(grep '^NTFY_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
+            NTFY_BACKREST_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_PASSWORD)
         fi
 
-        NTFY_BESZEL_PASSWORD_VALUE=$(grep '^NTFY_BESZEL_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
-        NTFY_UPTIME_KUMA_PASSWORD_VALUE=$(grep '^NTFY_UPTIME_KUMA_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
-        NTFY_UPTIME_KUMA_TOKEN_VALUE=$(grep '^NTFY_UPTIME_KUMA_TOKEN=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
-        UPTIME_KUMA_ADMIN_PASSWORD_VALUE=$(grep '^UPTIME_KUMA_ADMIN_PASSWORD=' "$OUTPUT_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\r' || true)
+        NTFY_BESZEL_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_BESZEL_PASSWORD)
+        NTFY_UPTIME_KUMA_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_UPTIME_KUMA_PASSWORD)
+        NTFY_UPTIME_KUMA_TOKEN_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_UPTIME_KUMA_TOKEN)
+        UPTIME_KUMA_ADMIN_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" UPTIME_KUMA_ADMIN_PASSWORD)
     fi
 
     if [ -z "$USER_VALUE" ]; then
-        log "ERROR: USER is not set in .env"
-        exit 1
+        die "USER is not set in .env"
     fi
 
     if [ -z "$PASSWORD_VALUE" ]; then
-        log "ERROR: PASSWORD is not set in .env"
-        exit 1
+        die "PASSWORD is not set in .env"
     fi
 
     if [ -z "$NTFY_BACKREST_PASSWORD_VALUE" ]; then

@@ -4,12 +4,10 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="${PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}"
-ENV_FILE="$PROJECT_DIR/.env"
+. "$(dirname "$0")/lib.sh"
+
 MAX_RETRIES=120
 RETRY_INTERVAL=2
-CURL_IMAGE="curlimages/curl:8.12.1"
 PORTAINER_CONTAINER="${PORTAINER_CONTAINER:-pi-portainer}"
 PORTAINER_URL_DOCKER="${PORTAINER_URL_DOCKER:-http://pi-portainer:9000}"
 PORTAINER_OIDC_DEFAULT_TEAM_NAME="oidc-users"
@@ -19,56 +17,6 @@ PORTAINER_OIDC_ADMIN_GROUPS="admin lldap_admin"
 LLDAP_CONTAINER="${LLDAP_CONTAINER:-pi-lldap}"
 LLDAP_BASE_DN="dc=home,dc=ldap"
 LLDAP_ADMIN_DN="cn=admin,ou=people,dc=home,dc=ldap"
-
-log() {
-    echo "[portainer-oidc-bootstrap] $(date '+%H:%M:%S') $*" >&2
-}
-
-read_env_value_from_file() {
-    local file="$1"
-    local key="$2"
-
-    if [ ! -f "$file" ]; then
-        return 0
-    fi
-
-    grep "^$key=" "$file" 2>/dev/null | tail -n1 | cut -d'=' -f2-
-}
-
-get_env_value() {
-    local key="$1"
-    local value=""
-
-    value="$(read_env_value_from_file "$ENV_FILE" "$key")"
-    if [ -n "$value" ]; then
-        printf '%s' "$value"
-        return 0
-    fi
-
-    value="$(eval "printf '%s' \"\${$key}\"")"
-    if [ -n "$value" ]; then
-        printf '%s' "$value"
-    fi
-}
-
-is_truthy() {
-    case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
-        1|true|yes|on) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-resolve_data_location_path() {
-    local data_location
-
-    data_location="$(get_env_value DATA_LOCATION)"
-    [ -n "$data_location" ] || data_location="./data"
-
-    case "$data_location" in
-        /*) printf '%s' "$data_location" ;;
-        *) printf '%s/%s' "$PROJECT_DIR" "$data_location" ;;
-    esac
-}
 
 wait_for_authelia_health() {
     local status
@@ -150,24 +98,6 @@ ensure_authelia_portainer_materials() {
     return 0
 }
 
-docker_curl() {
-    docker run --rm --network frontend "$CURL_IMAGE" -fsS "$@"
-}
-
-wait_for_portainer_container() {
-    log "Waiting for Portainer container to appear..."
-    for i in $(seq 1 $MAX_RETRIES); do
-        if docker ps --format '{{.Names}}' | grep -q "^${PORTAINER_CONTAINER}$"; then
-            log "Portainer container is running"
-            return 0
-        fi
-        sleep "$RETRY_INTERVAL"
-    done
-
-    log "ERROR: Portainer container did not start in time"
-    return 1
-}
-
 wait_for_portainer_http() {
     log "Waiting for Portainer HTTP API..."
     for i in $(seq 1 $MAX_RETRIES); do
@@ -179,33 +109,6 @@ wait_for_portainer_http() {
     done
 
     log "ERROR: Portainer HTTP endpoint did not become reachable"
-    return 1
-}
-
-get_portainer_oidc_client_secret() {
-    local explicit_secret data_root secret_file secret_value
-
-    explicit_secret="$(get_env_value PORTAINER_OIDC_CLIENT_SECRET)"
-    if [ -n "$explicit_secret" ]; then
-        printf '%s' "$explicit_secret"
-        return 0
-    fi
-
-    data_root="$(resolve_data_location_path)"
-    secret_file="$data_root/authelia-config/secrets/oidc_portainer_secret.txt"
-
-    if [ -r "$secret_file" ]; then
-        tr -d '\r\n' < "$secret_file"
-        return 0
-    fi
-
-    # Fallback for permission mismatch between systemd-generated files and current user.
-    secret_value="$(cd "$PROJECT_DIR" && docker compose exec -T authelia sh -ec 'cat /config/secrets/oidc_portainer_secret.txt' 2>/dev/null | tr -d '\r\n')"
-    if [ -n "$secret_value" ]; then
-        printf '%s' "$secret_value"
-        return 0
-    fi
-
     return 1
 }
 
@@ -500,7 +403,6 @@ oidc_defaults() {
     local auth_base="https://auth.${host}"
     local portainer_base="https://portainer.${host}"
 
-    # Export as shell variables for caller
     OIDC_CLIENT_ID_VAL="$(get_env_value PORTAINER_OIDC_CLIENT_ID)"
     OIDC_CLIENT_ID_VAL="${OIDC_CLIENT_ID_VAL:-portainer}"
     OIDC_AUTH_URI="$(get_env_value PORTAINER_OIDC_AUTHORIZATION_URI)"
@@ -519,7 +421,6 @@ oidc_defaults() {
     local raw_scopes
     raw_scopes="$(get_env_value PORTAINER_OIDC_SCOPES)"
     raw_scopes="${raw_scopes:-openid profile email groups}"
-    # Normalize: replace commas with spaces, collapse whitespace
     OIDC_SCOPES="$(printf '%s' "$raw_scopes" | tr ',' ' ' | tr -s ' ')"
 }
 
@@ -613,8 +514,7 @@ main() {
     log "=== Portainer OIDC Bootstrap ==="
 
     if [ ! -f "$ENV_FILE" ]; then
-        log "ERROR: .env missing at $ENV_FILE"
-        exit 1
+        die ".env missing at $ENV_FILE"
     fi
 
     enabled="$(get_env_value PORTAINER_OIDC_ENABLED)"
@@ -628,11 +528,10 @@ main() {
     HOST_NAME="${HOST_NAME:-pi.lan}"
 
     ensure_authelia_portainer_materials || {
-        log "ERROR: Portainer OIDC prerequisites are missing in Authelia configuration"
-        exit 1
+        die "Portainer OIDC prerequisites are missing in Authelia configuration"
     }
 
-    if ! wait_for_portainer_container; then
+    if ! wait_for_container "$PORTAINER_CONTAINER" "$MAX_RETRIES" "$RETRY_INTERVAL"; then
         exit 1
     fi
 
@@ -640,14 +539,12 @@ main() {
         exit 1
     fi
 
-    OIDC_CLIENT_SECRET="$(get_portainer_oidc_client_secret)" || {
-        log "ERROR: Could not read Portainer OIDC client secret"
-        exit 1
+    OIDC_CLIENT_SECRET="$(get_oidc_secret "portainer" "PORTAINER_OIDC_CLIENT_SECRET")" || {
+        die "Could not read Portainer OIDC client secret"
     }
 
     if [ -z "$OIDC_CLIENT_SECRET" ]; then
-        log "ERROR: Portainer OIDC client secret is empty"
-        exit 1
+        die "Portainer OIDC client secret is empty"
     fi
 
     JWT_TOKEN="$(authenticate_portainer)" || {
@@ -658,44 +555,36 @@ main() {
     }
 
     CURRENT_SETTINGS="$(portainer_api_get "$JWT_TOKEN" "/api/settings")" || {
-        log "ERROR: Failed to fetch current Portainer settings"
-        exit 1
+        die "Failed to fetch current Portainer settings"
     }
 
     DEFAULT_TEAM_ID="$(ensure_portainer_default_team "$JWT_TOKEN" "$CURRENT_SETTINGS")" || {
-        log "ERROR: Failed to ensure Portainer default OAuth team"
-        exit 1
+        die "Failed to ensure Portainer default OAuth team"
     }
 
     SETTINGS_PAYLOAD="$(build_portainer_oidc_payload "$CURRENT_SETTINGS" "$OIDC_CLIENT_SECRET" "$DEFAULT_TEAM_ID")" || {
-        log "ERROR: Failed to build Portainer OIDC settings payload"
-        exit 1
+        die "Failed to build Portainer OIDC settings payload"
     }
 
     portainer_api_put_json "$JWT_TOKEN" "/api/settings" "$SETTINGS_PAYLOAD" >/dev/null || {
-        log "ERROR: Failed to update Portainer settings with OIDC configuration"
-        exit 1
+        die "Failed to update Portainer settings with OIDC configuration"
     }
 
     if ! verify_portainer_oidc "$JWT_TOKEN" "$DEFAULT_TEAM_ID"; then
-        log "ERROR: Portainer OIDC verification failed after settings update"
-        exit 1
+        die "Portainer OIDC verification failed after settings update"
     fi
 
     ensure_portainer_default_team_endpoint_access "$JWT_TOKEN" "$DEFAULT_TEAM_ID" || {
-        log "ERROR: Failed to grant Portainer default OAuth team access to unassigned endpoints"
-        exit 1
+        die "Failed to grant Portainer default OAuth team access to unassigned endpoints"
     }
 
     ensure_portainer_default_team_memberships "$JWT_TOKEN" "$DEFAULT_TEAM_ID" || {
-        log "ERROR: Failed to backfill Portainer default OAuth team memberships"
-        exit 1
+        die "Failed to backfill Portainer default OAuth team memberships"
     }
 
     LLDAP_PASSWORD="$(get_env_value PASSWORD)"
     ensure_portainer_users_are_admin "$JWT_TOKEN" "$LLDAP_PASSWORD" || {
-        log "ERROR: Failed to promote admin group members in Portainer"
-        exit 1
+        die "Failed to promote admin group members in Portainer"
     }
 
     log "Portainer OIDC configured successfully"

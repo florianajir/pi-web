@@ -60,3 +60,15 @@ if (isset($CONFIG['trusted_domains']) && is_array($CONFIG['trusted_domains'])) {
 $CONFIG['trusted_domains'] = array_values(array_unique(array_merge($existingTrustedDomains, $runtimeTrustedDomains)));
 
 $CONFIG['skeletondirectory'] = '';
+
+$redisHost = getenv('REDIS_HOST');
+if ($redisHost) {
+  $CONFIG['memcache.local'] = '\\OC\\Memcache\\APCu';
+  $CONFIG['memcache.distributed'] = '\\OC\\Memcache\\Redis';
+  $CONFIG['memcache.locking'] = '\\OC\\Memcache\\Redis';
+  $CONFIG['redis'] = [
+    'host' => $redisHost,
+    'port' => (int) (getenv('REDIS_HOST_PORT') ?: 6379),
+    'timeout' => 1.5,
+  ];
+}

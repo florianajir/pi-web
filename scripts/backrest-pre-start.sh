@@ -1,10 +1,12 @@
 #!/bin/sh
 set -eu
 
-CONFIG_DIR="${BACKREST_CONFIG_DIR:-./config/backrest}"
+. "$(dirname "$0")/lib.sh"
+
+CONFIG_DIR="${BACKREST_CONFIG_DIR:-$PROJECT_DIR/config/backrest}"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
-TEMPLATE_FILE="${BACKREST_TEMPLATE:-./config/backrest/config.json.template}"
-ENV_FILE="${BACKREST_ENV_FILE:-./.env}"
+TEMPLATE_FILE="${BACKREST_TEMPLATE:-$PROJECT_DIR/config/backrest/config.json.template}"
+ENV_FILE="${BACKREST_ENV_FILE:-$PROJECT_DIR/.env}"
 
 # For manual runs (e.g. `sh scripts/backrest-pre-start.sh`), load .env if present
 # and if required variables are not already exported by the current environment.
@@ -33,39 +35,27 @@ BACKREST_S3_URI="${BACKREST_S3_URI:-}"
 BACKREST_S3_REPO_PASSWORD="${BACKREST_S3_REPO_PASSWORD:-}"
 BACKREST_INSTANCE="${BACKREST_INSTANCE:-${HOST_NAME:-$(hostname 2>/dev/null || echo pi-web)}}"
 
-# Fix ownership of a path to match the project directory owner.
-# When the script runs as root (via systemd), files are created owned by root.
-# Chowning to the project directory owner restores IDE/user access.
-_fix_ownership() {
-  _owner=$(stat -c '%u:%g' "." 2>/dev/null || echo "")
-  if [ -n "$_owner" ] && [ "$_owner" != "0:0" ]; then
-    chown -R "$_owner" "$1"
-  fi
-}
-
 if [ ! -f "${TEMPLATE_FILE}" ]; then
-  echo "[backrest-pre-start] template not found at ${TEMPLATE_FILE}" >&2
-  exit 1
+  die "template not found at ${TEMPLATE_FILE}"
 fi
 
 # Idempotent: if config already exists and has content, skip
 if [ -f "${CONFIG_FILE}" ]; then
   if [ -s "${CONFIG_FILE}" ]; then
     if jq -e 'has("instance") and (.instance | type == "string") and (.instance | length > 0)' "${CONFIG_FILE}" >/dev/null 2>&1; then
-      echo "[backrest-pre-start] config already exists at ${CONFIG_FILE}; skipping initialization"
-      _fix_ownership "${CONFIG_DIR}"
+      log "config already exists at ${CONFIG_FILE}; skipping initialization"
+      fix_ownership "${CONFIG_DIR}"
       exit 0
     fi
 
     tmp_patch="$(mktemp)"
     trap 'rm -f "${tmp_file:-}" "${tmp_patch:-}"' EXIT INT TERM
     if ! jq --arg instance "${BACKREST_INSTANCE}" '.instance = $instance' "${CONFIG_FILE}" > "${tmp_patch}"; then
-      echo "[backrest-pre-start] ❌ failed to patch missing instance in existing config" >&2
-      exit 1
+      die "failed to patch missing instance in existing config"
     fi
     mv "${tmp_patch}" "${CONFIG_FILE}"
-    _fix_ownership "${CONFIG_DIR}"
-    echo "[backrest-pre-start] ✅ patched existing config with instance=${BACKREST_INSTANCE}"
+    fix_ownership "${CONFIG_DIR}"
+    log "patched existing config with instance=${BACKREST_INSTANCE}"
     exit 0
   fi
 fi
@@ -76,8 +66,8 @@ mkdir -p "${CONFIG_DIR}"
 # Check for required S3 credentials if we're going to initialize
 if [ -z "${BACKREST_S3_URI}" ] || [ -z "${BACKREST_S3_REPO_PASSWORD}" ] || \
    [ -z "${S3_ACCESS_KEY_ID}" ] || [ -z "${S3_SECRET_ACCESS_KEY}" ]; then
-  echo "[backrest-pre-start] ⚠️  S3 credentials incomplete; Backrest will start but S3 repo may not be available" >&2
-  echo "[backrest-pre-start] Set: BACKREST_S3_URI, BACKREST_S3_REPO_PASSWORD, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY" >&2
+  log "WARNING: S3 credentials incomplete; Backrest will start but S3 repo may not be available"
+  log "Set: BACKREST_S3_URI, BACKREST_S3_REPO_PASSWORD, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY"
 fi
 
 # Render template with sed
@@ -95,10 +85,9 @@ sed \
 
 # Validate JSON
 if ! jq empty "${tmp_file}" 2>/dev/null; then
-  echo "[backrest-pre-start] ❌ generated config is not valid JSON" >&2
-  exit 1
+  die "generated config is not valid JSON"
 fi
 
 mv "${tmp_file}" "${CONFIG_FILE}"
-_fix_ownership "${CONFIG_DIR}"
-echo "[backrest-pre-start] ✅ Backrest config initialized at ${CONFIG_FILE}"
+fix_ownership "${CONFIG_DIR}"
+log "Backrest config initialized at ${CONFIG_FILE}"

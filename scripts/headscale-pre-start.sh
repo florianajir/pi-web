@@ -3,17 +3,12 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="${PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}" 
-ENV_FILE="$PROJECT_DIR/.env"
+. "$(dirname "$0")/lib.sh"
+
 POLICY_TEMPLATE_FILE="$PROJECT_DIR/config/headscale/policy.hujson.template"
 POLICY_FILE="$PROJECT_DIR/config/headscale/policy.hujson"
 CONFIG_TEMPLATE_FILE="$PROJECT_DIR/config/headscale/config.yaml.template"
 CONFIG_FILE="$PROJECT_DIR/config/headscale/config.yaml"
-
-log() {
-    echo "[headscale-policy] $(date '+%H:%M:%S') $*" >&2
-}
 
 main() {
     # Ensure headplane config.yaml exists as a file before docker compose up.
@@ -43,24 +38,19 @@ main() {
     fi
 
     if [ ! -f "$POLICY_TEMPLATE_FILE" ]; then
-        log "ERROR: policy template not found at $POLICY_TEMPLATE_FILE"
-        exit 1
+        die "policy template not found at $POLICY_TEMPLATE_FILE"
     fi
 
     if [ ! -f "$CONFIG_TEMPLATE_FILE" ]; then
-        log "ERROR: config template not found at $CONFIG_TEMPLATE_FILE"
-        exit 1
+        die "config template not found at $CONFIG_TEMPLATE_FILE"
     fi
 
-    if [ -f "$ENV_FILE" ]; then
-        EMAIL=$(grep "^EMAIL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
-        HOST_NAME=$(grep "^HOST_NAME=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
-        DATA_LOCATION=$(grep "^DATA_LOCATION=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "")
-    fi
+    EMAIL="$(get_env_value EMAIL)"
+    HOST_NAME="$(get_env_value HOST_NAME)"
+    DATA_LOCATION="$(get_env_value DATA_LOCATION)"
 
     if [ -z "$EMAIL" ]; then
-        log "ERROR: EMAIL is not set in .env"
-        exit 1
+        die "EMAIL is not set in .env"
     fi
 
     HOST_NAME="${HOST_NAME:-pi.lan}"

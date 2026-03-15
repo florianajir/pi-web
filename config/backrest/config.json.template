@@ -66,21 +66,21 @@
           "conditions": ["CONDITION_SNAPSHOT_START"],
           "onError": "ON_ERROR_FATAL",
           "actionCommand": {
-            "command": "/hooks/nextcloud-db-backup.sh"
+            "command": "/bin/sh /hooks/db-backup.sh nextcloud"
           }
         },
         {
           "conditions": ["CONDITION_SNAPSHOT_START"],
           "onError": "ON_ERROR_IGNORE",
           "actionCommand": {
-            "command": "/bin/sh /hooks/authelia-db-backup.sh"
+            "command": "/bin/sh /hooks/db-backup.sh authelia"
           }
         },
         {
           "conditions": ["CONDITION_SNAPSHOT_START"],
           "onError": "ON_ERROR_IGNORE",
           "actionCommand": {
-            "command": "/bin/sh /hooks/lldap-db-backup.sh"
+            "command": "/bin/sh /hooks/db-backup.sh lldap"
           }
         },
         {

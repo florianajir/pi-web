@@ -7,6 +7,7 @@ After=network-online.target docker.service
 Type=oneshot
 WorkingDirectory=__PROJECT_PATH__
 EnvironmentFile=__PROJECT_PATH__/.env
+ExecStartPre=-/usr/sbin/ethtool -K eth0 rx-udp-gro-forwarding on rx-gro-list off
 ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/authelia-pre-start.sh
 ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/headscale-pre-start.sh
 ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/backrest-pre-start.sh

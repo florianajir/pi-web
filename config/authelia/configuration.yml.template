@@ -133,7 +133,7 @@ __OIDC_PRIVATE_KEY__
     clients:
       - client_id: nextcloud
         client_name: Nextcloud
-        client_secret: '{{ secret "/config/secrets/oidc_nextcloud_secret.txt" }}'
+        client_secret: '{{ secret "/config/secrets/oidc_nextcloud_secret_hash" }}'
         public: false
         authorization_policy: one_factor
         consent_mode: implicit
@@ -159,7 +159,7 @@ __OIDC_PRIVATE_KEY__
 
       - client_id: immich
         client_name: Immich
-        client_secret: '{{ secret "/config/secrets/oidc_immich_secret.txt" }}'
+        client_secret: '{{ secret "/config/secrets/oidc_immich_secret_hash" }}'
         public: false
         authorization_policy: one_factor
         consent_mode: implicit
@@ -181,7 +181,7 @@ __OIDC_PRIVATE_KEY__
 
       - client_id: beszel
         client_name: Beszel
-        client_secret: '{{ secret "/config/secrets/oidc_beszel_secret.txt" }}'
+        client_secret: '{{ secret "/config/secrets/oidc_beszel_secret_hash" }}'
         public: false
         authorization_policy: one_factor
         consent_mode: implicit
@@ -202,7 +202,7 @@ __OIDC_PRIVATE_KEY__
 
       - client_id: portainer
         client_name: Portainer
-        client_secret: '{{ secret "/config/secrets/oidc_portainer_secret.txt" }}'
+        client_secret: '{{ secret "/config/secrets/oidc_portainer_secret_hash" }}'
         public: false
         authorization_policy: admin_only
         consent_mode: implicit
@@ -214,6 +214,7 @@ __OIDC_PRIVATE_KEY__
           - profile
           - email
           - groups
+          - offline_access
         response_types:
           - code
         grant_types:
@@ -224,7 +225,7 @@ __OIDC_PRIVATE_KEY__
 
       - client_id: headplane
         client_name: Headplane
-        client_secret: '{{ secret "/config/secrets/oidc_headplane_secret.txt" }}'
+        client_secret: '{{ secret "/config/secrets/oidc_headplane_secret_hash" }}'
         public: false
         authorization_policy: admin_only
         consent_mode: implicit
@@ -234,6 +235,7 @@ __OIDC_PRIVATE_KEY__
           - openid
           - profile
           - email
+          - offline_access
         response_types:
           - code
         grant_types:
@@ -243,7 +245,7 @@ __OIDC_PRIVATE_KEY__
 
       - client_id: headscale
         client_name: Headscale
-        client_secret: '{{ secret "/config/secrets/oidc_headscale_secret.txt" }}'
+        client_secret: '{{ secret "/config/secrets/oidc_headscale_secret_hash" }}'
         public: false
         authorization_policy: one_factor
         consent_mode: implicit

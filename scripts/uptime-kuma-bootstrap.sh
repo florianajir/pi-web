@@ -6,32 +6,14 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="${PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}"
-ENV_FILE="$PROJECT_DIR/.env"
+. "$(dirname "$0")/lib.sh"
+
 PYTHON_SCRIPT="$SCRIPT_DIR/uptime-kuma-bootstrap.py"
 PYTHON_IMAGE="python:3.12-slim"
 MAX_RETRIES=90
 RETRY_INTERVAL=2
 
-log() {
-    echo "[uptime-kuma-bootstrap] $(date '+%H:%M:%S') $*" >&2
-}
-
-wait_for_container() {
-    log "Waiting for Uptime Kuma container to appear..."
-    for i in $(seq 1 $MAX_RETRIES); do
-        if docker ps --format '{{.Names}}' | grep -q '^pi-uptime-kuma$'; then
-            log "Uptime Kuma container is running"
-            return 0
-        fi
-        sleep "$RETRY_INTERVAL"
-    done
-    log "ERROR: Uptime Kuma container did not start in time"
-    return 1
-}
-
-wait_for_health() {
+wait_for_kuma_health() {
     local status
 
     log "Waiting for Uptime Kuma health status..."
@@ -51,12 +33,11 @@ main() {
     log "=== Uptime Kuma Bootstrap ==="
 
     if [ ! -f "$ENV_FILE" ]; then
-        log "ERROR: .env missing at $ENV_FILE"
-        exit 1
+        die ".env missing at $ENV_FILE"
     fi
 
-    wait_for_container
-    wait_for_health
+    wait_for_container "pi-uptime-kuma" "$MAX_RETRIES" "$RETRY_INTERVAL"
+    wait_for_kuma_health
 
     # Give Uptime Kuma a moment to fully initialize after healthcheck passes
     sleep 5

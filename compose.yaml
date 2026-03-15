@@ -139,7 +139,7 @@ services:
       - "ntfy.${HOST_NAME:-pi.lan}:172.30.11.1"
     volumes:
       - ${DATA_LOCATION:-./data}/backrest/data:/data
-      - ${DATA_LOCATION:-./data}/backrest/config:/config/backrest
+      - ./config/backrest/config.json:/config/backrest/config.json
       - ${DATA_LOCATION:-./data}/backrest/repos:/repos
       - ${DATA_LOCATION:-./data}/immich:/userdata/immich:ro
       - ${DATA_LOCATION:-./data}/nextcloud:/userdata/nextcloud-data:ro
@@ -150,9 +150,7 @@ services:
       - ${DATA_LOCATION:-./data}/lldap:/userdata/lldap:ro
       - ${DATA_LOCATION:-./data}/lldap/backups:/userdata/lldap/backups
       - ${DATA_LOCATION:-./data}/authelia-config:/userdata/authelia-config
-      - ./scripts/nextcloud-db-backup.sh:/hooks/nextcloud-db-backup.sh:ro
-      - ./scripts/authelia-db-backup.sh:/hooks/authelia-db-backup.sh:ro
-      - ./scripts/lldap-db-backup.sh:/hooks/lldap-db-backup.sh:ro
+      - ./scripts/db-backup.sh:/hooks/db-backup.sh:ro
       - ./scripts/backrest-post-hook.sh:/hooks/backrest-post-hook.sh:ro
       - ./scripts/backrest-unlock.sh:/hooks/backrest-unlock.sh:ro
     tmpfs:
@@ -350,7 +348,7 @@ services:
       LISTEN: /beszel_socket/beszel.sock
       HUB_URL: https://beszel.${HOST_NAME:-pi.lan}
       HOST_PROC: /host/proc
-      EXTRA_FILESYSTEMS: /host/sdcard
+      EXTRA_FILESYSTEMS: /dev/mmcblk0p1
     healthcheck:
       test: ["CMD", "/agent", "health"]
       interval: 90s
@@ -487,12 +485,11 @@ services:
     environment:
       TZ: ${TIMEZONE:-Europe/Paris}
       FTLCONF_webserver_api_password: ${PASSWORD:-admin}
-      FTLCONF_webserver_allow_api_all_origins: "true"
       FTLCONF_dns_listeningMode: "all"
       FTLCONF_dns_upstreams: ${PIHOLE_DNS_UPSTREAMS:-172.30.53.53#5335}
       FTLCONF_misc_dnsmasq_lines: "address=/${HOST_NAME:-pi.lan}/${HOST_LAN_IP:-192.168.1.30}"
       FTLCONF_webserver_port: 8082
-      FTLCONF_dns_domain: ${HOST_NAME:-pi.lan}
+      FTLCONF_dns_domain_name: ${HOST_NAME:-pi.lan}
     volumes:
       - pihole_data:/etc/pihole
       - ./config/pihole/dnsmasq.d:/etc/dnsmasq.d
@@ -570,11 +567,16 @@ services:
       - N8N_SMTP_PASS=${SMTP_PASSWORD:-}
       - N8N_SMTP_SENDER=${EMAIL:-noreply@localhost}
       - N8N_SMTP_SSL=${SMTP_SSL:-false}
+      # Task runners (Python + JS via external sidecar)
+      - N8N_RUNNERS_MODE=external
+      - N8N_RUNNERS_BROKER_LISTEN_ADDRESS=0.0.0.0
+      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN:-n8n-runner-secret}
     volumes:
       - n8n_data:/home/node/.n8n
       - ${DATA_LOCATION:-./data}/n8n:/files
     networks:
       - frontend
+      - n8n_runners
     depends_on:
       - traefik
     healthcheck:
@@ -594,6 +596,25 @@ services:
       start_period: 20s
     deploy: *cpu-request-large
     mem_limit: 192m
+    oom_score_adj: *oom-score-deprioritize
+
+  n8n-runners:
+    <<: *default-logging
+    image: n8nio/runners:2.8.2
+    container_name: pi-n8n-runners
+    restart: unless-stopped
+    environment:
+      - N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679
+      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN:-n8n-runner-secret}
+    networks:
+      - n8n_runners
+    depends_on:
+      - n8n
+    labels:
+      - "com.example.description=n8n task runners (JS + Python)"
+      - "com.example.service=n8n"
+    deploy: *cpu-request-small
+    mem_limit: 256m
     oom_score_adj: *oom-score-deprioritize
 
   headplane:
@@ -617,13 +638,11 @@ services:
       - ./config/headplane/wasm/wasm_exec.js:/app/build/client/wasm_exec.js:ro
       - ./config/headplane/wasm/hp_ssh.wasm:/app/build/client/hp_ssh.wasm:ro
     environment:
-      - HEADPLANE_LOAD_ENV_OVERRIDES=true
       - HEADPLANE_HEADSCALE__URL=https://headscale.${HOST_NAME:-pi.lan}
       - HEADPLANE_OIDC__ISSUER=https://auth.${HOST_NAME:-pi.lan}
       - HEADPLANE_OIDC__CLIENT_ID=headplane
       - HEADPLANE_OIDC__CLIENT_SECRET_PATH=/run/secrets/oidc_headplane_secret
       - HEADPLANE_OIDC__TOKEN_ENDPOINT_AUTH_METHOD=client_secret_basic
-      - HEADPLANE_OIDC__REDIRECT_URI=https://headscale.${HOST_NAME:-pi.lan}/admin/oidc/callback
       - HEADPLANE_OIDC__DISABLE_API_KEY_LOGIN=true
       - HEADPLANE_OIDC__HEADSCALE_API_KEY_PATH=/run/secrets/headplane_headscale_api_key
       - HEADPLANE_OIDC__SCOPE=openid email profile
@@ -1122,6 +1141,7 @@ services:
       # trustForwardHeader is safe here: Traefik is the only trusted upstream on the internal frontend network
       - "traefik.http.middlewares.authelia.forwardauth.trustForwardHeader=true"
       - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
+      - "traefik.http.middlewares.authelia.forwardauth.maxResponseBodySize=4096"
     deploy: *cpu-request-small
     mem_limit: 128m
     oom_score_adj: *oom-score-critical
@@ -1164,6 +1184,9 @@ services:
     <<: *default-logging
     container_name: pi-redis
     image: docker.io/valkey/valkey:9@sha256:546304417feac0874c3dd576e0952c6bb8f06bb4093ea0c9ca303c73cf458f63
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
+    volumes:
+      - ./config/redis/valkey.conf:/etc/valkey/valkey.conf:ro
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 30s
@@ -1308,3 +1331,10 @@ networks:
     labels:
       - "com.example.description=Authentication network (Authelia, lldap, Postgres, Redis)"
       - "com.example.service=authelia"
+  n8n_runners:
+    driver: bridge
+    name: n8n_runners
+    internal: true
+    labels:
+      - "com.example.description=n8n task runner sidecar network"
+      - "com.example.service=n8n"
