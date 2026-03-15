@@ -1,9 +1,8 @@
 x-logging: &default-logging
   logging:
-    driver: "json-file"
+    driver: "journald"
     options:
-      max-size: "10m"
-      max-file: "3"
+      tag: "{{.Name}}"
 
 x-cpu-request-tiny: &cpu-request-tiny
   resources:
