@@ -84,7 +84,8 @@
 	"chat.tools.terminal.autoApprove": {
 		"nslookup": true,
 		"true": true,
-		"docker run": true
+		"docker run": true,
+		"docker manifest": true
 	},
 	"github.copilot.chat.commitMessageGeneration.instructions": [
 		{

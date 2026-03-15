@@ -26,6 +26,11 @@ services:
     # Depends on the full healthy stack; not suitable for CI.
     profiles: [ci-excluded]
 
+  headscale:
+    # Fetches OIDC discovery from https://auth.test.local at startup, which does
+    # not resolve on GitHub Actions runners.
+    profiles: [ci-excluded]
+
   # --- nextcloud: replace host bind mounts with named volumes for CI ---
   # In CI the host directories (./data/nextcloud-config, ./data/nextcloud) do not
   # pre-exist, so Docker creates them as root:root.  Nextcloud runs as www-data
@@ -47,6 +52,12 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+
+  # --- unbound: use multi-arch image for CI (mvance/unbound-rpi is ARM-only) ---
+  unbound:
+    image: klutchell/unbound:latest
+    volumes: !override
+      - ./config/unbound/unbound.conf:/etc/unbound/unbound.conf:ro
 
   # --- pihole: disable host port bindings, fix static IP for CI bridge network ---
   pihole:
