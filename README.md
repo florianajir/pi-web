@@ -15,7 +15,6 @@ It includes:
 - Monitoring (`beszel`) and container management (`portainer`)
 - Backup management (`backrest`)
 - Internal data services (`postgres`, `redis`)
-- Maintenance (`watchtower`)
 
 ---
 
@@ -57,7 +56,6 @@ flowchart LR
   subgraph Pi["Raspberry Pi Host (Docker Compose)"]
     DDNS[ddns-updater]
     Traefik[traefik]
-    Watchtower[watchtower]
     Tailscale[tailscale]
 
     subgraph Apps["User-facing services (routed by Traefik)"]
@@ -114,8 +112,6 @@ flowchart LR
 
   Tailscale <-->|VPN coordination| Headscale
   Headplane -->|admin API/UI| Headscale
-  Watchtower -.automatic image updates.-> Nextcloud
-  Watchtower -.automatic image updates.-> Immich
 ```
 
 ---

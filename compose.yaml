@@ -1,8 +1,9 @@
-x-logging: &default-logging
+x-service-defaults: &service-defaults
   logging:
     driver: "journald"
     options:
       tag: "{{.Name}}"
+  restart: unless-stopped
 
 x-cpu-request-tiny: &cpu-request-tiny
   resources:
@@ -33,14 +34,38 @@ x-cpu-request-xlarge: &cpu-request-xlarge
 # Range: -1000 (never kill) to +1000 (kill first). Default is 0.
 x-oom-score-critical: &oom-score-critical -1000 # traefik, pihole, unbound, headscale, tailscale, ddns-updater
 x-oom-score-important: &oom-score-important -500 # postgres, redis, backrest
-x-oom-score-deprioritize: &oom-score-deprioritize 500 # watchtower, n8n, immich, nextcloud
+x-oom-score-deprioritize: &oom-score-deprioritize 500 # n8n, immich, nextcloud
+
+# Healthcheck timing presets (override individual fields as needed)
+x-healthcheck-default: &healthcheck-default
+  interval: 60s
+  timeout: 10s
+  retries: 3
+  start_period: 20s
+
+x-healthcheck-light: &healthcheck-light
+  interval: 90s
+  timeout: 10s
+  retries: 2
+  start_period: 10s
+
+x-healthcheck-relaxed: &healthcheck-relaxed
+  interval: 120s
+  timeout: 10s
+  retries: 2
+  start_period: 10s
+
+x-healthcheck-fast: &healthcheck-fast
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 10s
 
 services:
   ddns-updater:
-    <<: *default-logging
+    <<: *service-defaults
     image: ghcr.io/qdm12/ddns-updater:v2.9
     container_name: pi-ddns-updater
-    restart: unless-stopped
     environment:
       CONFIG: >-
         {"settings":[
@@ -50,53 +75,19 @@ services:
     volumes:
       - ddns_data:/updater/data
     healthcheck:
+      <<: *healthcheck-relaxed
       test: ["CMD", "/updater/ddns-updater", "healthcheck"]
-      interval: 120s
-      timeout: 10s
-      retries: 2
-      start_period: 10s
-    labels:
-      - "com.example.description=Dynamic DNS updater for Cloudflare"
-      - "com.example.service=ddns"
     deploy: *cpu-request-tiny
     mem_limit: 64m
     oom_score_adj: *oom-score-critical
 
-  watchtower:
-    <<: *default-logging
-    container_name: pi-watchtower
-    image: nickfedor/watchtower:latest
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - WATCHTOWER_CLEANUP=true
-      - WATCHTOWER_SCHEDULE=0 0 3 * * *
-      - WATCHTOWER_NO_RESTART=true
-      - TZ=${TIMEZONE:-Europe/Paris}
-    healthcheck:
-      test: ["CMD", "/watchtower", "--health-check"]
-      interval: 120s
-      timeout: 10s
-      retries: 2
-      start_period: 10s
-    labels:
-      - "com.example.description=Watchtower automatic updates"
-      - "com.example.service=watchtower"
-    deploy: *cpu-request-tiny
-    mem_limit: 64m
-    oom_score_adj: *oom-score-deprioritize
-
   backrest:
-    <<: *default-logging
-    image: ghcr.io/garethgeorge/backrest:v1.12.0
+    <<: *service-defaults
+    build:
+      context: ./config/backrest
+      dockerfile: Dockerfile
+    image: pi-backrest:local
     container_name: pi-backrest
-    restart: unless-stopped
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - |
-        apk add --no-cache postgresql-client jq >/dev/null
-        exec /sbin/tini -- /docker-entrypoint /backrest
     networks:
       - frontend
       - immich
@@ -166,8 +157,6 @@ services:
       authelia:
         condition: service_healthy
     labels:
-      - "com.example.description=Backrest backup management"
-      - "com.example.service=backrest"
       - "homepage.group=Backup"
       - "homepage.name=Backrest"
       - "homepage.icon=backrest.png"
@@ -181,20 +170,17 @@ services:
       - "traefik.http.routers.backrest.tls=true"
       - "traefik.http.services.backrest.loadbalancer.server.port=9898"
     healthcheck:
+      <<: *healthcheck-default
       test: ["CMD", "curl", "-fsS", "http://localhost:9898/"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
       start_period: 45s
     deploy: *cpu-request-medium
     mem_limit: 512m
     oom_score_adj: *oom-score-important
 
   traefik:
-    <<: *default-logging
+    <<: *service-defaults
     image: traefik:v3.6
     container_name: pi-traefik
-    restart: unless-stopped
     environment:
       - CLOUDFLARE_DNS_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN:-}
     command:
@@ -221,8 +207,6 @@ services:
       - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
       - "--certificatesresolvers.cloudflare.acme.dnschallenge.delaybeforecheck=10"
     labels:
-      - "com.example.description=Traefik reverse proxy"
-      - "com.example.service=traefik"
       - "homepage.group=Network"
       - "homepage.name=Traefik"
       - "homepage.icon=traefik.png"
@@ -257,11 +241,8 @@ services:
     networks:
       - frontend
     healthcheck:
+      <<: *healthcheck-fast
       test: ["CMD", "traefik", "healthcheck", "--ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
       start_interval: 5s
     cpuset: "0"
     deploy: *cpu-request-medium
@@ -269,10 +250,9 @@ services:
     oom_score_adj: *oom-score-critical
 
   beszel:
-    <<: *default-logging
+    <<: *service-defaults
     image: henrygd/beszel:0.18.4
     container_name: pi-beszel
-    restart: unless-stopped
     networks:
       - frontend
     expose:
@@ -288,15 +268,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
+      <<: *healthcheck-light
       test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
-      interval: 90s
-      timeout: 10s
-      retries: 2
       start_period: 5s
       start_interval: 3s
     labels:
-      - "com.example.description=Beszel monitoring hub"
-      - "com.example.service=beszel"
       - "homepage.group=Monitoring"
       - "homepage.name=Beszel"
       - "homepage.icon=beszel.png"
@@ -318,13 +294,12 @@ services:
     oom_score_adj: *oom-score-important
 
   beszel-agent:
-    <<: *default-logging
+    <<: *service-defaults
     build:
       context: ./config/beszel-agent
       dockerfile: Dockerfile
     image: pi-beszel-agent:local
     container_name: pi-beszel-agent
-    restart: unless-stopped
     depends_on:
       beszel:
         condition: service_healthy
@@ -350,19 +325,16 @@ services:
       HOST_PROC: /host/proc
       EXTRA_FILESYSTEMS: /dev/mmcblk0p1
     healthcheck:
+      <<: *healthcheck-light
       test: ["CMD", "/agent", "health"]
-      interval: 90s
-      timeout: 10s
-      retries: 2
     deploy: *cpu-request-small
     mem_limit: 64m
     oom_score_adj: *oom-score-important
 
   uptime-kuma:
-    <<: *default-logging
+    <<: *service-defaults
     image: louislam/uptime-kuma:2.2.0
     container_name: pi-uptime-kuma
-    restart: unless-stopped
     networks:
       - frontend
       - ntfy
@@ -379,8 +351,6 @@ services:
       - ${DATA_LOCATION:-./data}/uptime-kuma:/app/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
     labels:
-      - "com.example.description=Uptime Kuma uptime monitoring"
-      - "com.example.service=uptime-kuma"
       - "homepage.group=Monitoring"
       - "homepage.name=Uptime Kuma"
       - "homepage.icon=uptime-kuma.png"
@@ -394,21 +364,17 @@ services:
       - "traefik.http.routers.uptime-kuma.tls=true"
       - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
     healthcheck:
+      <<: *healthcheck-default
       test: ["CMD", "extra/healthcheck"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
     deploy: *cpu-request-small
     mem_limit: 256m
     oom_score_adj: *oom-score-important
 
   portainer:
-    <<: *default-logging
+    <<: *service-defaults
     image: portainer/portainer-ce:lts
     command: -H unix:///var/run/docker.sock --http-enabled
     container_name: pi-portainer
-    restart: unless-stopped
     networks:
       - frontend
     expose:
@@ -417,8 +383,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - portainer_data:/data
     labels:
-      - "com.example.description=Portainer container management"
-      - "com.example.service=portainer"
       - "homepage.group=Monitoring"
       - "homepage.name=Portainer"
       - "homepage.icon=portainer.png"
@@ -432,20 +396,16 @@ services:
       - "traefik.http.routers.portainer.tls=true"
       - "traefik.http.services.portainer.loadbalancer.server.port=9000"
     healthcheck:
+      <<: *healthcheck-light
       test: ["CMD", "/portainer", "--version"]
-      interval: 90s
-      timeout: 10s
-      retries: 2
-      start_period: 10s
     deploy: *cpu-request-small
     mem_limit: 128m
     oom_score_adj: *oom-score-deprioritize
 
   unbound:
-    <<: *default-logging
+    <<: *service-defaults
     image: mvance/unbound-rpi:1.22.0
     container_name: pi-unbound
-    restart: unless-stopped
     networks:
       dns_internal:
         ipv4_address: 172.30.53.53
@@ -455,24 +415,18 @@ services:
     volumes:
       - ./config/unbound/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
     healthcheck:
+      <<: *healthcheck-default
       test: ["CMD", "drill", "@127.0.0.1", "-p", "5335", "cloudflare.com"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
       start_period: 10s
       start_interval: 5s
-    labels:
-      - "com.example.description=Unbound recursive DNS resolver"
-      - "com.example.service=unbound"
     deploy: *cpu-request-small
     mem_limit: 128m
     oom_score_adj: *oom-score-critical
 
   pihole:
-    <<: *default-logging
+    <<: *service-defaults
     image: pihole/pihole:2026.02.0
     container_name: pi-pihole
-    restart: unless-stopped
     cap_add:
       - NET_ADMIN
       - SYS_NICE
@@ -502,8 +456,6 @@ services:
       unbound:
         condition: service_healthy
     labels:
-      - "com.example.description=Pi-hole DNS Ad-Blocker"
-      - "com.example.service=pihole"
       - "homepage.group=Network"
       - "homepage.name=Pi-hole"
       - "homepage.icon=pi-hole.png"
@@ -517,26 +469,20 @@ services:
       - "traefik.http.routers.pihole.middlewares=lan@docker,authelia@docker"
       - "traefik.http.services.pihole.loadbalancer.server.port=8082"
     healthcheck:
+      <<: *healthcheck-default
       test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
     cpuset: "0"
     deploy: *cpu-request-medium
     mem_limit: 192m
     oom_score_adj: *oom-score-critical
 
   n8n:
-    <<: *default-logging
+    <<: *service-defaults
     image: n8nio/n8n:2.8.2
     container_name: pi-n8n
-    restart: unless-stopped
     expose:
       - 5678
     labels:
-      - "com.example.description=n8n workflow automation"
-      - "com.example.service=n8n"
       - "homepage.group=Automation"
       - "homepage.name=n8n"
       - "homepage.icon=n8n.png"
@@ -580,6 +526,7 @@ services:
     depends_on:
       - traefik
     healthcheck:
+      <<: *healthcheck-default
       # n8n listens internally on plain HTTP. Use explicit IPv4 loopback to avoid IPv6 (::1) resolution issues.
       test:
         [
@@ -590,19 +537,14 @@ services:
           "/dev/null",
           "http://127.0.0.1:5678/healthz",
         ]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
     deploy: *cpu-request-large
     mem_limit: 192m
     oom_score_adj: *oom-score-deprioritize
 
   n8n-runners:
-    <<: *default-logging
+    <<: *service-defaults
     image: n8nio/runners:2.8.2
     container_name: pi-n8n-runners
-    restart: unless-stopped
     environment:
       - N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679
       - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN:-n8n-runner-secret}
@@ -610,18 +552,14 @@ services:
       - n8n_runners
     depends_on:
       - n8n
-    labels:
-      - "com.example.description=n8n task runners (JS + Python)"
-      - "com.example.service=n8n"
     deploy: *cpu-request-small
     mem_limit: 256m
     oom_score_adj: *oom-score-deprioritize
 
   headplane:
-    <<: *default-logging
+    <<: *service-defaults
     image: ghcr.io/tale/headplane:0.6.2
     container_name: pi-headplane
-    restart: unless-stopped
     networks:
       - frontend
     extra_hosts:
@@ -649,8 +587,6 @@ services:
     depends_on:
       - headscale
     labels:
-      - "com.example.description=Headplane Headscale Web UI"
-      - "com.example.service=headplane"
       - "homepage.group=Network"
       - "homepage.name=Headplane"
       - "homepage.icon=headscale.png"
@@ -673,6 +609,7 @@ services:
       - "traefik.http.middlewares.wasm-path.replacepathregex.regex=/(wasm_exec.js|hp_ssh.wasm)"
       - "traefik.http.middlewares.wasm-path.replacepathregex.replacement=/admin/$$1"
     healthcheck:
+      <<: *healthcheck-default
       test:
         [
           "CMD",
@@ -680,20 +617,15 @@ services:
           "-e",
           "const net=require('node:net');const s=net.connect({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.setTimeout(5000,()=>{s.destroy();process.exit(1)});s.on('error',()=>process.exit(1));",
         ]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
     deploy: *cpu-request-small
     mem_limit: 192m
     oom_score_adj: *oom-score-deprioritize
 
   # Connectivity Stack
   headscale:
-    <<: *default-logging
+    <<: *service-defaults
     image: headscale/headscale:0.28
     container_name: pi-headscale
-    restart: unless-stopped
     command: serve
     environment:
       - HEADSCALE_SERVER_URL=https://headscale.${HOST_NAME:-pi.lan}
@@ -717,8 +649,6 @@ services:
     tmpfs:
       - /var/run/headscale
     labels:
-      - "com.example.description=Headscale coordination server"
-      - "com.example.service=headscale"
       - "homepage.group=Network"
       - "homepage.name=Headscale"
       - "homepage.icon=tailscale.png"
@@ -745,10 +675,8 @@ services:
       - "traefik.http.middlewares.cors.headers.accesscontrolmaxage=100"
       - "traefik.http.middlewares.cors.headers.addvaryheader=true"
     healthcheck:
+      <<: *healthcheck-default
       test: ["CMD", "/ko-app/headscale", "health"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
       start_period: 10s
     cpuset: "0"
     deploy: *cpu-request-medium
@@ -756,10 +684,9 @@ services:
     oom_score_adj: *oom-score-critical
 
   tailscale:
-    <<: *default-logging
+    <<: *service-defaults
     image: tailscale/tailscale:stable
     container_name: pi-tailscale
-    restart: unless-stopped
     network_mode: host
     cap_add:
       - NET_ADMIN
@@ -775,14 +702,10 @@ services:
     depends_on:
       - headscale
     healthcheck:
+      <<: *healthcheck-default
       test: ["CMD", "tailscale", "status", "--peers=false"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
       start_period: 30s
     labels:
-      - "com.example.description=Tailscale VPN client"
-      - "com.example.service=tailscale"
       - "homepage.group=Network"
       - "homepage.name=Tailscale"
       - "homepage.icon=tailscale.png"
@@ -792,10 +715,9 @@ services:
     oom_score_adj: *oom-score-critical
 
   immich-server:
-    <<: *default-logging
+    <<: *service-defaults
     container_name: pi-immich
     image: ghcr.io/immich-app/immich-server:v2
-    restart: unless-stopped
     volumes:
       - ${DATA_LOCATION:-./data}/immich:/data
       - ${DATA_LOCATION:-./data}/authelia-config/immich-oauth-config.yaml:/immich-oauth-config.yaml:ro
@@ -819,15 +741,10 @@ services:
     expose:
       - 2283
     healthcheck:
+      <<: *healthcheck-default
       test: ["CMD", "curl", "-fsS", "http://localhost:2283/api/server/ping"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
       start_interval: 5s
     labels:
-      - "com.example.description=Immich media server"
-      - "com.example.service=immich"
       - "homepage.group=Storage"
       - "homepage.name=Immich"
       - "homepage.icon=immich.png"
@@ -846,10 +763,9 @@ services:
     oom_score_adj: *oom-score-deprioritize
 
   nextcloud:
-    <<: *default-logging
+    <<: *service-defaults
     image: nextcloud:32-apache
     container_name: pi-nextcloud
-    restart: unless-stopped
     environment:
       - NEXTCLOUD_ADMIN_USER=${USER}
       - NEXTCLOUD_ADMIN_PASSWORD=${PASSWORD}
@@ -888,8 +804,6 @@ services:
       - frontend
       - nextcloud
     labels:
-      - "com.example.description=Nextcloud self-hosted storage"
-      - "com.example.service=nextcloud"
       - "homepage.group=Storage"
       - "homepage.name=Nextcloud"
       - "homepage.icon=nextcloud.png"
@@ -903,10 +817,8 @@ services:
       - "traefik.http.routers.nextcloud.tls=true"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
     healthcheck:
+      <<: *healthcheck-default
       test: ["CMD", "curl", "-f", "http://localhost/status.php"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
       start_period: 60s
       start_interval: 10s
     depends_on:
@@ -920,10 +832,9 @@ services:
     oom_score_adj: *oom-score-deprioritize
 
   homepage:
-    <<: *default-logging
+    <<: *service-defaults
     image: ghcr.io/gethomepage/homepage:latest
     container_name: pi-homepage
-    restart: unless-stopped
     networks:
       - frontend
     expose:
@@ -937,8 +848,6 @@ services:
     tmpfs:
       - /app/config/logs
     labels:
-      - "com.example.description=Homepage service dashboard"
-      - "com.example.service=homepage"
       - "homepage.group=Dashboard"
       - "homepage.name=Homepage"
       - "homepage.icon=homepage.png"
@@ -954,20 +863,17 @@ services:
     depends_on:
       - traefik
     healthcheck:
+      <<: *healthcheck-light
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/"]
-      interval: 90s
-      timeout: 10s
-      retries: 2
       start_period: 15s
     deploy: *cpu-request-small
     mem_limit: 128m
     oom_score_adj: *oom-score-deprioritize
 
   ntfy:
-    <<: *default-logging
+    <<: *service-defaults
     image: binwiederhier/ntfy:v2.17.0
     container_name: pi-ntfy
-    restart: unless-stopped
     command: serve
     networks:
       - frontend
@@ -993,8 +899,6 @@ services:
       - ntfy_cache:/var/cache/ntfy
       - ntfy_data:/var/lib/ntfy
     labels:
-      - "com.example.description=ntfy push notifications"
-      - "com.example.service=ntfy"
       - "homepage.group=Notification"
       - "homepage.name=ntfy"
       - "homepage.icon=ntfy.png"
@@ -1008,22 +912,18 @@ services:
       - "traefik.http.routers.ntfy.tls=true"
       - "traefik.http.services.ntfy.loadbalancer.server.port=80"
     healthcheck:
+      <<: *healthcheck-light
       test:
         ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/v1/health"]
-      interval: 90s
-      timeout: 10s
-      retries: 2
-      start_period: 10s
     deploy: *cpu-request-small
     mem_limit: 128m
     oom_score_adj: *oom-score-important
 
   # Authentication & SSO
   lldap:
-    <<: *default-logging
+    <<: *service-defaults
     image: lldap/lldap:stable
     container_name: pi-lldap
-    restart: unless-stopped
     networks:
       - frontend
       - auth
@@ -1054,15 +954,11 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
+      <<: *healthcheck-default
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:17170/"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
       start_period: 10s
       start_interval: 5s
     labels:
-      - "com.example.description=Lightweight LDAP user directory"
-      - "com.example.service=lldap"
       - "homepage.group=User Management"
       - "homepage.name=LLDAP"
       - "homepage.href=https://lldap.${HOST_NAME:-pi.lan}"
@@ -1079,10 +975,9 @@ services:
     oom_score_adj: *oom-score-critical
 
   authelia:
-    <<: *default-logging
+    <<: *service-defaults
     image: authelia/authelia:4.39.15
     container_name: pi-authelia
-    restart: unless-stopped
     networks:
       - frontend
       - auth
@@ -1109,6 +1004,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
+      <<: *healthcheck-default
       test:
         [
           "CMD",
@@ -1118,14 +1014,9 @@ services:
           "/dev/null",
           "http://127.0.0.1:9091/api/health",
         ]
-      interval: 60s
-      timeout: 10s
-      retries: 3
       start_period: 10s
       start_interval: 5s
     labels:
-      - "com.example.description=Authelia SSO and OIDC authentication portal"
-      - "com.example.service=authelia"
       - "homepage.group=User Management"
       - "homepage.name=Authelia"
       - "homepage.icon=authelia.png"
@@ -1148,7 +1039,8 @@ services:
 
   # Database & Cache
   postgres:
-    <<: *default-logging
+    <<: *service-defaults
+    restart: always
     container_name: pi-postgres
     image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
     environment:
@@ -1159,106 +1051,55 @@ services:
     volumes:
       - ${DATA_LOCATION:-./data}/postgres:/var/lib/postgresql/data
       - ./config/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh
-    restart: always
     networks:
       - immich
       - nextcloud
       - auth
     healthcheck:
+      <<: *healthcheck-fast
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
       start_interval: 3s
     mem_limit: 1024m
     cpuset: "1-3"
     deploy: *cpu-request-xlarge
     shm_size: 256mb
     oom_score_adj: *oom-score-critical
-    labels:
-      - "com.example.description=PostgreSQL database for Immich, Nextcloud & Authelia"
-      - "com.example.service=postgres"
 
   redis:
-    <<: *default-logging
+    <<: *service-defaults
+    restart: always
     container_name: pi-redis
     image: docker.io/valkey/valkey:9@sha256:546304417feac0874c3dd576e0952c6bb8f06bb4093ea0c9ca303c73cf458f63
     command: ["valkey-server", "/etc/valkey/valkey.conf"]
     volumes:
       - ./config/redis/valkey.conf:/etc/valkey/valkey.conf:ro
     healthcheck:
+      <<: *healthcheck-fast
       test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
       start_period: 5s
       start_interval: 3s
-    restart: always
     networks:
       - immich
       - nextcloud
       - auth
-    labels:
-      - "com.example.description=Redis cache for Immich, Nextcloud & Authelia"
-      - "com.example.service=redis"
     deploy: *cpu-request-small
     mem_limit: 256m
     oom_score_adj: *oom-score-critical
 
 volumes:
   ddns_data:
-    labels:
-      - "com.example.description=DDNS updater state"
-      - "com.example.service=ddns"
   beszel_data:
-    labels:
-      - "com.example.description=Beszel monitoring data"
-      - "com.example.service=beszel"
   beszel_agent_data:
-    labels:
-      - "com.example.description=Beszel agent data"
-      - "com.example.service=beszel agent"
   beszel_socket:
-    labels:
-      - "com.example.description=Beszel shared runtime socket"
-      - "com.example.service=beszel"
   portainer_data:
-    labels:
-      - "com.example.description=Portainer persistent data"
-      - "com.example.service=portainer"
   pihole_data:
-    labels:
-      - "com.example.description=Pi-hole configuration data"
-      - "com.example.service=pihole"
   n8n_data:
-    labels:
-      - "com.example.description=n8n persistent data"
-      - "com.example.service=n8n"
   ntfy_cache:
-    labels:
-      - "com.example.description=ntfy cache and queue state"
-      - "com.example.service=ntfy"
   ntfy_data:
-    labels:
-      - "com.example.description=ntfy auth and metadata"
-      - "com.example.service=ntfy"
   nextcloud_html:
-    labels:
-      - "com.example.description=Nextcloud application files"
-      - "com.example.service=nextcloud"
   headscale_data:
-    labels:
-      - "com.example.description=Headscale persistent data and keys"
-      - "com.example.service=headscale"
   headplane_data:
-    labels:
-      - "com.example.description=Headplane persistent data"
-      - "com.example.service=headplane"
   tailscale_state:
-    labels:
-      - "com.example.description=Tailscale persistent state"
-      - "com.example.service=tailscale"
 
 networks:
   dns_internal:
@@ -1270,15 +1111,9 @@ networks:
       config:
         - subnet: 172.30.53.0/24
           gateway: 172.30.53.1
-    labels:
-      - "com.example.description=Internal DNS resolver network (Pi-hole <-> Unbound)"
-      - "com.example.service=dns"
   dns_egress:
     driver: bridge
     name: dns_egress
-    labels:
-      - "com.example.description=Unbound recursive DNS egress network"
-      - "com.example.service=dns"
   frontend:
     driver: bridge
     name: frontend
@@ -1287,9 +1122,6 @@ networks:
       config:
         - subnet: 172.30.11.0/24
           gateway: 172.30.11.1
-    labels:
-      - "com.example.description=External Web Network"
-      - "com.example.service=traefik"
   lan:
     driver: macvlan
     name: lan
@@ -1300,41 +1132,23 @@ networks:
       config:
         - subnet: ${HOST_LAN_SUBNET:-192.168.1.0/24}
           gateway: ${HOST_LAN_GATEWAY:-192.168.1.1}
-    labels:
-      - "com.example.description=Physical LAN macvlan for DHCP"
-      - "com.example.service=pihole"
   nextcloud:
     driver: bridge
     name: nextcloud
     internal: true
-    labels:
-      - "com.example.description=Nextcloud application network"
-      - "com.example.service=nextcloud"
   immich:
     driver: bridge
     name: immich
     internal: true
-    labels:
-      - "com.example.description=Immich application network"
-      - "com.example.service=immich"
   ntfy:
     driver: bridge
     name: ntfy
     internal: true
-    labels:
-      - "com.example.description=Internal notifications network"
-      - "com.example.service=ntfy"
   auth:
     driver: bridge
     name: auth
     internal: true
-    labels:
-      - "com.example.description=Authentication network (Authelia, lldap, Postgres, Redis)"
-      - "com.example.service=authelia"
   n8n_runners:
     driver: bridge
     name: n8n_runners
     internal: true
-    labels:
-      - "com.example.description=n8n task runner sidecar network"
-      - "com.example.service=n8n"

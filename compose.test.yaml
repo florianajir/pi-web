@@ -18,16 +18,12 @@ services:
     # Depends on Traefik TLS endpoint which is not functional in CI.
     profiles: [ci-excluded]
 
-  watchtower:
-    # Auto-updates containers; undesirable and irrelevant in CI.
-    profiles: [ci-excluded]
-
   ddns-updater:
     # Requires valid Cloudflare zone and API token.
     profiles: [ci-excluded]
 
   backrest:
-    # Installs apk packages on every start and depends on the full healthy stack.
+    # Depends on the full healthy stack; not suitable for CI.
     profiles: [ci-excluded]
 
   # --- nextcloud: replace host bind mounts with named volumes for CI ---
