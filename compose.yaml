@@ -313,7 +313,7 @@ services:
       - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro
       - /run/udev/data:/run/udev/data:ro
       - /proc:/host/proc:ro
-      - /mnt/sdcard:/mnt/sdcard:ro,rslave
+      - /mnt/sdcard:/extra-filesystems/mmcblk0:ro,rslave
       - beszel_socket:/beszel_socket
       - beszel_agent_data:/var/lib/beszel-agent
     env_file:
@@ -323,7 +323,6 @@ services:
       LISTEN: /beszel_socket/beszel.sock
       HUB_URL: https://beszel.${HOST_NAME:-pi.lan}
       HOST_PROC: /host/proc
-      EXTRA_FILESYSTEMS: /dev/mmcblk0p1
     healthcheck:
       <<: *healthcheck-light
       test: ["CMD", "/agent", "health"]
