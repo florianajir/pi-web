@@ -17,6 +17,7 @@ ExecStartPost=-/bin/bash __PROJECT_PATH__/scripts/headscale-init.sh
 ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/beszel-agent-bootstrap.sh
 ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/portainer-oidc-bootstrap.sh
 ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/nextcloud-oidc-bootstrap.sh
+ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/pihole-bootstrap.sh
 ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/uptime-kuma-bootstrap.sh
 ExecStop=/usr/bin/docker compose down --remove-orphans
 RemainAfterExit=true
