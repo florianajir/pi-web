@@ -5,6 +5,11 @@ REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL USER PASSWORD HOST_LAN_IP CLOUDFLA
 PROJECT_PATH := $(shell pwd)
 UNIT         := pi-web.service
 COMPOSE      := docker compose
+SUDO         ?= sudo
+
+ifeq ($(shell id -u 2>/dev/null),0)
+SUDO :=
+endif
 
 ifeq (headscale-register,$(firstword $(MAKECMDGOALS)))
 HEADSCALE_KEY := $(word 2,$(MAKECMDGOALS))
@@ -48,20 +53,20 @@ preflight: check-env
 install: check-env
 	@echo "📦 Installing..."
 	@echo "🧰 Applying host sysctl settings..."
-	sudo cp config/sysctl.d/pi-web.conf /etc/sysctl.d/99-pi-web.conf
-	sudo sysctl --system >/dev/null
+	$(SUDO) cp config/sysctl.d/pi-web.conf /etc/sysctl.d/99-pi-web.conf
+	$(SUDO) sysctl --system >/dev/null
 	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/pi-web.service > /tmp/$(UNIT)
-	sudo cp /tmp/$(UNIT) /etc/systemd/system/
-	sudo cp config/systemd/system/pi-web-restart.service /etc/systemd/system/
-	sudo cp config/systemd/system/pi-web-restart.timer /etc/systemd/system/
-	sudo systemctl daemon-reload
-	sudo systemctl enable $(UNIT)
+	$(SUDO) cp /tmp/$(UNIT) /etc/systemd/system/
+	$(SUDO) cp config/systemd/system/pi-web-restart.service /etc/systemd/system/
+	$(SUDO) cp config/systemd/system/pi-web-restart.timer /etc/systemd/system/
+	$(SUDO) systemctl daemon-reload
+	$(SUDO) systemctl enable $(UNIT)
 	@echo "✅ Systemd units installed"
 	@if [ "$(SKIP_START)" = "1" ]; then \
 		echo "⏭️  SKIP_START=1 set; not starting stack"; \
 	else \
 		echo "🚀 Starting stack..."; \
-		sudo systemctl start $(UNIT); \
+		$(SUDO) systemctl start $(UNIT); \
 		$(MAKE) start; \
 	fi
 	@echo "✅ Installation complete"
@@ -83,12 +88,12 @@ uninstall:
 	@read -p "Are you sure? Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
 	@echo ""
 	@echo "🛑 Stopping services..."
-	-sudo systemctl stop $(UNIT) 2>/dev/null || true
-	-sudo systemctl stop pi-web-restart.timer 2>/dev/null || true
+	-$(SUDO) systemctl stop $(UNIT) 2>/dev/null || true
+	-$(SUDO) systemctl stop pi-web-restart.timer 2>/dev/null || true
 	@echo "🐳 Removing containers and volumes..."
 	-$(COMPOSE) down -v --remove-orphans 2>/dev/null || true
 	@echo "🧹 Removing bind-mount data directories..."
-	-sudo rm -rf ./data/nextcloud ./data/postgres ./data/n8n ./data/immich ./data/lldap ./data/authelia-config
+	-$(SUDO) rm -rf ./data/nextcloud ./data/postgres ./data/n8n ./data/immich ./data/lldap ./data/authelia-config
 	@echo "🧹 Removing generated config files..."
 	-rm -f ./config/headplane/config.yaml
 	-rm -f ./config/headscale/config.yaml
@@ -96,28 +101,28 @@ uninstall:
 	-rm -f ./config/ntfy/ntfy.env
 	-rm -f ./config/beszel-agent/agent.env
 	@echo "🧰 Removing host sysctl settings..."
-	-sudo rm -f /etc/sysctl.d/99-pi-web.conf
-	-sudo sysctl --system >/dev/null
+	-$(SUDO) rm -f /etc/sysctl.d/99-pi-web.conf
+	-$(SUDO) sysctl --system >/dev/null
 	@echo "🧹 Removing systemd units..."
-	-sudo systemctl disable $(UNIT) 2>/dev/null || true
-	-sudo systemctl disable pi-web-restart.timer 2>/dev/null || true
-	-sudo rm -f /etc/systemd/system/$(UNIT)
-	-sudo rm -f /etc/systemd/system/pi-web-restart.service
-	-sudo rm -f /etc/systemd/system/pi-web-restart.timer
-	-sudo systemctl daemon-reload
+	-$(SUDO) systemctl disable $(UNIT) 2>/dev/null || true
+	-$(SUDO) systemctl disable pi-web-restart.timer 2>/dev/null || true
+	-$(SUDO) rm -f /etc/systemd/system/$(UNIT)
+	-$(SUDO) rm -f /etc/systemd/system/pi-web-restart.service
+	-$(SUDO) rm -f /etc/systemd/system/pi-web-restart.timer
+	-$(SUDO) systemctl daemon-reload
 	@echo "✅ Uninstall complete"
 	@echo ""
 	@echo "ℹ️  Note: .env file preserved. Remove manually if needed."
 
 start:
 	@echo "🚀 Starting Pi-Web stack..."
-	sudo systemctl start $(UNIT)
+	$(SUDO) systemctl start $(UNIT)
 	@echo "✅ Stack started"
 
 stop:
 	@echo "🛑 Stopping Pi-Web stack..."
 	$(COMPOSE) down --remove-orphans
-	sudo systemctl stop $(UNIT) 2>/dev/null || true
+	$(SUDO) systemctl stop $(UNIT) 2>/dev/null || true
 	@echo "✅ Stack stopped"
 
 restart:
@@ -132,7 +137,7 @@ update:
 
 status:
 	@echo "📊 Status"
-	sudo systemctl status $(UNIT) --no-pager -l
+	$(SUDO) systemctl status $(UNIT) --no-pager -l
 
 logs:
 	@echo "📝 Logs (Ctrl+C to exit)"

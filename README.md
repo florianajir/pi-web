@@ -38,6 +38,22 @@ If you're deciding between approaches, here's the short version:
 
 ## Quick Start
 
+Fast lane for the curious:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/florianajir/pi-web/main/install.sh | bash
+```
+
+The installer clones pi-web (default: `~/pi-web`), creates `.env` from `.env.dist`, prompts for the missing required values, then runs `make preflight` and `make install`.
+
+Want a custom path? Use:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/florianajir/pi-web/main/install.sh | bash -s -- --dir /opt/pi-web
+```
+
+Prefer the manual route? Same destination, slightly more typing:
+
 ```bash
 git clone https://github.com/florianajir/pi-web.git
 cd pi-web

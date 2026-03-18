@@ -23,6 +23,29 @@ Before installing pi-web, ensure you have:
    - Zone: DNS edit permissions on your domain
 4. **Docker & Docker Compose** — Pre-installed on Pi OS (verified during `make preflight`)
 
+## One-Line Installer
+
+For the “let me try this before I overthink it” workflow:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/florianajir/pi-web/main/install.sh | bash
+```
+
+What it does:
+
+- Clones or refreshes pi-web (default location: `~/pi-web`)
+- Copies `.env.dist` to `.env` if needed
+- Prompts only for missing required settings
+- Runs `make preflight` and `make install`
+
+Optional custom location:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/florianajir/pi-web/main/install.sh | bash -s -- --dir /opt/pi-web
+```
+
+Use the manual steps below if you prefer to review and edit everything yourself before installation.
+
 ## Installation Steps
 
 ### 1. Clone Repository
