@@ -3,7 +3,17 @@
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docker.com/)
 [![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Compatible-red.svg)](https://www.raspberrypi.org/)
 
-A compact, self-hosted application stack for Raspberry Pi with Docker Compose. One config file, HTTPS-secured, private DNS, single sign-on, and VPN connectivity — all running locally.
+A production-ready, privacy-focused web stack for Raspberry Pi—from DNS filtering to personal cloud—deployed in minutes.
+
+pi-web bundles the hard parts (HTTPS, SSO, private DNS, VPN, backups, and monitoring) into a clean Docker Compose setup you can audit, customize, and run on standard Linux.
+
+## Why pi-web?
+
+If you're deciding between approaches, here's the short version:
+
+- **Vs installing apps manually:** pi-web saves days of integration work by shipping a pre-wired stack (Traefik, Authelia, LLDAP, Postgres, Redis, backups, and monitoring) that works together out of the box.
+- **Vs Umbrel or CasaOS:** pi-web is **lightweight and transparent**—no proprietary host OS, no app-store lock-in, just pure Docker Compose and readable config files.
+- **For long-term ownership:** everything is Git-friendly and scriptable, so installs, updates, and recovery stay repeatable.
 
 ## Stack Overview
 
