@@ -66,10 +66,11 @@ services:
       - ./config/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh
 
   # --- lldap: set JWT secret inline for CI ---
-  # The lldap.env file lives under ./data/lldap/ which is excluded from the Dagger
-  # source mount.  Without it LLDAP_JWT_SECRET is unset and lldap crashes on start.
-  # Set a static CI placeholder directly so lldap starts successfully.
+  # The lldap.env file is created by authelia-pre-start.sh with mode 600; Docker Compose
+  # cannot open it when running as the CI user even with required: false.  Reset env_file to
+  # an empty list and inject LLDAP_JWT_SECRET directly so lldap starts successfully.
   lldap:
+    env_file: !reset []
     environment:
       LLDAP_JWT_SECRET: ci-jwt-secret-for-testing-placeholder
 

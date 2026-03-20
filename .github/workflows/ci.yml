@@ -87,6 +87,10 @@ jobs:
           test -f ./config/headscale/config.yaml
           test -f ./config/headscale/policy.hujson
 
+          # Make generated data world-readable so Docker Compose (and containers)
+          # can open env_files regardless of the user that created them.
+          chmod -R a+rX /tmp/pi-web-ci-data
+
       - name: Start stack and run smoke checks
         run: |
           set -euo pipefail
