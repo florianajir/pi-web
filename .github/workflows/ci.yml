@@ -81,6 +81,10 @@ jobs:
           sh ./scripts/authelia-pre-start.sh
           sh ./scripts/headscale-pre-start.sh
 
+          # Make all generated files world-readable so docker compose (and the Docker
+          # daemon) can open env_files regardless of the runner's umask or ownership.
+          chmod -R a+rX /tmp/pi-web-ci-data
+
           # Guard against bind-mount path type mismatches in CI
           test -f ./config/headplane/config.yaml
           test ! -d ./config/headplane/config.yaml
@@ -119,4 +123,4 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          rm -rf /tmp/pi-web-ci-data
+          sudo rm -rf /tmp/pi-web-ci-data
