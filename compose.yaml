@@ -207,7 +207,7 @@ services:
       - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
       - "--certificatesresolvers.cloudflare.acme.dnschallenge.delaybeforecheck=10"
     labels:
-      - "homepage.group=Network"
+      - "homepage.group=Monitoring"
       - "homepage.name=Traefik"
       - "homepage.icon=traefik.png"
       - "homepage.href=https://traefik.${HOST_NAME:-pi.lan}"
@@ -455,7 +455,7 @@ services:
       unbound:
         condition: service_healthy
     labels:
-      - "homepage.group=Network"
+      - "homepage.group=Privacy"
       - "homepage.name=Pi-hole"
       - "homepage.icon=pi-hole.png"
       - "homepage.href=https://pihole.${HOST_NAME:-pi.lan}"
@@ -586,7 +586,7 @@ services:
     depends_on:
       - headscale
     labels:
-      - "homepage.group=Network"
+      - "homepage.group=Tailscale"
       - "homepage.name=Headplane"
       - "homepage.icon=headscale.png"
       - "homepage.href=https://headscale.${HOST_NAME:-pi.lan}/admin"
@@ -648,7 +648,7 @@ services:
     tmpfs:
       - /var/run/headscale
     labels:
-      - "homepage.group=Network"
+      - "homepage.group=Tailscale"
       - "homepage.name=Headscale"
       - "homepage.icon=tailscale.png"
       - "homepage.href=https://headscale.${HOST_NAME:-pi.lan}"
@@ -705,7 +705,7 @@ services:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s
     labels:
-      - "homepage.group=Network"
+      - "homepage.group=Tailscale"
       - "homepage.name=Tailscale"
       - "homepage.icon=tailscale.png"
       - "homepage.description=VPN mesh client"
