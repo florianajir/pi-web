@@ -183,16 +183,85 @@ func (m *PiWeb) composeDown(ctx context.Context, src *dagger.Directory, sock *da
 func (m *PiWeb) runHealthChecks(ctx context.Context, src *dagger.Directory, sock *dagger.Socket, sb *strings.Builder) error {
 	cli := m.dockerCLI(src, sock)
 
-	// 1. Traefik ping health check
-	if _, err := cli.WithExec(composeArgs(
-		"exec", "-T", "traefik",
-		"traefik", "healthcheck", "--ping",
-	)).Stdout(ctx); err != nil {
-		return fmt.Errorf("traefik healthcheck: %w", err)
+	// check runs a command inside a compose service container and records the result.
+	check := func(label, service string, cmd ...string) error {
+		args := append([]string{"exec", "-T", service}, cmd...)
+		if _, err := cli.WithExec(composeArgs(args...)).Stdout(ctx); err != nil {
+			return fmt.Errorf("%s: %w", label, err)
+		}
+		sb.WriteString("✔ " + label + "\n")
+		return nil
 	}
-	sb.WriteString("✔ Traefik ping OK\n")
 
-	// 2. Nextcloud /status.php — accept 200 or 503, retry up to 12 times
+	// --- Infrastructure ---
+
+	if err := check("traefik ping", "traefik",
+		"traefik", "healthcheck", "--ping"); err != nil {
+		return err
+	}
+	// Confirm postgres is accepting connections AND all four application databases
+	// were created by config/postgres/init-databases.sh.
+	if err := check("postgres ready + databases", "postgres",
+		"sh", "-c", "pg_isready -U postgres && psql -U postgres -lqt | grep -qE 'authelia|immich|lldap|nextcloud'"); err != nil {
+		return err
+	}
+	if err := check("redis ping", "redis",
+		"redis-cli", "ping"); err != nil {
+		return err
+	}
+
+	// --- DNS stack ---
+
+	if err := check("unbound DNS resolution", "unbound",
+		"unbound-host", "-r", "-t", "A", "cloudflare.com"); err != nil {
+		return err
+	}
+	if err := check("pihole DNS resolution", "pihole",
+		"nslookup", "cloudflare.com", "127.0.0.1"); err != nil {
+		return err
+	}
+
+	// --- Auth stack ---
+
+	if err := check("lldap web UI", "lldap",
+		"wget", "-qO", "/dev/null", "http://127.0.0.1:17170/"); err != nil {
+		return err
+	}
+	if err := check("authelia health API", "authelia",
+		"wget", "-qO", "/dev/null", "http://127.0.0.1:9091/api/health"); err != nil {
+		return err
+	}
+
+	// --- Application services ---
+
+	if err := check("ntfy health", "ntfy",
+		"wget", "-qO", "/dev/null", "http://127.0.0.1/v1/health"); err != nil {
+		return err
+	}
+	if err := check("n8n health", "n8n",
+		"wget", "-qO", "/dev/null", "http://127.0.0.1:5678/healthz"); err != nil {
+		return err
+	}
+	if err := check("homepage", "homepage",
+		"wget", "-qO", "/dev/null", "http://127.0.0.1:3000/"); err != nil {
+		return err
+	}
+	if err := check("beszel health", "beszel",
+		"/beszel", "health", "--url", "http://localhost:8090"); err != nil {
+		return err
+	}
+	if err := check("uptime-kuma health", "uptime-kuma",
+		"/extra/healthcheck"); err != nil {
+		return err
+	}
+	if err := check("portainer", "portainer",
+		"/portainer", "--version"); err != nil {
+		return err
+	}
+
+	// --- Storage services ---
+
+	// Nextcloud /status.php — accept 200 (ready) or 503 (still initialising DB), retry up to 12×.
 	ncScript := `code=""
 for i in $(seq 1 12); do
   code=$(curl -sS -o /dev/null -w '%{http_code}' http://localhost/status.php | tr -d '\r\n')
@@ -209,18 +278,14 @@ echo "$code"`
 		"sh", "-c", ncScript,
 	)).Stdout(ctx)
 	if err != nil {
-		return fmt.Errorf("nextcloud healthcheck: %w", err)
+		return fmt.Errorf("nextcloud: %w", err)
 	}
-	sb.WriteString("✔ Nextcloud status.php: " + strings.TrimSpace(ncOut) + "\n")
+	sb.WriteString("✔ nextcloud status.php: " + strings.TrimSpace(ncOut) + "\n")
 
-	// 3. Immich API ping
-	if _, err := cli.WithExec(composeArgs(
-		"exec", "-T", "immich-server",
-		"curl", "-fsS", "http://localhost:2283/api/server/ping",
-	)).Stdout(ctx); err != nil {
-		return fmt.Errorf("immich healthcheck: %w", err)
+	if err := check("immich API ping", "immich-server",
+		"curl", "-fsS", "http://localhost:2283/api/server/ping"); err != nil {
+		return err
 	}
-	sb.WriteString("✔ Immich API ping OK\n")
 
 	return nil
 }
