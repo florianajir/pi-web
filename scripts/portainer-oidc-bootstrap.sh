@@ -443,7 +443,8 @@ ensure_portainer_users_are_admin() {
     local users_json user_ids user_id admin_usernames
 
     if [ -z "$lldap_password" ]; then
-        log "WARNING: LLDAP password not provided; promoting all non-admin users to admin instead of group-based"
+        log "WARNING: LLDAP password not provided; skipping group-based Portainer admin promotion"
+        return 0
     fi
 
     users_json="$(portainer_api_get "$jwt" "/api/users")" || {
@@ -451,17 +452,20 @@ ensure_portainer_users_are_admin() {
         return 1
     }
 
-    if [ -n "$lldap_password" ]; then
-        admin_usernames="$(get_lldap_admin_group_members "$lldap_password" 2>/dev/null || echo "")" || true
+    admin_usernames="$(get_lldap_admin_group_members "$lldap_password" 2>/dev/null || echo "")" || true
+    if [ -z "$admin_usernames" ]; then
+        log "No Portainer admin candidates resolved from LLDAP groups [$PORTAINER_OIDC_ADMIN_GROUPS]; skipping admin promotions"
+        return 0
     fi
 
     user_ids="$(printf '%s' "$users_json" | jq -r --arg admins "${admin_usernames:-}" '
-        ($admins | split(" ") | map(select(. != ""))) as $admin_list |
+        ($admins | split(" ") | map(select(. != "") | ascii_downcase)) as $admin_list |
         [.[] | select(.Id > 0 and .Role != 1 and
-            (if ($admin_list | length) > 0 then .Username as $u | $admin_list | any(. == $u) else true end)
+            ((.Username // "" | ascii_downcase) as $u | $admin_list | any(. == $u))
         ) | .Id] | join(" ")')"
 
     if [ -z "$user_ids" ]; then
+        log "No non-admin Portainer users matched LLDAP admin groups [$PORTAINER_OIDC_ADMIN_GROUPS]"
         return 0
     fi
 
@@ -476,9 +480,86 @@ ensure_portainer_users_are_admin() {
 
 get_lldap_admin_group_members() {
     local password="$1"
-    # Simplified: check if LLDAP is reachable; if yes, try to query.
-    # For now, returns empty (query fails gracefully and we skip group filtering).
-    # TODO: Implement full LDAP protocol query or use lldap REST API if available.
+    local lldap_username lldap_url admin_groups login_response token groups_response members login_candidates attempted_login candidate
+
+    lldap_username="admin"
+    login_candidates="$lldap_username"
+    candidate="$(get_env_value USER)"
+    if [ -n "$candidate" ]; then
+        case " $login_candidates " in
+            *" $candidate "*) ;;
+            *) login_candidates="$login_candidates $candidate" ;;
+        esac
+    fi
+    candidate="$(get_env_value EMAIL)"
+    if [ -n "$candidate" ]; then
+        case " $login_candidates " in
+            *" $candidate "*) ;;
+            *) login_candidates="$login_candidates $candidate" ;;
+        esac
+    fi
+
+    lldap_url="http://${LLDAP_CONTAINER}:17170"
+    admin_groups="$(printf '%s' "$PORTAINER_OIDC_ADMIN_GROUPS" | tr ',' ' ' | tr -s ' ')"
+    if [ -z "$admin_groups" ]; then
+        log "WARNING: PORTAINER_OIDC_ADMIN_GROUPS is empty; cannot resolve Portainer admin candidates"
+        return 1
+    fi
+
+    attempted_login=""
+    token=""
+    for lldap_username in $login_candidates; do
+        login_response="$(docker_curl -X POST \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg username "$lldap_username" --arg pass "$password" '{username:$username,password:$pass}')" \
+            "$lldap_url/auth/simple/login" 2>/dev/null)" || {
+            attempted_login="${attempted_login:+$attempted_login, }$lldap_username"
+            continue
+        }
+
+        token="$(printf '%s' "$login_response" | jq -r '.token // empty')" || token=""
+        if [ -n "$token" ]; then
+            break
+        fi
+        attempted_login="${attempted_login:+$attempted_login, }$lldap_username"
+    done
+
+    if [ -z "$token" ]; then
+        log "WARNING: Failed to authenticate to LLDAP API (tried: $attempted_login)"
+        return 1
+    fi
+
+    groups_response="$(docker_curl -X POST \
+        -H 'Content-Type: application/json' \
+        -H "Authorization: Bearer $token" \
+        -d '{"query":"query { groups { displayName users { id email } } }"}' \
+        "$lldap_url/api/graphql" 2>/dev/null)" || {
+        log "WARNING: Failed to query LLDAP GraphQL groups"
+        return 1
+    }
+
+    if printf '%s' "$groups_response" | jq -e '.errors // empty | length > 0' >/dev/null 2>&1; then
+        log "WARNING: LLDAP GraphQL returned errors while fetching group members"
+        return 1
+    fi
+
+    members="$(printf '%s' "$groups_response" | jq -r --arg groups "$admin_groups" '
+        ($groups | split(" ") | map(select(. != "") | ascii_downcase)) as $wanted |
+        [(.data.groups // [])[]
+            | select((.displayName // "" | ascii_downcase) as $g | $wanted | any(. == $g))
+            | .users[]?
+            | (.id // empty), (.email // empty)
+        ]
+        | map(select(. != ""))
+        | unique
+        | join(" ")')" || members=""
+
+    if [ -z "$members" ]; then
+        log "WARNING: LLDAP admin groups [$PORTAINER_OIDC_ADMIN_GROUPS] resolved to no users"
+        return 1
+    fi
+
+    printf '%s' "$members"
     return 0
 }
 
