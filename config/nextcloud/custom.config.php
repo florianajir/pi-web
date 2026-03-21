@@ -59,6 +59,8 @@ if (isset($CONFIG['trusted_domains']) && is_array($CONFIG['trusted_domains'])) {
 
 $CONFIG['trusted_domains'] = array_values(array_unique(array_merge($existingTrustedDomains, $runtimeTrustedDomains)));
 
+$CONFIG['hide_login_form'] = true;
+
 $CONFIG['skeletondirectory'] = '';
 
 $redisHost = getenv('REDIS_HOST');
