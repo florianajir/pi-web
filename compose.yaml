@@ -74,9 +74,6 @@ services:
         ]}
     volumes:
       - ddns_data:/updater/data
-    healthcheck:
-      <<: *healthcheck-relaxed
-      test: ["CMD", "/updater/ddns-updater", "healthcheck"]
     deploy: *cpu-request-tiny
     mem_limit: 64m
     oom_score_adj: *oom-score-critical
@@ -362,9 +359,6 @@ services:
       - "traefik.http.routers.uptime-kuma.middlewares=lan@docker,authelia@docker"
       - "traefik.http.routers.uptime-kuma.tls=true"
       - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
-    healthcheck:
-      <<: *healthcheck-default
-      test: ["CMD", "extra/healthcheck"]
     deploy: *cpu-request-small
     mem_limit: 256m
     oom_score_adj: *oom-score-important
@@ -467,9 +461,6 @@ services:
       - "traefik.http.routers.pihole.tls=true"
       - "traefik.http.routers.pihole.middlewares=lan@docker,authelia@docker"
       - "traefik.http.services.pihole.loadbalancer.server.port=8082"
-    healthcheck:
-      <<: *healthcheck-default
-      test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com"]
     cpuset: "0"
     deploy: *cpu-request-medium
     mem_limit: 192m
@@ -551,6 +542,15 @@ services:
       - n8n_runners
     depends_on:
       - n8n
+    healthcheck:
+      <<: *healthcheck-fast
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:5680/healthz && nc -z -w 2 n8n 5679",
+        ]
+      start_period: 5s
+      start_interval: 3s
     deploy: *cpu-request-small
     mem_limit: 256m
     oom_score_adj: *oom-score-deprioritize
@@ -713,6 +713,31 @@ services:
     mem_limit: 128m
     oom_score_adj: *oom-score-critical
 
+  immich-machine-learning:
+    <<: *service-defaults
+    container_name: pi-immich-machine-learning
+    image: ghcr.io/immich-app/immich-machine-learning:v2
+    networks:
+      - immich
+    environment:
+      TZ: ${TIMEZONE:-Europe/Paris}
+      # Raspberry Pi tuning (CPU-first): keep concurrency and memory pressure predictable.
+      MACHINE_LEARNING_WORKERS: 1
+      MACHINE_LEARNING_REQUEST_THREADS: 2
+      MACHINE_LEARNING_MODEL_INTER_OP_THREADS: 1
+      MACHINE_LEARNING_MODEL_INTRA_OP_THREADS: 2
+      MACHINE_LEARNING_MODEL_TTL: 180
+      MACHINE_LEARNING_WORKER_TIMEOUT: 300
+      # Raspberry Pi does not provide Mali/RKNN by default; keep unsupported accelerators disabled.
+      MACHINE_LEARNING_ANN: "false"
+      MACHINE_LEARNING_RKNN: "false"
+    volumes:
+      - immich_model_cache:/cache
+    cpuset: "2-3"
+    deploy: *cpu-request-medium
+    mem_limit: 1024m
+    oom_score_adj: *oom-score-deprioritize
+
   immich-server:
     <<: *service-defaults
     container_name: pi-immich
@@ -728,6 +753,7 @@ services:
       DB_PASSWORD: ${PASSWORD}
       REDIS_HOSTNAME: redis
       IMMICH_CONFIG_FILE: /immich-oauth-config.yaml
+      CPU_CORES: 3
       TZ: ${TIMEZONE:-Europe/Paris}
     networks:
       - frontend
@@ -739,10 +765,6 @@ services:
         condition: service_healthy
     expose:
       - 2283
-    healthcheck:
-      <<: *healthcheck-default
-      test: ["CMD", "curl", "-fsS", "http://localhost:2283/api/server/ping"]
-      start_interval: 5s
     labels:
       - "homepage.group=Storage"
       - "homepage.name=Immich"
@@ -861,10 +883,6 @@ services:
       - "traefik.http.services.homepage.loadbalancer.server.port=3000"
     depends_on:
       - traefik
-    healthcheck:
-      <<: *healthcheck-light
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/"]
-      start_period: 15s
     deploy: *cpu-request-small
     mem_limit: 128m
     oom_score_adj: *oom-score-deprioritize
@@ -952,11 +970,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    healthcheck:
-      <<: *healthcheck-default
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:17170/"]
-      start_period: 10s
-      start_interval: 5s
     labels:
       - "homepage.group=User Management"
       - "homepage.name=LLDAP"
@@ -1068,15 +1081,15 @@ services:
     <<: *service-defaults
     restart: always
     container_name: pi-redis
-    image: docker.io/valkey/valkey:9@sha256:546304417feac0874c3dd576e0952c6bb8f06bb4093ea0c9ca303c73cf458f63
-    command: ["valkey-server", "/etc/valkey/valkey.conf"]
-    volumes:
-      - ./config/redis/valkey.conf:/etc/valkey/valkey.conf:ro
+    image: docker.io/valkey/valkey:9@sha256:3eeb09785cd61ec8e3be35f8804c8892080f3ca21934d628abc24ee4ed1698f6
     healthcheck:
       <<: *healthcheck-fast
       test: ["CMD", "redis-cli", "ping"]
       start_period: 5s
       start_interval: 3s
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
+    volumes:
+      - ./config/redis/valkey.conf:/etc/valkey/valkey.conf:ro
     networks:
       - immich
       - nextcloud
@@ -1095,6 +1108,7 @@ volumes:
   n8n_data:
   ntfy_cache:
   ntfy_data:
+  immich_model_cache:
   nextcloud_html:
   headscale_data:
   headplane_data:
