@@ -330,7 +330,7 @@ services:
 
   uptime-kuma:
     <<: *service-defaults
-    image: louislam/uptime-kuma:2.2.0
+    image: louislam/uptime-kuma:2
     container_name: pi-uptime-kuma
     networks:
       - frontend
@@ -364,34 +364,43 @@ services:
     mem_limit: 256m
     oom_score_adj: *oom-score-important
 
-  portainer:
+  dockhand:
     <<: *service-defaults
-    image: portainer/portainer-ce:lts
-    command: -H unix:///var/run/docker.sock --http-enabled
-    container_name: pi-portainer
+    image: fnsys/dockhand:v1.0.22
+    container_name: pi-dockhand
     networks:
       - frontend
     expose:
-      - 9000
+      - 3000
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - DISABLE_LOCAL_LOGIN=true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - portainer_data:/data
+      - dockhand_data:/app/data
     labels:
       - "homepage.group=Monitoring"
-      - "homepage.name=Portainer"
-      - "homepage.icon=portainer.png"
-      - "homepage.href=https://portainer.${HOST_NAME:-pi.lan}"
+      - "homepage.name=Dockhand"
+      - "homepage.icon=docker.png"
+      - "homepage.href=https://dockhand.${HOST_NAME:-pi.lan}"
       - "homepage.description=Container management"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      - "traefik.http.routers.portainer.rule=Host(`portainer.${HOST_NAME:-pi.lan}`)"
-      - "traefik.http.routers.portainer.entrypoints=websecure"
-      - "traefik.http.routers.portainer.middlewares=lan@docker"
-      - "traefik.http.routers.portainer.tls=true"
-      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+      - "traefik.http.routers.dockhand.rule=Host(`dockhand.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.dockhand.entrypoints=websecure"
+      - "traefik.http.routers.dockhand.middlewares=lan@docker"
+      - "traefik.http.routers.dockhand.tls=true"
+      - "traefik.http.services.dockhand.loadbalancer.server.port=3000"
     healthcheck:
       <<: *healthcheck-light
-      test: ["CMD", "/portainer", "--version"]
+      test:
+        [
+          "CMD",
+          "curl",
+          "-fsSo",
+          "/dev/null",
+          "http://127.0.0.1:3000/api/auth/session",
+        ]
     deploy: *cpu-request-small
     mem_limit: 128m
     oom_score_adj: *oom-score-deprioritize
@@ -1105,7 +1114,7 @@ volumes:
   beszel_data:
   beszel_agent_data:
   beszel_socket:
-  portainer_data:
+  dockhand_data:
   pihole_data:
   n8n_data:
   ntfy_cache:

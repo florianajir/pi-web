@@ -13,10 +13,6 @@ PORTAINER_URL_DOCKER="${PORTAINER_URL_DOCKER:-http://pi-portainer:9000}"
 PORTAINER_OIDC_DEFAULT_TEAM_NAME="oidc-users"
 PORTAINER_ENDPOINT_ROLE_ID=1
 PORTAINER_TEAM_MEMBER_ROLE=2
-PORTAINER_OIDC_ADMIN_GROUPS="admin lldap_admin"
-LLDAP_CONTAINER="${LLDAP_CONTAINER:-pi-lldap}"
-LLDAP_BASE_DN="dc=home,dc=ldap"
-LLDAP_ADMIN_DN="cn=admin,ou=people,dc=home,dc=ldap"
 
 wait_for_authelia_health() {
     local status
@@ -439,33 +435,17 @@ ensure_portainer_default_team_memberships() {
 
 ensure_portainer_users_are_admin() {
     local jwt="$1"
-    local lldap_password="${2:-}"
-    local users_json user_ids user_id admin_usernames
-
-    if [ -z "$lldap_password" ]; then
-        log "WARNING: LLDAP password not provided; skipping group-based Portainer admin promotion"
-        return 0
-    fi
+    local users_json user_ids user_id
 
     users_json="$(portainer_api_get "$jwt" "/api/users")" || {
         log "ERROR: Failed to fetch Portainer users"
         return 1
     }
 
-    admin_usernames="$(get_lldap_admin_group_members "$lldap_password" 2>/dev/null || echo "")" || true
-    if [ -z "$admin_usernames" ]; then
-        log "No Portainer admin candidates resolved from LLDAP groups [$PORTAINER_OIDC_ADMIN_GROUPS]; skipping admin promotions"
-        return 0
-    fi
-
-    user_ids="$(printf '%s' "$users_json" | jq -r --arg admins "${admin_usernames:-}" '
-        ($admins | split(" ") | map(select(. != "") | ascii_downcase)) as $admin_list |
-        [.[] | select(.Id > 0 and .Role != 1 and
-            ((.Username // "" | ascii_downcase) as $u | $admin_list | any(. == $u))
-        ) | .Id] | join(" ")')"
+    user_ids="$(printf '%s' "$users_json" | jq -r '[.[] | select(.Id > 0 and .Role != 1) | .Id] | join(" ")')"
 
     if [ -z "$user_ids" ]; then
-        log "No non-admin Portainer users matched LLDAP admin groups [$PORTAINER_OIDC_ADMIN_GROUPS]"
+        log "All Portainer users are already admin"
         return 0
     fi
 
@@ -474,93 +454,8 @@ ensure_portainer_users_are_admin() {
             log "ERROR: Failed to promote Portainer user $user_id to admin"
             return 1
         }
-        log "Promoted Portainer user $user_id to admin (member of admin group)"
+        log "Promoted Portainer user $user_id to admin"
     done
-}
-
-get_lldap_admin_group_members() {
-    local password="$1"
-    local lldap_username lldap_url admin_groups login_response token groups_response members login_candidates attempted_login candidate
-
-    lldap_username="admin"
-    login_candidates="$lldap_username"
-    candidate="$(get_env_value USER)"
-    if [ -n "$candidate" ]; then
-        case " $login_candidates " in
-            *" $candidate "*) ;;
-            *) login_candidates="$login_candidates $candidate" ;;
-        esac
-    fi
-    candidate="$(get_env_value EMAIL)"
-    if [ -n "$candidate" ]; then
-        case " $login_candidates " in
-            *" $candidate "*) ;;
-            *) login_candidates="$login_candidates $candidate" ;;
-        esac
-    fi
-
-    lldap_url="http://${LLDAP_CONTAINER}:17170"
-    admin_groups="$(printf '%s' "$PORTAINER_OIDC_ADMIN_GROUPS" | tr ',' ' ' | tr -s ' ')"
-    if [ -z "$admin_groups" ]; then
-        log "WARNING: PORTAINER_OIDC_ADMIN_GROUPS is empty; cannot resolve Portainer admin candidates"
-        return 1
-    fi
-
-    attempted_login=""
-    token=""
-    for lldap_username in $login_candidates; do
-        login_response="$(docker_curl -X POST \
-            -H 'Content-Type: application/json' \
-            -d "$(jq -nc --arg username "$lldap_username" --arg pass "$password" '{username:$username,password:$pass}')" \
-            "$lldap_url/auth/simple/login" 2>/dev/null)" || {
-            attempted_login="${attempted_login:+$attempted_login, }$lldap_username"
-            continue
-        }
-
-        token="$(printf '%s' "$login_response" | jq -r '.token // empty')" || token=""
-        if [ -n "$token" ]; then
-            break
-        fi
-        attempted_login="${attempted_login:+$attempted_login, }$lldap_username"
-    done
-
-    if [ -z "$token" ]; then
-        log "WARNING: Failed to authenticate to LLDAP API (tried: $attempted_login)"
-        return 1
-    fi
-
-    groups_response="$(docker_curl -X POST \
-        -H 'Content-Type: application/json' \
-        -H "Authorization: Bearer $token" \
-        -d '{"query":"query { groups { displayName users { id email } } }"}' \
-        "$lldap_url/api/graphql" 2>/dev/null)" || {
-        log "WARNING: Failed to query LLDAP GraphQL groups"
-        return 1
-    }
-
-    if printf '%s' "$groups_response" | jq -e '.errors // empty | length > 0' >/dev/null 2>&1; then
-        log "WARNING: LLDAP GraphQL returned errors while fetching group members"
-        return 1
-    fi
-
-    members="$(printf '%s' "$groups_response" | jq -r --arg groups "$admin_groups" '
-        ($groups | split(" ") | map(select(. != "") | ascii_downcase)) as $wanted |
-        [(.data.groups // [])[]
-            | select((.displayName // "" | ascii_downcase) as $g | $wanted | any(. == $g))
-            | .users[]?
-            | (.id // empty), (.email // empty)
-        ]
-        | map(select(. != ""))
-        | unique
-        | join(" ")')" || members=""
-
-    if [ -z "$members" ]; then
-        log "WARNING: LLDAP admin groups [$PORTAINER_OIDC_ADMIN_GROUPS] resolved to no users"
-        return 1
-    fi
-
-    printf '%s' "$members"
-    return 0
 }
 
 # Compute OIDC defaults once, reused by build and verify
@@ -752,9 +647,8 @@ main() {
         die "Failed to backfill Portainer default OAuth team memberships"
     }
 
-    LLDAP_PASSWORD="$(get_env_value PASSWORD)"
-    ensure_portainer_users_are_admin "$JWT_TOKEN" "$LLDAP_PASSWORD" || {
-        die "Failed to promote admin group members in Portainer"
+    ensure_portainer_users_are_admin "$JWT_TOKEN" || {
+        die "Failed to promote all users to admin in Portainer"
     }
 
     log "Portainer OIDC configured successfully"

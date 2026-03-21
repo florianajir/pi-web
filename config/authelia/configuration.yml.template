@@ -128,7 +128,7 @@ __OIDC_PRIVATE_KEY__
         - 'https://nextcloud.__HOST_NAME__'
         - 'https://immich.__HOST_NAME__'
         - 'https://beszel.__HOST_NAME__'
-        - 'https://portainer.__HOST_NAME__'
+        - 'https://dockhand.__HOST_NAME__'
         - 'https://headscale.__HOST_NAME__'
     clients:
       - client_id: nextcloud
@@ -200,27 +200,24 @@ __OIDC_PRIVATE_KEY__
         token_endpoint_auth_method: client_secret_basic
         userinfo_signed_response_alg: none
 
-      - client_id: portainer
-        client_name: Portainer
-        client_secret: '{{ secret "/config/secrets/oidc_portainer_secret_hash" }}'
+      - client_id: dockhand
+        client_name: Dockhand
+        client_secret: '{{ secret "/config/secrets/oidc_dockhand_secret_hash" }}'
         public: false
         authorization_policy: admin_only
         consent_mode: implicit
         redirect_uris:
-          - 'https://portainer.__HOST_NAME__'
-          - 'https://portainer.__HOST_NAME__/'
+          - 'https://dockhand.__HOST_NAME__/api/auth/oidc/callback'
         scopes:
           - openid
           - profile
           - email
           - groups
-          - offline_access
         response_types:
           - code
         grant_types:
           - authorization_code
-          - refresh_token
-        token_endpoint_auth_method: client_secret_basic
+        token_endpoint_auth_method: client_secret_post
         userinfo_signed_response_alg: none
 
       - client_id: headplane

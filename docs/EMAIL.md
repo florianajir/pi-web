@@ -184,11 +184,19 @@ These support email but must be configured through their web UI:
 
 Immich doesn't expose SMTP settings for notifications. Workaround: Use webhooks to external services (n8n, Zapier, IFTTT).
 
-#### Portainer
+#### Dockhand
 
-**Status:** Not currently supported in Portainer
+**Status:** Auto-configured on startup
 
-Portainer doesn't expose SMTP settings for notifications. Workaround: Use alerts via webhooks.
+Dockhand is bootstrapped by `scripts/dockhand-oidc-bootstrap.sh` to:
+
+- set the app timezone from `TIMEZONE`
+- create/update an Apprise notification channel backed by your local `ntfy` service
+- bind that channel to Dockhand's local environment for container lifecycle alerts
+
+The bootstrap reuses the generated `dockhand` ntfy service account from `config/ntfy/ntfy.env`, so there is no extra UI setup required.
+
+Dockhand still supports manual SMTP notifications in its UI, but the default stack path is `ntfy`, not SMTP.
 
 ## Testing Email
 

@@ -118,7 +118,7 @@ Services are automatically configured with SSO. Just visit them and they'll redi
 
 - **Nextcloud** — `https://nextcloud.<HOST_NAME>`
 - **Immich** — `https://immich.<HOST_NAME>`
-- **Portainer** — `https://portainer.<HOST_NAME>` (admin only, 2FA required)
+- **Dockhand** — `https://dockhand.<HOST_NAME>` (admin only, 2FA required)
 - **Beszel** — `https://beszel.<HOST_NAME>`
 - **n8n** — `https://n8n.<HOST_NAME>`
 - And more (see [Architecture](ARCHITECTURE.md))

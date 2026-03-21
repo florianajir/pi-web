@@ -17,7 +17,7 @@ flowchart LR
       Nextcloud[nextcloud]
       Immich[immich-server]
       N8N[n8n]
-      Portainer[portainer]
+      Dockhand[dockhand]
       Beszel[beszel]
       Headscale[headscale]
       Headplane[headplane]
@@ -40,7 +40,7 @@ flowchart LR
   Traefik --> Nextcloud
   Traefik --> Immich
   Traefik --> N8N
-  Traefik --> Portainer
+  Traefik --> Dockhand
   Traefik --> Beszel
   Traefik --> Headscale
   Traefik --> Headplane
@@ -76,11 +76,11 @@ flowchart LR
 | **Traefik** | Reverse proxy, TLS termination, request routing | Internet |
 | **ddns-updater** | Keeps Cloudflare DNS pointing to your Pi's public IP | Cloudflare API |
 | **Authelia** | SSO portal, OIDC provider, forward-auth middleware | All users |
-| **LLDAP** | Lightweight LDAP directory for user management | Authelia, Nextcloud, Portainer, etc. |
+| **LLDAP** | Lightweight LDAP directory for user management | Authelia, Nextcloud, Dockhand, etc. |
 | **Nextcloud** | File storage, collaboration | Users via Traefik + SSO |
 | **Immich** | Photo/video library with ML tagging | Users via Traefik + SSO |
 | **n8n** | Workflow automation | Users via Traefik |
-| **Portainer** | Container & stack management UI | Admins via Traefik + SSO + 2FA |
+| **Dockhand** | Container & stack management UI | Admins via Traefik + SSO + 2FA |
 | **Beszel** | Server monitoring, alerts, webhooks | Admins via Traefik + SSO |
 | **Headscale** | Self-hosted Tailscale control plane | VPN clients |
 | **Headplane** | Web UI for Headscale admin | Admins via Traefik + SSO + 2FA |
@@ -101,7 +101,7 @@ flowchart TB
     subgraph frontend["frontend (172.30.11.0/24)"]
         Traefik
         Authelia
-        Services["Nextcloud, Immich, Portainer,\nBeszel, n8n, Ntfy, Backrest,\nHeadplane, Homepage, Uptime Kuma"]
+        Services["Nextcloud, Immich, Dockhand,\nBeszel, n8n, Ntfy, Backrest,\nHeadplane, Homepage, Uptime Kuma"]
     end
 
     subgraph auth["auth (internal)"]
