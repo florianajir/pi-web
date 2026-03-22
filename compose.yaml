@@ -999,7 +999,7 @@ services:
 
   authelia:
     <<: *service-defaults
-    image: authelia/authelia:4.39.15
+    image: authelia/authelia:4.39.16
     container_name: pi-authelia
     networks:
       - frontend
