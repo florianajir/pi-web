@@ -13,10 +13,11 @@ package main
 
 import (
 	"context"
-	"dagger.io/dagger"
-	"dagger.io/dagger/dag"
 	"fmt"
 	"strings"
+
+	"dagger.io/dagger"
+	"dagger.io/dagger/dag"
 )
 
 const (
