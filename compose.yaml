@@ -479,7 +479,7 @@ services:
 
   n8n:
     <<: *service-defaults
-    image: n8nio/n8n:2.8.2
+    image: n8nio/n8n:2.12.3
     container_name: pi-n8n
     expose:
       - 5678
