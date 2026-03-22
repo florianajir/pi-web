@@ -13,10 +13,6 @@ PORTAINER_URL_DOCKER="${PORTAINER_URL_DOCKER:-http://pi-portainer:9000}"
 PORTAINER_OIDC_DEFAULT_TEAM_NAME="oidc-users"
 PORTAINER_ENDPOINT_ROLE_ID=1
 PORTAINER_TEAM_MEMBER_ROLE=2
-PORTAINER_OIDC_ADMIN_GROUPS="admin lldap_admin"
-LLDAP_CONTAINER="${LLDAP_CONTAINER:-pi-lldap}"
-LLDAP_BASE_DN="dc=home,dc=ldap"
-LLDAP_ADMIN_DN="cn=admin,ou=people,dc=home,dc=ldap"
 
 wait_for_authelia_health() {
     local status
@@ -110,6 +106,91 @@ wait_for_portainer_http() {
 
     log "ERROR: Portainer HTTP endpoint did not become reachable"
     return 1
+}
+
+init_portainer_admin() {
+    local curl_image="${CURL_IMAGE:-curlimages/curl:8.12.1}"
+    local check_headers check_status redirect_reason
+
+    check_headers="$(docker run --rm --network frontend "$curl_image" \
+        -si -o /dev/null -D - \
+        "$PORTAINER_URL_DOCKER/api/users/admin/check" 2>/dev/null)" || check_headers=""
+
+    check_status="$(printf '%s' "$check_headers" | head -1 | grep -oE '[0-9]{3}')"
+    redirect_reason="$(printf '%s' "$check_headers" | grep -i '^Redirect-Reason:' | tr -d '\r' | cut -d: -f2- | tr -d ' ')"
+
+    case "$check_status" in
+        204)
+            # Admin already exists — nothing to do
+            return 0
+            ;;
+        404)
+            # Fresh install: admin not yet created — fall through to init
+            ;;
+        303)
+            if [ "$redirect_reason" = "AdminInitTimeout" ]; then
+                log "Portainer initialization timed out. Restarting Portainer to get a fresh init window..."
+                (cd "$PROJECT_DIR" && docker compose restart portainer >/dev/null 2>&1) || {
+                    log "ERROR: Failed to restart Portainer container"
+                    return 1
+                }
+                # Wait for the container to come back up and be reachable
+                if ! wait_for_container "$PORTAINER_CONTAINER" "$MAX_RETRIES" "$RETRY_INTERVAL"; then
+                    return 1
+                fi
+                if ! wait_for_portainer_http; then
+                    return 1
+                fi
+                # Re-check: after restart and before browser opens, should be 404
+                check_status="$(docker run --rm --network frontend "$curl_image" \
+                    -s -o /dev/null -w '%{http_code}' \
+                    "$PORTAINER_URL_DOCKER/api/users/admin/check" 2>/dev/null)" || check_status="000"
+                if [ "$check_status" = "204" ]; then
+                    return 0
+                elif [ "$check_status" != "404" ]; then
+                    log "WARNING: Unexpected status $check_status after Portainer restart; skipping admin init"
+                    return 1
+                fi
+            else
+                log "WARNING: Unexpected 303 (Redirect-Reason: ${redirect_reason:-unknown}) from /api/users/admin/check; skipping admin init"
+                return 1
+            fi
+            ;;
+        *)
+            log "WARNING: Unexpected status ${check_status:-000} from /api/users/admin/check; skipping admin init"
+            return 1
+            ;;
+    esac
+
+    local password admin_username init_response
+
+    password="$(get_env_value PASSWORD)"
+    if [ -z "$password" ]; then
+        log "ERROR: Missing Portainer admin password. Set PASSWORD in .env"
+        return 1
+    fi
+
+    admin_username="$(get_env_value EMAIL)"
+    [ -n "$admin_username" ] || admin_username="$(get_env_value USER)"
+    [ -n "$admin_username" ] || admin_username="admin"
+
+    log "Initializing Portainer admin user '$admin_username'..."
+
+    init_response="$(docker run --rm --network frontend "$curl_image" \
+        -fsS -X POST \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg u "$admin_username" --arg p "$password" '{Username:$u,Password:$p}')" \
+        "$PORTAINER_URL_DOCKER/api/users/admin/init" 2>/dev/null)" || {
+        log "ERROR: Failed to call Portainer /api/users/admin/init"
+        return 1
+    }
+
+    if ! printf '%s' "$init_response" | jq -e '.Id // empty' >/dev/null 2>&1; then
+        log "ERROR: Portainer admin init returned unexpected response: $init_response"
+        return 1
+    fi
+
+    log "Portainer admin user initialized successfully"
 }
 
 authenticate_portainer() {
@@ -354,29 +435,17 @@ ensure_portainer_default_team_memberships() {
 
 ensure_portainer_users_are_admin() {
     local jwt="$1"
-    local lldap_password="${2:-}"
-    local users_json user_ids user_id admin_usernames
-
-    if [ -z "$lldap_password" ]; then
-        log "WARNING: LLDAP password not provided; promoting all non-admin users to admin instead of group-based"
-    fi
+    local users_json user_ids user_id
 
     users_json="$(portainer_api_get "$jwt" "/api/users")" || {
         log "ERROR: Failed to fetch Portainer users"
         return 1
     }
 
-    if [ -n "$lldap_password" ]; then
-        admin_usernames="$(get_lldap_admin_group_members "$lldap_password" 2>/dev/null || echo "")" || true
-    fi
-
-    user_ids="$(printf '%s' "$users_json" | jq -r --arg admins "${admin_usernames:-}" '
-        ($admins | split(" ") | map(select(. != ""))) as $admin_list |
-        [.[] | select(.Id > 0 and .Role != 1 and
-            (if ($admin_list | length) > 0 then .Username as $u | $admin_list | any(. == $u) else true end)
-        ) | .Id] | join(" ")')"
+    user_ids="$(printf '%s' "$users_json" | jq -r '[.[] | select(.Id > 0 and .Role != 1) | .Id] | join(" ")')"
 
     if [ -z "$user_ids" ]; then
+        log "All Portainer users are already admin"
         return 0
     fi
 
@@ -385,16 +454,8 @@ ensure_portainer_users_are_admin() {
             log "ERROR: Failed to promote Portainer user $user_id to admin"
             return 1
         }
-        log "Promoted Portainer user $user_id to admin (member of admin group)"
+        log "Promoted Portainer user $user_id to admin"
     done
-}
-
-get_lldap_admin_group_members() {
-    local password="$1"
-    # Simplified: check if LLDAP is reachable; if yes, try to query.
-    # For now, returns empty (query fails gracefully and we skip group filtering).
-    # TODO: Implement full LDAP protocol query or use lldap REST API if available.
-    return 0
 }
 
 # Compute OIDC defaults once, reused by build and verify
@@ -539,6 +600,10 @@ main() {
         exit 1
     fi
 
+    init_portainer_admin || {
+        log "WARNING: Could not auto-initialize Portainer admin; will attempt authentication anyway"
+    }
+
     OIDC_CLIENT_SECRET="$(get_oidc_secret "portainer" "PORTAINER_OIDC_CLIENT_SECRET")" || {
         die "Could not read Portainer OIDC client secret"
     }
@@ -582,9 +647,8 @@ main() {
         die "Failed to backfill Portainer default OAuth team memberships"
     }
 
-    LLDAP_PASSWORD="$(get_env_value PASSWORD)"
-    ensure_portainer_users_are_admin "$JWT_TOKEN" "$LLDAP_PASSWORD" || {
-        die "Failed to promote admin group members in Portainer"
+    ensure_portainer_users_are_admin "$JWT_TOKEN" || {
+        die "Failed to promote all users to admin in Portainer"
     }
 
     log "Portainer OIDC configured successfully"

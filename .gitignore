@@ -7,4 +7,5 @@
 /config/pihole/dnsmasq.d
 /config/beszel-agent/agent.env
 /config/ntfy/ntfy.env
+/config/lldap/lldap.env
 /config/backrest/config.json

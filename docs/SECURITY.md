@@ -105,7 +105,7 @@ sequenceDiagram
 | **Nextcloud** | openid profile email groups offline_access | client_secret_post | implicit | one_factor | Group provisioning enabled |
 | **Immich** | openid profile email | client_secret_post | implicit | one_factor | Mobile app callback |
 | **Beszel** | openid profile email | client_secret_basic | implicit | one_factor | PKCE (S256) enabled |
-| **Portainer** | openid profile email groups | client_secret_basic | implicit | one_factor | Auto-team provisioning |
+| **Dockhand** | openid profile email groups | client_secret_post | implicit | admin_only | Callback `/api/auth/oidc/callback` |
 | **Headplane** | openid profile email | client_secret_basic | implicit | **two_factor** | VPN admin (stricter) |
 
 ## Request Middleware Chain
@@ -148,7 +148,7 @@ flowchart LR
 | Backrest | ✓ | ✓ | — | LAN-only + admin + 2FA |
 | LLDAP | ✓ | ✓ | — | LAN-only + admin + 2FA + own auth |
 | Headplane | ✓ | — | ✓ | LAN-only + OIDC + admin + 2FA |
-| Portainer | ✓ | — | ✓ | LAN-only + OIDC + admin + 2FA |
+| Dockhand | ✓ | — | ✓ | LAN-only + OIDC-only + admin + 2FA |
 
 ## Access Control Policies
 
@@ -172,7 +172,7 @@ Create/manage groups in LLDAP admin UI, assign users to groups.
 
 ## Two-Factor Authentication
 
-2FA is enforced for admin interfaces (Traefik, Pi-hole, Portainer, Backrest, LLDAP) and Headplane (VPN admin).
+2FA is enforced for admin interfaces (Traefik, Pi-hole, Dockhand, Backrest, LLDAP) and Headplane (VPN admin).
 
 **Supported 2FA methods:**
 
@@ -198,7 +198,7 @@ ${DATA_LOCATION}/authelia-config/secrets/
 ├── oidc_nextcloud_secret.txt           # Per-client shared secrets
 ├── oidc_immich_secret.txt
 ├── oidc_beszel_secret.txt
-├── oidc_portainer_secret.txt
+├── oidc_dockhand_secret.txt
 ├── oidc_headplane_secret.txt
 └── ldap_password                       # LLDAP bind password
 ```

@@ -140,6 +140,103 @@ wait_for_health() {
     return 1
 }
 
+container_is_running() {
+    local name="$1"
+    docker ps --format '{{.Names}}' | grep -q "^${name}$"
+}
+
+# Wait for a Docker container health status, but warn instead of hard-failing logs.
+# Usage: wait_for_health_warning <name> [max_retries] [interval_seconds]
+wait_for_health_warning() {
+    local name="$1"
+    local max_retries="${2:-120}"
+    local interval="${3:-2}"
+    local status
+
+    for i in $(seq 1 "$max_retries"); do
+        status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$name" 2>/dev/null || true)
+        if [ "$status" = "healthy" ]; then
+            log "$name container is healthy"
+            return 0
+        fi
+        sleep "$interval"
+    done
+
+    log "WARNING: Timed out waiting for $name health"
+    return 1
+}
+
+authelia_container_has_oidc_materials() {
+    local client_id="$1"
+
+    if ! container_is_running "pi-authelia"; then
+        return 1
+    fi
+
+    (cd "$PROJECT_DIR" && docker compose exec -T authelia sh -ec "[ -r /config/secrets/oidc_${client_id}_secret.txt ] && grep -q \"client_id: ${client_id}\" /config/configuration.yml" >/dev/null 2>&1)
+}
+
+# Ensure Authelia OIDC secret + client stanza exist for a client.
+# Usage: ensure_authelia_oidc_materials <client_id> <display_name> [max_retries] [interval_seconds]
+ensure_authelia_oidc_materials() {
+    local client_id="$1"
+    local display_name="$2"
+    local max_retries="${3:-120}"
+    local interval="${4:-2}"
+    local data_root config_file secret_file pre_start_script
+
+    [ -n "$client_id" ] || {
+        log "ERROR: Missing client_id for ensure_authelia_oidc_materials"
+        return 1
+    }
+
+    [ -n "$display_name" ] || display_name="$client_id"
+
+    data_root="$(resolve_data_location_path)"
+    config_file="$data_root/authelia-config/configuration.yml"
+    secret_file="$data_root/authelia-config/secrets/oidc_${client_id}_secret.txt"
+    pre_start_script="$PROJECT_DIR/scripts/authelia-pre-start.sh"
+
+    if [ -r "$secret_file" ] && [ -f "$config_file" ] && grep -q "client_id: ${client_id}" "$config_file" 2>/dev/null; then
+        return 0
+    fi
+
+    if authelia_container_has_oidc_materials "$client_id"; then
+        return 0
+    fi
+
+    log "Detected missing ${display_name} OIDC materials in Authelia config data"
+
+    if [ ! -f "$pre_start_script" ]; then
+        log "WARNING: Missing $pre_start_script; cannot auto-heal Authelia OIDC materials"
+        return 1
+    fi
+
+    if ! sh "$pre_start_script"; then
+        log "WARNING: authelia-pre-start.sh failed while preparing ${display_name} OIDC materials"
+        return 1
+    fi
+
+    if container_is_running "pi-authelia"; then
+        log "Restarting Authelia to apply OIDC client updates"
+        if (cd "$PROJECT_DIR" && docker compose restart authelia >/dev/null); then
+            wait_for_health_warning "pi-authelia" "$max_retries" "$interval" || true
+        else
+            log "WARNING: Failed to restart Authelia automatically"
+        fi
+    fi
+
+    if [ ! -r "$secret_file" ] || [ ! -f "$config_file" ] || ! grep -q "client_id: ${client_id}" "$config_file" 2>/dev/null; then
+        if authelia_container_has_oidc_materials "$client_id"; then
+            return 0
+        fi
+        log "WARNING: ${display_name} OIDC materials are still missing after regeneration attempt"
+        return 1
+    fi
+
+    return 0
+}
+
 # --- OIDC secret retrieval ---
 
 # Retrieve an OIDC client secret with 3-method fallback:
@@ -188,6 +285,85 @@ docker_curl() {
     docker run --rm --network frontend "$curl_image" -fsS "$@"
 }
 
+# Wait for an HTTP endpoint reachable from the frontend Docker network.
+# Usage: wait_for_http_endpoint <url> <name> [max_retries] [interval_seconds]
+wait_for_http_endpoint() {
+    local url="$1"
+    local name="$2"
+    local max_retries="${3:-120}"
+    local interval="${4:-2}"
+
+    [ -n "$name" ] || name="$url"
+
+    log "Waiting for $name..."
+    for i in $(seq 1 "$max_retries"); do
+        if docker_curl "$url" >/dev/null 2>&1; then
+            log "$name is reachable"
+            return 0
+        fi
+        sleep "$interval"
+    done
+
+    log "ERROR: $name did not become reachable"
+    return 1
+}
+
+# API helpers for endpoints using cookie-based auth.
+# Usage: api_get_with_cookie <base_url> <path> [cookie]
+api_get_with_cookie() {
+    local base_url="$1"
+    local path="$2"
+    local cookie="${3:-}"
+
+    if [ -n "$cookie" ]; then
+        docker_curl -H "Cookie: $cookie" "$base_url$path"
+    else
+        docker_curl "$base_url$path"
+    fi
+}
+
+# Usage: api_post_json_with_cookie <base_url> <path> <payload> [cookie]
+api_post_json_with_cookie() {
+    local base_url="$1"
+    local path="$2"
+    local payload="$3"
+    local cookie="${4:-}"
+
+    if [ -n "$cookie" ]; then
+        docker_curl -X POST \
+            -H "Cookie: $cookie" \
+            -H 'Content-Type: application/json' \
+            -d "$payload" \
+            "$base_url$path"
+    else
+        docker_curl -X POST \
+            -H 'Content-Type: application/json' \
+            -d "$payload" \
+            "$base_url$path"
+    fi
+}
+
+# Usage: api_put_json_with_cookie <base_url> <path> <payload> [cookie]
+api_put_json_with_cookie() {
+    local base_url="$1"
+    local path="$2"
+    local payload="$3"
+    local cookie="${4:-}"
+
+    if [ -n "$cookie" ]; then
+        docker_curl -X PUT \
+            -H "Cookie: $cookie" \
+            -H 'Content-Type: application/json' \
+            -d "$payload" \
+            "$base_url$path"
+    else
+        docker_curl -X PUT \
+            -H 'Content-Type: application/json' \
+            -d "$payload" \
+            "$base_url$path"
+    fi
+}
+
 # --- Utilities ---
 
 is_truthy() {
@@ -195,4 +371,17 @@ is_truthy() {
         1|true|yes|on) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+sql_escape() {
+    printf '%s' "$1" | sed "s/'/''/g"
+}
+
+normalize_json() {
+    if [ -z "${1:-}" ]; then
+        printf '[]'
+        return 0
+    fi
+
+    printf '%s' "$1" | jq -c 'if type == "array" then sort else . end'
 }

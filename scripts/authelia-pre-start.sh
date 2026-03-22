@@ -111,14 +111,14 @@ main() {
     fi
 
     # Generate OIDC client secrets (plaintext + PBKDF2 hash)
-    for client in nextcloud immich beszel portainer headplane headscale; do
+    for client in nextcloud immich beszel dockhand headplane headscale; do
         generate_oidc_secret "oidc_${client}_secret"
     done
 
-    # Generate lldap JWT secret (stored in lldap data dir for lldap service)
-    LLDAP_DATA_DIR="$DATA_LOCATION/lldap"
-    mkdir -p "$LLDAP_DATA_DIR"
-    LLDAP_ENV_FILE="$LLDAP_DATA_DIR/lldap.env"
+    # Generate lldap JWT secret (stored in config dir for lldap service)
+    LLDAP_CONFIG_DIR="$PROJECT_DIR/config/lldap"
+    mkdir -p "$LLDAP_CONFIG_DIR"
+    LLDAP_ENV_FILE="$LLDAP_CONFIG_DIR/lldap.env"
     if [ ! -f "$LLDAP_ENV_FILE" ]; then
         LLDAP_JWT_SECRET=$(generate_secret)
         printf 'LLDAP_JWT_SECRET=%s\n' "$LLDAP_JWT_SECRET" > "$LLDAP_ENV_FILE"
@@ -127,6 +127,7 @@ main() {
     fi
 
     # Ensure lldap config silences key_seed/key_file warning
+    LLDAP_DATA_DIR="$DATA_LOCATION/lldap"
     LLDAP_CONFIG="$LLDAP_DATA_DIR/lldap_config.toml"
     if [ -f "$LLDAP_CONFIG" ] && ! grep -q '^key_file' "$LLDAP_CONFIG"; then
         sed -i '/^key_seed/i key_file = ""' "$LLDAP_CONFIG"

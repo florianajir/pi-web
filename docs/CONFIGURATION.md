@@ -112,10 +112,10 @@ For backups and file storage. Compatible with AWS S3, Scaleway, DigitalOcean Spa
 | `MAIL_DOMAIN` | Sender domain | `${HOST_NAME}` | Combined: `nextcloud@pi.example.com` |
 
 **Services auto-configured:**
-- Authelia, Nextcloud, LLDAP, n8n, Ntfy, Beszel (all read from `.env`)
+- Authelia, Nextcloud, LLDAP, n8n, Ntfy, Beszel, Dockhand (read from `.env` and generated startup config)
 
 **Services needing manual setup:**
-- Uptime Kuma, Immich, Portainer (configure via their UIs)
+- Uptime Kuma, Immich (configure via their UIs)
 
 **Quick setup for Gmail:**
 ```env

@@ -78,6 +78,21 @@ verify_provider() {
     docker exec "$NEXTCLOUD_CONTAINER" php occ user_oidc:provider "$OIDC_PROVIDER_ID" --output=json >/dev/null 2>&1
 }
 
+configure_oidc_only_login() {
+    docker exec "$NEXTCLOUD_CONTAINER" \
+        php occ --no-interaction config:app:set user_oidc allow_multiple_user_backends --type=string --value=0 \
+        >/dev/null
+
+    log "Configured Nextcloud for OIDC-only login redirect"
+}
+
+verify_oidc_only_login() {
+    app_value="$(docker exec "$NEXTCLOUD_CONTAINER" php occ config:app:get user_oidc allow_multiple_user_backends 2>/dev/null | tr -d '\r\n')"
+    system_value="$(docker exec "$NEXTCLOUD_CONTAINER" php occ config:system:get hide_login_form 2>/dev/null | tr -d '\r\n')"
+
+    [ "$app_value" = "0" ] && [ "$system_value" = "true" ]
+}
+
 main() {
     log "=== Nextcloud OIDC Bootstrap ==="
 
@@ -110,6 +125,12 @@ main() {
 
     if ! verify_provider; then
         die "OIDC provider verification failed"
+    fi
+
+    configure_oidc_only_login
+
+    if ! verify_oidc_only_login; then
+        die "OIDC-only login verification failed"
     fi
 
     log "Nextcloud OIDC configured successfully"

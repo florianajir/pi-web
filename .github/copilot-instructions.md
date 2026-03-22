@@ -17,7 +17,7 @@ A personal self-hosted web stack for Raspberry Pi, built with Docker Compose. It
 ## Docker compose stack containers
 
 - **Docker** for containerization and orchestration.
-- **Portainer** for container management.
+- **Dockhand** for container management.
 - **Beszel** for monitoring.
 - **DDNS Updater** for dynamic DNS updates.
 - **Traefik** for reverse proxy and TLS management.

@@ -171,6 +171,40 @@ Optional service for website/API uptime monitoring. Works with status pages, web
 2. Create monitors for services you want to track
 3. Configure notifications (SMTP, Slack, Discord, etc.)
 
+## Dockhand Notifications (Ntfy)
+
+Dockhand notification delivery is auto-configured by `scripts/dockhand-oidc-bootstrap.sh`.
+
+The bootstrap creates/updates an Apprise notification channel named **Dockhand ntfy** and binds it to the local Docker environment. Credentials and topic are sourced from `config/ntfy/ntfy.env`:
+
+- `NTFY_DOCKHAND_PASSWORD`
+- `NTFY_DOCKHAND_TOPIC` (defaults to `pi`)
+
+The channel URL format is:
+
+`ntfy://dockhand:<NTFY_DOCKHAND_PASSWORD>@ntfy/<NTFY_DOCKHAND_TOPIC>`
+
+### Events sent by Dockhand
+
+These are the exact event types configured for Dockhand alerts:
+
+| Event type | Meaning |
+|-----------|---------|
+| `container_started` | A container was started |
+| `container_stopped` | A container was stopped |
+| `container_restarted` | A container was restarted |
+| `container_exited` | A container exited (including kill/die events) |
+| `container_oom` | A container hit an out-of-memory condition |
+| `container_unhealthy` | Container healthcheck switched to unhealthy |
+| `container_healthy` | Container healthcheck switched back to healthy |
+| `image_pulled` | A container image was pulled |
+
+### Quick checks
+
+- Verify channel exists in Dockhand: **Settings** → **Notifications** → `Dockhand ntfy`
+- Verify ntfy credentials exist: `config/ntfy/ntfy.env`
+- Verify topic subscriptions in ntfy client for `NTFY_DOCKHAND_TOPIC`
+
 ## Alerting Workflow
 
 ```mermaid
