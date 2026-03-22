@@ -898,6 +898,70 @@ services:
     mem_limit: 128m
     oom_score_adj: *oom-score-deprioritize
 
+  # Download Stack
+  gluetun:
+    <<: *service-defaults
+    image: qmcgaw/gluetun:v3
+    container_name: pi-gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      - frontend
+    expose:
+      - 8080
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+    env_file:
+      - path: ./config/gluetun/gluetun.env
+        required: false
+    volumes:
+      - ${DATA_LOCATION:-./data}/gluetun:/gluetun
+      - ./config/gluetun:/gluetun/custom:ro
+    labels:
+      - "homepage.group=Download"
+      - "homepage.name=qBittorrent"
+      - "homepage.icon=qbittorrent.png"
+      - "homepage.href=https://qbittorrent.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Torrent client (VPN protected)"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.qbittorrent.rule=Host(`qbittorrent.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.qbittorrent.entrypoints=websecure"
+      - "traefik.http.routers.qbittorrent.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.qbittorrent.tls=true"
+      - "traefik.http.services.qbittorrent.loadbalancer.server.port=8080"
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
+      start_period: 30s
+      start_interval: 5s
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-deprioritize
+
+  qbittorrent:
+    <<: *service-defaults
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: pi-qbittorrent
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - WEBUI_PORT=8080
+      - TORRENTING_PORT=6881
+    volumes:
+      - ${DATA_LOCATION:-./data}/qbittorrent:/config
+      - ${DATA_LOCATION:-./data}/download:/downloads
+    deploy: *cpu-request-small
+    mem_limit: 512m
+    oom_score_adj: *oom-score-deprioritize
+
   ntfy:
     <<: *service-defaults
     image: binwiederhier/ntfy:v2.19.2

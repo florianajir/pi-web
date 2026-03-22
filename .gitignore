@@ -9,3 +9,8 @@
 /config/ntfy/ntfy.env
 /config/lldap/lldap.env
 /config/backrest/config.json
+/config/gluetun/gluetun.env
+/config/gluetun/openvpn.ovpn
+/config/gluetun/ca.crt
+/config/gluetun/client.crt
+/config/gluetun/client.key

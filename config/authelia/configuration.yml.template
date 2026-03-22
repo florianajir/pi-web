@@ -48,6 +48,7 @@ access_control:
     - domain:
         - 'uptime.__HOST_NAME__'
         - 'homepage.__HOST_NAME__'
+        - 'qbittorrent.__HOST_NAME__'
       policy: one_factor
 
     - domain: 'headscale.__HOST_NAME__'

@@ -11,3 +11,4 @@ Pi Web is a self-hosted web application stack designed for Raspberry Pi devices.
 - Never use make uninstall or any destructive operation on a path other than the project path.
 - Avoid creating new env vars in .env and .env.dist, use the provided configuration files and scripts to manage environment variables. For authentication, use USER and PASSWORD env vars.
 - Avoid adding new docker containers for running scripts that can be written in scripts directory and run in systemd service ExecStartPre and ExecStartPost
+- Never print sensitive information like passwords or tokens in logs or stdout, use environment variables for handling sensitive data but keep it hidden.
