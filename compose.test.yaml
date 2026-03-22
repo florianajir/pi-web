@@ -66,10 +66,10 @@ services:
       - ./config/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh
 
   # --- lldap: set JWT secret inline for CI ---
-  # lldap.env lives under ${DATA_LOCATION}/lldap/ and is created by authelia-pre-start.sh
-  # with mode 600.  Docker Compose's `required: false` only suppresses ENOENT, not
-  # EACCES, so a root-owned or unreadable file still causes a failure.  Reset env_file
-  # to empty and provide the JWT secret inline instead.
+  # compose.yaml loads lldap.env from ./config/lldap/lldap.env.
+  # Docker Compose's `required: false` only suppresses ENOENT, not EACCES, so a
+  # root-owned or unreadable file still causes a failure. Reset env_file to empty
+  # and provide the JWT secret inline instead for deterministic CI.
   lldap:
     environment:
       LLDAP_JWT_SECRET: ci-jwt-secret-for-testing-placeholder

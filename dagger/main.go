@@ -114,9 +114,10 @@ func (m *PiWeb) generateAndExportConfigs(ctx context.Context, src *dagger.Direct
 	// Build the shell command: install deps, run authelia-pre-start.sh.
 	// DATA_LOCATION is passed as an env var (absolute path) so the script writes to
 	// /ci-data inside the helper container = ciDataDir on the host.
+	// LLDAP_CONFIG_DIR is redirected under /ci-data because /workspace is mounted read-only in this helper.
 	// chmod a+rX makes all generated files world-readable so docker compose (running as the
 	// non-root CI user) can open env_files that the root container just created.
-	script := "apk add -q bash openssl python3 && bash ./scripts/authelia-pre-start.sh && chmod -R a+rX /ci-data"
+	script := "apk add -q bash openssl python3 && LLDAP_CONFIG_DIR=/ci-data/lldap bash ./scripts/authelia-pre-start.sh && chmod -R a+rX /ci-data"
 
 	_, err := m.dockerCLI(src, sock).
 		WithExec([]string{
@@ -138,8 +139,8 @@ func (m *PiWeb) generateAndExportConfigs(ctx context.Context, src *dagger.Direct
 
 // dockerCLI returns a container wired with the host Docker socket and the
 // project directory mounted at the same host path so compose bind-mounts resolve correctly.
-// ciDataDir is also mounted so docker compose can read env_files (e.g. lldap.env) that
-// generateAndExportConfigs wrote there via the host Docker daemon.
+// ciDataDir is also mounted so compose sees DATA_LOCATION bind-mount data and files generated
+// by pre-start scripts via the host Docker daemon.
 func (m *PiWeb) dockerCLI(src *dagger.Directory, dockerSock *dagger.Socket) *dagger.Container {
 	return dag.Container().
 		From("docker:cli").
