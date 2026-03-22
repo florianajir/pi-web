@@ -1,8 +1,25 @@
 version: 2
 updates:
-  # Docker images in compose files
-  - package-ecosystem: "docker"
+  # Docker images in root Compose files
+  - package-ecosystem: "docker-compose"
     directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+      time: "04:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # Base images in custom Dockerfiles
+  - package-ecosystem: "docker"
+    directories:
+      - "/config/backrest"
+      - "/config/beszel-agent"
     schedule:
       interval: "weekly"
       day: "sunday"
