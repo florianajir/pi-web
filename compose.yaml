@@ -796,7 +796,7 @@ services:
 
   nextcloud:
     <<: *service-defaults
-    image: nextcloud:32-apache
+    image: nextcloud:33-apache
     container_name: pi-nextcloud
     environment:
       - NEXTCLOUD_ADMIN_USER=${USER}
