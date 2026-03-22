@@ -154,7 +154,7 @@ services:
       authelia:
         condition: service_healthy
     labels:
-      - "homepage.group=Backup"
+      - "homepage.group=Backup & Recovery"
       - "homepage.name=Backrest"
       - "homepage.icon=backrest.png"
       - "homepage.href=https://backrest.${HOST_NAME:-pi.lan}"
@@ -204,7 +204,7 @@ services:
       - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
       - "--certificatesresolvers.cloudflare.acme.dnschallenge.delaybeforecheck=10"
     labels:
-      - "homepage.group=Network"
+      - "homepage.group=Infrastructure"
       - "homepage.name=Traefik"
       - "homepage.icon=traefik.png"
       - "homepage.href=https://traefik.${HOST_NAME:-pi.lan}"
@@ -460,7 +460,7 @@ services:
       unbound:
         condition: service_healthy
     labels:
-      - "homepage.group=Network"
+      - "homepage.group=Infrastructure"
       - "homepage.name=Pi-hole"
       - "homepage.icon=pi-hole.png"
       - "homepage.href=https://pihole.${HOST_NAME:-pi.lan}"
@@ -597,7 +597,7 @@ services:
     depends_on:
       - headscale
     labels:
-      - "homepage.group=Network"
+      - "homepage.group=Connectivity"
       - "homepage.name=Headplane"
       - "homepage.icon=headscale.png"
       - "homepage.href=https://headscale.${HOST_NAME:-pi.lan}/admin"
@@ -659,7 +659,7 @@ services:
     tmpfs:
       - /var/run/headscale
     labels:
-      - "homepage.group=Network"
+      - "homepage.group=Connectivity"
       - "homepage.name=Headscale"
       - "homepage.icon=tailscale.png"
       - "homepage.href=https://headscale.${HOST_NAME:-pi.lan}"
@@ -716,7 +716,7 @@ services:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s
     labels:
-      - "homepage.group=Network"
+      - "homepage.group=Connectivity"
       - "homepage.name=Tailscale"
       - "homepage.icon=tailscale.png"
       - "homepage.description=VPN mesh client"
@@ -927,7 +927,7 @@ services:
       - ntfy_cache:/var/cache/ntfy
       - ntfy_data:/var/lib/ntfy
     labels:
-      - "homepage.group=Notification"
+      - "homepage.group=Notifications"
       - "homepage.name=ntfy"
       - "homepage.icon=ntfy.png"
       - "homepage.href=https://ntfy.${HOST_NAME:-pi.lan}"
@@ -982,7 +982,7 @@ services:
       postgres:
         condition: service_healthy
     labels:
-      - "homepage.group=User Management"
+      - "homepage.group=Authentication"
       - "homepage.name=LLDAP"
       - "homepage.href=https://lldap.${HOST_NAME:-pi.lan}"
       - "homepage.description=User directory management"
@@ -1040,7 +1040,7 @@ services:
       start_period: 10s
       start_interval: 5s
     labels:
-      - "homepage.group=User Management"
+      - "homepage.group=Authentication"
       - "homepage.name=Authelia"
       - "homepage.icon=authelia.png"
       - "homepage.href=https://auth.${HOST_NAME:-pi.lan}"
