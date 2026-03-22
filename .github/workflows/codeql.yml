@@ -7,7 +7,7 @@ on:
     branches: [main, develop]
   schedule:
     # Run scans weekly on Monday at 2 AM UTC
-    - cron: '0 2 * * 1'
+    - cron: "0 2 * * 1"
 
 concurrency:
   group: codeql-${{ github.workflow }}-${{ github.ref }}
@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: ['go', 'javascript-typescript', 'python']
+        language: ["go", "javascript-typescript", "python"]
 
     steps:
       - name: Checkout code
