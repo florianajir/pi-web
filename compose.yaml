@@ -544,7 +544,7 @@ services:
 
   n8n-runners:
     <<: *service-defaults
-    image: n8nio/runners:2.8.2
+    image: n8nio/runners:2.12.3
     container_name: pi-n8n-runners
     environment:
       - N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679
