@@ -2,11 +2,25 @@
 # For configuration options and examples, please see:
 # https://gethomepage.dev/configs/info-widgets/
 
-- resources:
-    cpu: true
-    memory: true
-    disk: /
+- greeting:
+      text_size: xl
+      text: PI Web
 
 - search:
-    provider: duckduckgo
-    target: _blank
+      provider: duckduckgo
+      target: _blank
+
+- resources:
+      cpu: true
+      memory: true
+      disk: /
+      cputemp: true
+      tempmax: 85
+      uptime: true
+      units: metric
+      network: true
+
+- datetime:
+      text_size: xl
+      format:
+          timeStyle: short

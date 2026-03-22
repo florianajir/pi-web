@@ -6,12 +6,5 @@
 #   openweathermap: openweathermapapikey
 #   weatherapi: weatherapiapikey
 
-title: Pi Web
+title: PI Web
 description: Personal self-hosted services dashboard
-
-background:
-  image: https://immich.pi.ajir.dev/api/assets/022ae1b2-1684-4cf8-849e-a168bf5d9884/thumbnail?key=UoqNGm_1mxeBbHZBJ_UnkJ7C65IvIPjcqPh4m2j5wRQaQ-V8wBpO9qM7zHvM6FavbdU&size=preview&c=ZRgOFYTIh2h%2FdYdph3iHeppgcQYl&edited=true
-  blur: sm
-  saturate: 80
-  brightness: 60
-  opacity: 50

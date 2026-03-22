@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset
+.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset ci-stage ci-validate ci-smoke-test
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -13,18 +13,20 @@ endif
 
 help:
 	@echo "Commands:"
-	@echo "  install   Install & enable systemd unit, start stack and initialize"
-	@echo "  uninstall Stop stack, remove all data/volumes and uninstall systemd units"
-	@echo "  start     Start stack"
-	@echo "  stop      Stop stack"
-	@echo "  restart   Restart stack"
-	@echo "  status    Show systemd status"
-	@echo "  logs      Follow compose logs"
-	@echo "  preflight Quick env readiness check"
+	@echo "  install          Install & enable systemd unit, start stack and initialize"
+	@echo "  uninstall        Stop stack, remove all data/volumes and uninstall systemd units"
+	@echo "  start            Start stack"
+	@echo "  stop             Stop stack"
+	@echo "  restart          Restart stack"
+	@echo "  status           Show systemd status"
+	@echo "  logs             Follow compose logs"
+	@echo "  preflight        Quick env readiness check"
 	@echo "  headscale-register <key> Register a headscale node"
-	@echo "  headscale-reset Reset all Headscale nodes, preauth keys, and IP allocations"
-	@echo "  check-env Validate required .env variables"
-	@echo "  help      This help"
+	@echo "  headscale-reset  Reset all Headscale nodes, preauth keys, and IP allocations"
+	@echo "  check-env        Validate required .env variables"
+	@echo "  ci-validate      Run Dagger YAML lint (no Docker daemon needed)"
+	@echo "  ci-smoke-test    Run Dagger smoke test (requires Docker socket)"
+	@echo "  help             This help"
 
 check-env:
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
@@ -145,6 +147,24 @@ headscale-register:
 	@EMAIL_FROM_ENV="$${EMAIL:-$$(grep -E '^EMAIL=' .env | tail -n1 | cut -d= -f2-)}"; \
 	if [ -z "$$EMAIL_FROM_ENV" ]; then echo "❌ EMAIL not set in .env"; exit 1; fi; \
 	$(COMPOSE) run --rm headscale nodes register --key "$(HEADSCALE_KEY)" --user "$$EMAIL_FROM_ENV"
+
+# Stage a filtered source tree so Dagger does not sync the production data/
+# directory (which can be 100+ GB) into the engine. .daggerignore is not
+# honoured for *dagger.Directory function arguments in Dagger v0.20.
+# GitHub Actions runners have a clean checkout, so --src . is fine there.
+CI_SRC := /tmp/pi-web-ci-src
+
+.PHONY: ci-stage
+ci-stage:
+	@rm -rf $(CI_SRC) && mkdir -p $(CI_SRC)
+	@tar -cf - --exclude='./data' --exclude='./.git' --exclude='./.env' . \
+	    | tar -xf - -C $(CI_SRC)
+
+ci-validate: ci-stage
+	dagger call validate --src $(CI_SRC)
+
+ci-smoke-test: ci-stage
+	dagger call smoke-test --src $(CI_SRC) --docker-sock /var/run/docker.sock
 
 headscale-reset:
 	@echo "⚠️  This will WIPE ALL Headscale nodes, preauth keys, and IP allocations!"

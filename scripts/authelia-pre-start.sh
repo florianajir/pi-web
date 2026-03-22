@@ -116,9 +116,11 @@ main() {
     done
 
     # Generate lldap JWT secret (stored in config dir for lldap service)
-    LLDAP_CONFIG_DIR="$PROJECT_DIR/config/lldap"
+    # Allow overriding LLDAP_CONFIG_DIR for CI/helper containers with read-only project mounts.
+    LLDAP_CONFIG_DIR="${LLDAP_CONFIG_DIR:-$PROJECT_DIR/config/lldap}"
     mkdir -p "$LLDAP_CONFIG_DIR"
     LLDAP_ENV_FILE="$LLDAP_CONFIG_DIR/lldap.env"
+
     if [ ! -f "$LLDAP_ENV_FILE" ]; then
         LLDAP_JWT_SECRET=$(generate_secret)
         printf 'LLDAP_JWT_SECRET=%s\n' "$LLDAP_JWT_SECRET" > "$LLDAP_ENV_FILE"

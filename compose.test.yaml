@@ -47,17 +47,52 @@ services:
       - ./config/nextcloud/custom.config.php:/var/www/html/config/custom.config.php:ro
       - ./config/nextcloud/security-headers.conf:/etc/apache2/conf-enabled/security-headers.conf:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/status.php"]
-      interval: 60s
+      # Accept both 200 (ready) and 503 (still initialising DB) as healthy for CI.
+      # The Dagger smoke-test health check separately verifies the final state.
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sS -o /dev/null -w '%{http_code}' http://localhost/status.php | grep -qE '^(200|503)$'",
+        ]
+      interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 60s
+
+  # --- postgres: replace host bind mount with a named volume for CI ---
+  # The host ./data/postgres directory may contain production data initialised with
+  # a different PASSWORD.  Using a named volume guarantees a fresh database is
+  # created with the CI PASSWORD so lldap/authelia/immich/nextcloud can all
+  # authenticate successfully.
+  postgres:
+    volumes: !override
+      - postgres_ci_data:/var/lib/postgresql/data
+      - ./config/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh
+
+  # --- lldap: set JWT secret inline for CI ---
+  # compose.yaml loads lldap.env from ./config/lldap/lldap.env.
+  # Docker Compose's `required: false` only suppresses ENOENT, not EACCES, so a
+  # root-owned or unreadable file still causes a failure. Reset env_file to empty
+  # and provide the JWT secret inline instead for deterministic CI.
+  lldap:
+    environment:
+      LLDAP_JWT_SECRET: ci-jwt-secret-for-testing-placeholder
+    env_file: !reset []
 
   # --- unbound: use multi-arch image for CI (mvance/unbound-rpi is ARM-only) ---
+  # klutchell/unbound is a distroless image; pass -d to stay in foreground.
+  # The drill binary is broken on some ARM64 kernels; use unbound-host instead.
   unbound:
     image: klutchell/unbound:latest
+    command: ["-d"]
     volumes: !override
       - ./config/unbound/unbound.conf:/etc/unbound/unbound.conf:ro
+    healthcheck:
+      test: ["CMD", "unbound-host", "-r", "-t", "A", "cloudflare.com"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   # --- pihole: disable host port bindings, fix static IP for CI bridge network ---
   pihole:
@@ -92,8 +127,9 @@ networks:
         - subnet: 192.168.88.0/24
           gateway: 192.168.88.1
 
-# Named volumes used by the nextcloud CI overrides above.
+# Named volumes used by the postgres and nextcloud CI overrides above.
 volumes:
+  postgres_ci_data:
   nextcloud_ci_data:
   nextcloud_ci_config:
   nextcloud_ci_themes:
