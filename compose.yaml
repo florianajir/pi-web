@@ -260,6 +260,7 @@ services:
       - USER_EMAIL=${EMAIL}
       - USER_PASSWORD=${PASSWORD}
       - USER_CREATION=true
+      - DISABLE_PASSWORD_AUTH=true
     volumes:
       - beszel_data:/beszel_data
       - beszel_socket:/beszel_socket
@@ -728,24 +729,23 @@ services:
     container_name: pi-immich-machine-learning
     image: ghcr.io/immich-app/immich-machine-learning:v2
     networks:
+      - dns_egress
       - immich
     environment:
       TZ: ${TIMEZONE:-Europe/Paris}
-      # Raspberry Pi tuning (CPU-first): keep concurrency and memory pressure predictable.
-      MACHINE_LEARNING_WORKERS: 1
+      MACHINE_LEARNING_WORKERS: 2
       MACHINE_LEARNING_REQUEST_THREADS: 2
       MACHINE_LEARNING_MODEL_INTER_OP_THREADS: 1
       MACHINE_LEARNING_MODEL_INTRA_OP_THREADS: 2
       MACHINE_LEARNING_MODEL_TTL: 180
       MACHINE_LEARNING_WORKER_TIMEOUT: 300
-      # Raspberry Pi does not provide Mali/RKNN by default; keep unsupported accelerators disabled.
       MACHINE_LEARNING_ANN: "false"
       MACHINE_LEARNING_RKNN: "false"
     volumes:
       - immich_model_cache:/cache
     cpuset: "2-3"
     deploy: *cpu-request-medium
-    mem_limit: 1024m
+    mem_limit: 3072m
     oom_score_adj: *oom-score-deprioritize
 
   immich-server:
@@ -791,7 +791,7 @@ services:
       - "traefik.http.services.immich.loadbalancer.server.port=2283"
     cpuset: "1-3"
     deploy: *cpu-request-xlarge
-    mem_limit: 2304m
+    mem_limit: 3072m
     oom_score_adj: *oom-score-deprioritize
 
   nextcloud:
@@ -974,7 +974,7 @@ services:
       - LLDAP_SMTP_OPTIONS__PASSWORD=${SMTP_PASSWORD:-}
       - LLDAP_SMTP_OPTIONS__FROM=${EMAIL:-noreply@localhost}
     env_file:
-      - path: ${DATA_LOCATION:-./data}/lldap/lldap.env
+      - path: ./config/lldap/lldap.env
         required: false
     volumes:
       - ${DATA_LOCATION:-./data}/lldap:/data
