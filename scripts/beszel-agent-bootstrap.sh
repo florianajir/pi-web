@@ -162,7 +162,9 @@ items = data.get("items") or []
 print(items[0].get("id", "") if items else "")'
 }
 
-build_user_settings_payload() {
+# Outputs one "record_id<TAB>payload" line per user_settings record that needs
+# the webhook applied, so callers can PATCH each record individually.
+build_all_user_settings_patches() {
     _webhook_url="$1"
 
     if ! command -v python3 >/dev/null 2>&1; then
@@ -179,31 +181,34 @@ try:
 except json.JSONDecodeError:
     sys.exit(1)
 items = data.get("items") or []
-if not items:
-    print("")
-    sys.exit(0)
-settings = items[0].get("settings") or {}
-webhooks = settings.get("webhooks") or []
 target = urlparse(new_webhook)
 
-# remove legacy/duplicate ntfy beszel webhooks targeting the same host/topic
-normalized = []
-for webhook in webhooks:
-    parsed = urlparse(webhook)
-    is_same_beszel_ntfy_target = (
-        parsed.scheme == "ntfy"
-        and (parsed.hostname or "") == (target.hostname or "")
-        and (parsed.username or "") == "beszel"
-        and (parsed.path or "") == (target.path or "")
-    )
-    if not is_same_beszel_ntfy_target:
-        normalized.append(webhook)
+for item in items:
+    record_id = item.get("id", "")
+    if not record_id:
+        continue
+    settings = item.get("settings") or {}
+    webhooks = settings.get("webhooks") or []
 
-webhooks = normalized
-if new_webhook not in webhooks:
-    webhooks.append(new_webhook)
-settings["webhooks"] = webhooks
-print(json.dumps({"settings": settings}, separators=(",", ":")))' "$_webhook_url"
+    # remove legacy/duplicate ntfy beszel webhooks targeting the same host/topic
+    normalized = []
+    for webhook in webhooks:
+        parsed = urlparse(webhook)
+        is_same_beszel_ntfy_target = (
+            parsed.scheme == "ntfy"
+            and (parsed.hostname or "") == (target.hostname or "")
+            and (parsed.username or "") == "beszel"
+            and (parsed.path or "") == (target.path or "")
+        )
+        if not is_same_beszel_ntfy_target:
+            normalized.append(webhook)
+
+    webhooks = normalized
+    if new_webhook not in webhooks:
+        webhooks.append(new_webhook)
+    settings["webhooks"] = webhooks
+    payload = json.dumps({"settings": settings}, separators=(",", ":"))
+    print(f"{record_id}\t{payload}")' "$_webhook_url"
 }
 
 count_system_records() {
@@ -219,6 +224,140 @@ except json.JSONDecodeError:
     sys.exit(1)
 items = data.get("items") or []
 print(len(items))'
+}
+
+count_json_array_items() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 1
+    fi
+
+    python3 -c 'import json,sys
+s = sys.stdin.read() or "[]"
+try:
+    data = json.loads(s)
+except json.JSONDecodeError:
+    sys.exit(1)
+if isinstance(data, list):
+    print(len(data))
+else:
+    print(0)'
+}
+
+build_system_user_sync_updates() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 1
+    fi
+
+    python3 -c 'import json,sys
+from collections import defaultdict
+
+s = sys.stdin.read() or "{}"
+try:
+    data = json.loads(s)
+except json.JSONDecodeError:
+    sys.exit(1)
+
+items = data.get("items") or []
+groups = defaultdict(list)
+
+for item in items:
+    name = (item.get("name") or "").strip()
+    if not name:
+        continue
+    groups[name].append(item)
+
+updates = []
+for _, group in groups.items():
+    if len(group) < 2:
+        continue
+
+    union_users = []
+    seen_users = set()
+    for item in group:
+        for user_id in (item.get("users") or []):
+            if user_id and user_id not in seen_users:
+                seen_users.add(user_id)
+                union_users.append(user_id)
+
+    if not union_users:
+        continue
+
+    up_candidates = [item for item in group if (item.get("status") or "").lower() == "up"]
+    target_candidates = up_candidates if up_candidates else group
+    target = sorted(target_candidates, key=lambda item: item.get("updated") or "", reverse=True)[0]
+
+    current_users = [user_id for user_id in (target.get("users") or []) if user_id]
+    if set(current_users) == set(union_users):
+        continue
+
+    updates.append({
+        "id": target.get("id"),
+        "users": union_users,
+    })
+
+print(json.dumps(updates, separators=(",", ":")))'
+}
+
+extract_system_user_sync_lines() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 1
+    fi
+
+    python3 -c 'import json,sys
+s = sys.stdin.read() or "[]"
+try:
+    updates = json.loads(s)
+except json.JSONDecodeError:
+    sys.exit(1)
+
+for update in updates:
+    system_id = update.get("id")
+    users = [user_id for user_id in (update.get("users") or []) if user_id]
+    if not system_id or not users:
+        continue
+    payload = json.dumps({"users": users}, separators=(",", ":"))
+    print(f"{system_id}\t{payload}")'
+}
+
+sync_system_user_access() {
+    local auth_token="$1"
+    local systems_response updates_json update_count system_id payload
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        log "WARNING: python3 not found; skipping system access sync"
+        return 0
+    fi
+
+    systems_response=$(beszel_api_get "$auth_token" "/api/collections/systems/records" \
+        --data-urlencode "page=1" \
+        --data-urlencode "perPage=500" \
+    )
+
+    updates_json=$(printf '%s' "$systems_response" | build_system_user_sync_updates) || {
+        log "WARNING: Failed to compute system access sync updates"
+        return 1
+    }
+
+    update_count=$(printf '%s' "$updates_json" | count_json_array_items)
+    if [ -z "$update_count" ] || [ "$update_count" -eq 0 ]; then
+        log "System access is already in sync"
+        return 0
+    fi
+
+    log "Synchronizing users on active system records ($update_count update(s))"
+    while IFS=$(printf '\t') read -r system_id payload; do
+        [ -n "$system_id" ] || continue
+        [ -n "$payload" ] || continue
+
+        if ! beszel_api_patch_json "$auth_token" "/api/collections/systems/records/$system_id" "$payload" >/dev/null; then
+            log "WARNING: Failed to sync users for system id=$system_id"
+            continue
+        fi
+
+        log "Synchronized users for system id=$system_id"
+    done <<EOF
+$(printf '%s' "$updates_json" | extract_system_user_sync_lines)
+EOF
 }
 
 build_temperature_alert_payload() {
@@ -555,6 +694,17 @@ agent_is_running() {
     docker ps --format '{{.Names}}' | grep -q '^beszel-agent$'
 }
 
+agent_has_active_system() {
+    local auth_token="$1"
+    local response count
+    response=$(beszel_api_get "$auth_token" "/api/collections/systems/records" \
+        --data-urlencode "page=1" \
+        --data-urlencode "perPage=1" \
+        --data-urlencode "filter=(status='up')")
+    count=$(printf '%s' "$response" | count_system_records)
+    [ -n "$count" ] && [ "$count" -gt 0 ]
+}
+
 restart_agent_if_needed() {
     if [ "$CONFIG_UPDATED" = "0" ] && agent_is_running; then
         log "Agent config unchanged and beszel-agent already running, skipping restart"
@@ -562,11 +712,20 @@ restart_agent_if_needed() {
     fi
 
     log "Applying beszel-agent configuration..."
-    (
-        cd "$PROJECT_DIR"
-        docker compose up -d beszel-agent >/dev/null
-    )
-    log "beszel-agent is up"
+    if agent_is_running; then
+        # Container is already up — just restart it to pick up the new env file.
+        docker restart pi-beszel-agent >/dev/null 2>&1 || true
+        log "beszel-agent restarted"
+    else
+        (
+            cd "$PROJECT_DIR"
+            docker compose up -d --no-deps beszel-agent </dev/null >/dev/null 2>&1
+        ) || {
+            log "WARNING: beszel-agent start failed; it will start via the main stack"
+            return 0
+        }
+        log "beszel-agent is up"
+    fi
 }
 
 build_pocketbase_settings_payload() {
@@ -729,24 +888,24 @@ configure_ntfy_webhook_and_temperature_alerts() {
     topic_encoded=$(url_encode "$beszel_topic")
     webhook_url="ntfy://beszel:${password_encoded}@ntfy/${topic_encoded}?scheme=${DEFAULT_BESZEL_NTFY_SCHEME}"
 
-    log "Ensuring Beszel notification webhook is configured"
+    log "Ensuring Beszel notification webhook is configured for all users"
     settings_response=$(beszel_api_get "$auth_token" "/api/collections/user_settings/records" \
         --data-urlencode "page=1" \
-        --data-urlencode "perPage=1" \
+        --data-urlencode "perPage=500" \
     )
 
-    settings_record_id=$(printf '%s' "$settings_response" | extract_settings_record_id)
-    if [ -z "$settings_record_id" ]; then
-        log "WARNING: Could not find user_settings record; skipping notifications bootstrap"
-        return 0
-    fi
-
-    settings_payload=$(printf '%s' "$settings_response" | build_user_settings_payload "$webhook_url")
-    if [ -n "$settings_payload" ]; then
-        beszel_api_patch_json \
-            "$auth_token" \
-            "/api/collections/user_settings/records/$settings_record_id" \
-            "$settings_payload" >/dev/null
+    settings_patches=$(printf '%s' "$settings_response" | build_all_user_settings_patches "$webhook_url")
+    if [ -z "$settings_patches" ]; then
+        log "WARNING: No user_settings records found; skipping notifications webhook bootstrap"
+    else
+        printf '%s\n' "$settings_patches" | while IFS=$(printf '\t') read -r record_id patch_payload; do
+            [ -n "$record_id" ] || continue
+            beszel_api_patch_json \
+                "$auth_token" \
+                "/api/collections/user_settings/records/$record_id" \
+                "$patch_payload" >/dev/null
+            log "Configured ntfy webhook for user_settings id=$record_id"
+        done
     fi
 
     log "Ensuring default temperature alerts are configured"
@@ -816,6 +975,12 @@ main() {
         log "Detected DISABLE_PASSWORD_AUTH=true on Beszel; skipping password-based API bootstrap"
 
         if prepare_agent_env_for_passwordless_mode; then
+            if AUTH_TOKEN=$(login_and_get_superuser_token); then
+                sync_system_user_access "$AUTH_TOKEN" || true
+                configure_ntfy_webhook_and_temperature_alerts "$AUTH_TOKEN" || true
+            else
+                log "WARNING: Could not authenticate as superuser; skipping system access sync"
+            fi
             restart_agent_if_needed
             log "Using existing agent TOKEN/KEY from $AGENT_ENV_FILE"
             log "Bootstrap completed successfully"
@@ -837,9 +1002,21 @@ main() {
             die "Failed to bootstrap TOKEN/KEY using superuser fallback"
         fi
 
+        # Preserve the existing agent token when an active system already exists to
+        # prevent the agent from reconnecting with a new identity and creating a
+        # duplicate system record.
+        EXISTING_AGENT_TOKEN=$(get_agent_env_value TOKEN)
+        if [ -n "$EXISTING_AGENT_TOKEN" ] && [ "$EXISTING_AGENT_TOKEN" != "$UNIVERSAL_TOKEN" ]; then
+            if agent_has_active_system "$AUTH_TOKEN"; then
+                log "Active system exists; keeping current agent token to prevent duplicate system registration"
+                UNIVERSAL_TOKEN="$EXISTING_AGENT_TOKEN"
+            fi
+        fi
+
         persist_agent_config "$UNIVERSAL_TOKEN" "$HUB_PUBLIC_KEY"
         restart_agent_if_needed
         configure_pocketbase_settings || true
+        sync_system_user_access "$AUTH_TOKEN" || true
         configure_ntfy_webhook_and_temperature_alerts "$AUTH_TOKEN"
         log "Bootstrap completed successfully (superuser fallback in passwordless mode)"
         return 0
@@ -857,9 +1034,21 @@ main() {
         die "Could not obtain Beszel hub public key"
     fi
 
+    # Preserve the existing agent token when an active system already exists to
+    # prevent the agent from reconnecting with a new identity and creating a
+    # duplicate system record.
+    EXISTING_AGENT_TOKEN=$(get_agent_env_value TOKEN)
+    if [ -n "$EXISTING_AGENT_TOKEN" ] && [ "$EXISTING_AGENT_TOKEN" != "$UNIVERSAL_TOKEN" ]; then
+        if agent_has_active_system "$AUTH_TOKEN"; then
+            log "Active system exists; keeping current agent token to prevent duplicate system registration"
+            UNIVERSAL_TOKEN="$EXISTING_AGENT_TOKEN"
+        fi
+    fi
+
     persist_agent_config "$UNIVERSAL_TOKEN" "$HUB_PUBLIC_KEY"
     restart_agent_if_needed
     configure_pocketbase_settings || true
+    sync_system_user_access "$AUTH_TOKEN" || true
     configure_ntfy_webhook_and_temperature_alerts "$AUTH_TOKEN"
 
     log "Bootstrap completed successfully"
