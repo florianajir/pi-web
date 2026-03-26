@@ -237,7 +237,7 @@ services:
       - ${DATA_LOCATION:-./data}/traefik/letsencrypt:/letsencrypt
     networks:
       frontend:
-        ipv4_address: 172.30.11.5
+        ipv4_address: 172.30.11.250
     healthcheck:
       <<: *healthcheck-fast
       test: ["CMD", "traefik", "healthcheck", "--ping"]
@@ -763,7 +763,7 @@ services:
       DB_PASSWORD: ${PASSWORD}
       REDIS_HOSTNAME: redis
       IMMICH_CONFIG_FILE: /immich-oauth-config.yaml
-      IMMICH_TRUSTED_PROXIES: 172.30.11.5/32
+      IMMICH_TRUSTED_PROXIES: 172.30.11.250/32
       CPU_CORES: 3
       TZ: ${TIMEZONE:-Europe/Paris}
     networks:
@@ -807,7 +807,7 @@ services:
       - OVERWRITEHOST=nextcloud.${HOST_NAME:-pi.lan}
       - OVERWRITEPROTOCOL=https
       - OVERWRITECLIURL=https://nextcloud.${HOST_NAME:-pi.lan}
-      - TRUSTED_PROXIES=172.30.11.5/32
+      - TRUSTED_PROXIES=172.30.11.250/32
       - FORWARDED_FOR_HEADERS=HTTP_X_FORWARDED_FOR
       - NEXTCLOUD_MAINTENANCE_WINDOW_START=${NEXTCLOUD_MAINTENANCE_WINDOW_START:-2}
       - NEXTCLOUD_DEFAULT_PHONE_REGION=${NEXTCLOUD_DEFAULT_PHONE_REGION:-FR}

@@ -18,6 +18,14 @@ services:
     # Depends on Traefik TLS endpoint which is not functional in CI.
     profiles: [ci-excluded]
 
+  gluetun:
+    # Requires /dev/net/tun, NET_ADMIN capability, and real VPN credentials.
+    profiles: [ci-excluded]
+
+  qbittorrent:
+    # Depends on gluetun which is excluded from CI.
+    profiles: [ci-excluded]
+
   ddns-updater:
     # Requires valid Cloudflare zone and API token.
     profiles: [ci-excluded]

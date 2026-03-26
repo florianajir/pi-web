@@ -244,12 +244,21 @@ else:
 }
 
 build_system_user_sync_updates() {
+    # argv[1]: JSON array of all known user IDs that every system should expose
+    local _all_user_ids_json="${1:-[]}"
+
     if ! command -v python3 >/dev/null 2>&1; then
         return 1
     fi
 
     python3 -c 'import json,sys
 from collections import defaultdict
+
+# All known Beszel users — every system should be visible to all of them.
+try:
+    all_user_ids = set(json.loads(sys.argv[1]))
+except Exception:
+    all_user_ids = set()
 
 s = sys.stdin.read() or "{}"
 try:
@@ -268,34 +277,28 @@ for item in items:
 
 updates = []
 for _, group in groups.items():
-    if len(group) < 2:
-        continue
-
-    union_users = []
-    seen_users = set()
-    for item in group:
-        for user_id in (item.get("users") or []):
-            if user_id and user_id not in seen_users:
-                seen_users.add(user_id)
-                union_users.append(user_id)
-
-    if not union_users:
-        continue
-
+    # Pick the authoritative record: prefer "up" systems, then most recently updated.
     up_candidates = [item for item in group if (item.get("status") or "").lower() == "up"]
     target_candidates = up_candidates if up_candidates else group
     target = sorted(target_candidates, key=lambda item: item.get("updated") or "", reverse=True)[0]
 
-    current_users = [user_id for user_id in (target.get("users") or []) if user_id]
-    if set(current_users) == set(union_users):
+    # Union: users from every same-named record + all known users.
+    merged_users = set(all_user_ids)
+    for item in group:
+        for user_id in (item.get("users") or []):
+            if user_id:
+                merged_users.add(user_id)
+
+    if not merged_users:
         continue
 
-    updates.append({
-        "id": target.get("id"),
-        "users": union_users,
-    })
+    current_users = set(user_id for user_id in (target.get("users") or []) if user_id)
+    if current_users == merged_users:
+        continue
 
-print(json.dumps(updates, separators=(",", ":")))'
+    updates.append({"id": target.get("id"), "users": list(merged_users)})
+
+print(json.dumps(updates, separators=(",", ":")))' "$_all_user_ids_json"
 }
 
 extract_system_user_sync_lines() {
@@ -321,19 +324,33 @@ for update in updates:
 
 sync_system_user_access() {
     local auth_token="$1"
-    local systems_response updates_json update_count system_id payload
+    local users_response all_user_ids_json systems_response updates_json update_count system_id payload
 
     if ! command -v python3 >/dev/null 2>&1; then
         log "WARNING: python3 not found; skipping system access sync"
         return 0
     fi
 
+    # Collect all known user IDs so every system is visible to every user.
+    users_response=$(beszel_api_get "$auth_token" "/api/collections/users/records" \
+        --data-urlencode "page=1" \
+        --data-urlencode "perPage=500" \
+        --data-urlencode "fields=id" \
+    )
+    all_user_ids_json=$(printf '%s' "$users_response" | python3 -c '
+import json,sys
+try:
+    data=json.load(sys.stdin)
+except Exception:
+    print("[]"); sys.exit(0)
+print(json.dumps([item["id"] for item in (data.get("items") or []) if item.get("id")], separators=(",",":")))') || all_user_ids_json="[]"
+
     systems_response=$(beszel_api_get "$auth_token" "/api/collections/systems/records" \
         --data-urlencode "page=1" \
         --data-urlencode "perPage=500" \
     )
 
-    updates_json=$(printf '%s' "$systems_response" | build_system_user_sync_updates) || {
+    updates_json=$(printf '%s' "$systems_response" | build_system_user_sync_updates "$all_user_ids_json") || {
         log "WARNING: Failed to compute system access sync updates"
         return 1
     }
@@ -611,6 +628,7 @@ configure_beszel_oidc_provider() {
 
 get_or_create_permanent_universal_token() {
     local auth_token current_json token active permanent created_json
+    local user_id="$2"
     auth_token="$1"
 
     current_json=$(beszel_api_get "$auth_token" "/api/beszel/universal-token")
@@ -619,24 +637,133 @@ get_or_create_permanent_universal_token() {
     active=$(extract_json_bool "$current_json" active)
     permanent=$(extract_json_bool "$current_json" permanent)
 
-    if [ -n "$token" ] && [ "$active" = "true" ] && [ "$permanent" = "true" ]; then
+    if [ -n "$token" ] && [ "$active" = "true" ]; then
         printf '%s' "$token"
         return 0
     fi
 
-    created_json=$(beszel_api_get "$auth_token" "/api/beszel/universal-token" \
-        --data-urlencode "enable=1" \
-        --data-urlencode "permanent=1" \
-        --data-urlencode "token=$token" \
-    )
+    # Beszel API compatibility: some versions reject permanent=1 with HTTP 400.
+    # Try permanent token first, then gracefully fall back to non-permanent.
+    if [ -n "$user_id" ]; then
+        created_json=$(beszel_api_get "$auth_token" "/api/beszel/universal-token" \
+            --data-urlencode "enable=1" \
+            --data-urlencode "permanent=1" \
+            --data-urlencode "token=$token" \
+            --data-urlencode "user=$user_id" \
+        ) || true
+    else
+        created_json=$(beszel_api_get "$auth_token" "/api/beszel/universal-token" \
+            --data-urlencode "enable=1" \
+            --data-urlencode "permanent=1" \
+            --data-urlencode "token=$token" \
+        ) || true
+    fi
+
+    if [ -z "$created_json" ]; then
+        if [ -n "$user_id" ]; then
+            created_json=$(beszel_api_get "$auth_token" "/api/beszel/universal-token" \
+                --data-urlencode "enable=1" \
+                --data-urlencode "token=$token" \
+                --data-urlencode "user=$user_id" \
+            ) || true
+        else
+            created_json=$(beszel_api_get "$auth_token" "/api/beszel/universal-token" \
+                --data-urlencode "enable=1" \
+                --data-urlencode "token=$token" \
+            ) || true
+        fi
+    fi
 
     token=$(extract_json_field "$created_json" token)
     active=$(extract_json_bool "$created_json" active)
     permanent=$(extract_json_bool "$created_json" permanent)
 
-    if [ -z "$token" ] || [ "$active" != "true" ] || [ "$permanent" != "true" ]; then
-        log "ERROR: Failed to create permanent universal token"
+    if [ -z "$token" ] || [ "$active" != "true" ]; then
+        log "ERROR: Failed to create universal token"
         return 1
+    fi
+
+    if [ "$permanent" = "true" ]; then
+        log "Created permanent universal token"
+    else
+        log "Created non-permanent universal token (API does not support permanent mode)"
+    fi
+
+    printf '%s' "$token"
+}
+
+lookup_user_id_by_email() {
+    local auth_token="$1"
+    local email="$2"
+    local users_response
+
+    [ -n "$email" ] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+
+    users_response=$(beszel_api_get "$auth_token" "/api/collections/users/records" \
+        --data-urlencode "page=1" \
+        --data-urlencode "perPage=500" \
+        --data-urlencode "fields=id,email" \
+    ) || return 1
+
+    printf '%s' "$users_response" | python3 -c 'import json,sys
+target = sys.argv[1].strip().lower()
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+for item in data.get("items") or []:
+    email = (item.get("email") or "").strip().lower()
+    if email == target:
+        print(item.get("id") or "")
+        sys.exit(0)
+sys.exit(1)' "$email"
+}
+
+get_or_create_db_universal_token_for_user() {
+    local auth_token="$1"
+    local user_id="$2"
+    local records_json record_id token payload
+
+    [ -n "$auth_token" ] || return 1
+    [ -n "$user_id" ] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+
+    records_json=$(beszel_api_get "$auth_token" "/api/collections/universal_tokens/records" \
+        --data-urlencode "page=1" \
+        --data-urlencode "perPage=1" \
+        --data-urlencode "fields=id,token,user" \
+        --data-urlencode "filter=user='$user_id'" \
+    ) || return 1
+
+    record_id=$(printf '%s' "$records_json" | python3 -c 'import json,sys
+try:
+    data=json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+items=data.get("items") or []
+print(items[0].get("id","") if items else "")') || return 1
+
+    token=$(printf '%s' "$records_json" | python3 -c 'import json,sys
+try:
+    data=json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+items=data.get("items") or []
+print(items[0].get("token","") if items else "")') || return 1
+
+    if [ -n "$token" ]; then
+        printf '%s' "$token"
+        return 0
+    fi
+
+    token=$(python3 -c 'import uuid; print(uuid.uuid4())') || return 1
+    payload=$(printf '{"user":"%s","token":"%s"}' "$user_id" "$token")
+
+    if [ -n "$record_id" ]; then
+        beszel_api_patch_json "$auth_token" "/api/collections/universal_tokens/records/$record_id" "$payload" >/dev/null || return 1
+    else
+        beszel_api_post_json "$auth_token" "/api/collections/universal_tokens/records" "$payload" >/dev/null || return 1
     fi
 
     printf '%s' "$token"
@@ -713,9 +840,15 @@ restart_agent_if_needed() {
 
     log "Applying beszel-agent configuration..."
     if agent_is_running; then
-        # Container is already up — just restart it to pick up the new env file.
-        docker restart pi-beszel-agent >/dev/null 2>&1 || true
-        log "beszel-agent restarted"
+        # Recreate container so updated env_file values (TOKEN/KEY) are reloaded.
+        (
+            cd "$PROJECT_DIR"
+            docker compose up -d --force-recreate --no-deps beszel-agent </dev/null >/dev/null 2>&1
+        ) || {
+            log "WARNING: beszel-agent recreate failed"
+            return 0
+        }
+        log "beszel-agent recreated"
     else
         (
             cd "$PROJECT_DIR"
@@ -995,7 +1128,14 @@ main() {
             exit 1
         fi
 
-        UNIVERSAL_TOKEN=$(get_or_create_permanent_universal_token "$AUTH_TOKEN")
+        TARGET_USER_ID=$(lookup_user_id_by_email "$AUTH_TOKEN" "$EMAIL" || true)
+        if [ -z "$TARGET_USER_ID" ]; then
+            die "Could not resolve users.id for EMAIL=$EMAIL"
+        fi
+
+        # In passwordless mode we authenticate with _superusers; using /api/beszel/universal-token
+        # would bind token ownership to e.Auth.Id (superuser id), which is invalid for systems.users.
+        UNIVERSAL_TOKEN=$(get_or_create_db_universal_token_for_user "$AUTH_TOKEN" "$TARGET_USER_ID")
         HUB_PUBLIC_KEY=$(get_hub_public_key "$AUTH_TOKEN")
 
         if [ -z "$UNIVERSAL_TOKEN" ] || [ -z "$HUB_PUBLIC_KEY" ]; then
@@ -1023,7 +1163,8 @@ main() {
     fi
 
     AUTH_TOKEN=$(login_and_get_auth_token)
-    UNIVERSAL_TOKEN=$(get_or_create_permanent_universal_token "$AUTH_TOKEN")
+    TARGET_USER_ID=$(lookup_user_id_by_email "$AUTH_TOKEN" "$EMAIL" || true)
+    UNIVERSAL_TOKEN=$(get_or_create_permanent_universal_token "$AUTH_TOKEN" "$TARGET_USER_ID")
     HUB_PUBLIC_KEY=$(get_hub_public_key "$AUTH_TOKEN")
 
     if [ -z "$UNIVERSAL_TOKEN" ]; then

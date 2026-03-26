@@ -67,6 +67,7 @@ oidc:
   issuer: https://auth.__HOST_NAME__
   client_id: headscale
   client_secret: __OIDC_HEADSCALE_SECRET__
+  only_start_if_oidc_is_available: false
 
 logtail:
   enabled: false
