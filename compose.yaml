@@ -1,0 +1,1242 @@
+x-service-defaults: &service-defaults
+  logging:
+    driver: "journald"
+    options:
+      tag: "{{.Name}}"
+  restart: unless-stopped
+
+x-cpu-request-tiny: &cpu-request-tiny
+  resources:
+    reservations:
+      cpus: "0.05"
+
+x-cpu-request-small: &cpu-request-small
+  resources:
+    reservations:
+      cpus: "0.10"
+
+x-cpu-request-medium: &cpu-request-medium
+  resources:
+    reservations:
+      cpus: "0.20"
+
+x-cpu-request-large: &cpu-request-large
+  resources:
+    reservations:
+      cpus: "0.35"
+
+x-cpu-request-xlarge: &cpu-request-xlarge
+  resources:
+    reservations:
+      cpus: "0.60"
+
+# OOM score adjustments: lower value = less likely to be killed
+# Range: -1000 (never kill) to +1000 (kill first). Default is 0.
+x-oom-score-critical: &oom-score-critical -1000 # traefik, pihole, unbound, headscale, tailscale, ddns-updater
+x-oom-score-important: &oom-score-important -500 # postgres, redis, backrest
+x-oom-score-deprioritize: &oom-score-deprioritize 500 # n8n, immich, nextcloud
+
+# Healthcheck timing presets (override individual fields as needed)
+x-healthcheck-default: &healthcheck-default
+  interval: 60s
+  timeout: 10s
+  retries: 3
+  start_period: 20s
+
+x-healthcheck-light: &healthcheck-light
+  interval: 90s
+  timeout: 10s
+  retries: 2
+  start_period: 10s
+
+x-healthcheck-relaxed: &healthcheck-relaxed
+  interval: 120s
+  timeout: 10s
+  retries: 2
+  start_period: 10s
+
+x-healthcheck-fast: &healthcheck-fast
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 10s
+
+services:
+  ddns-updater:
+    <<: *service-defaults
+    image: ghcr.io/qdm12/ddns-updater:v2.9
+    container_name: pi-ddns-updater
+    environment:
+      CONFIG: >-
+        {"settings":[
+        {"provider":"cloudflare","zone_identifier":"${CLOUDFLARE_ZONE_ID}","domain":"${HOST_NAME}","token":"${CLOUDFLARE_DNS_API_TOKEN}","ttl":1,"proxied":false},
+        {"provider":"cloudflare","zone_identifier":"${CLOUDFLARE_ZONE_ID}","domain":"*.${HOST_NAME}","token":"${CLOUDFLARE_DNS_API_TOKEN}","ttl":1,"proxied":false}
+        ]}
+    volumes:
+      - ddns_data:/updater/data
+    deploy: *cpu-request-tiny
+    mem_limit: 64m
+    oom_score_adj: *oom-score-critical
+
+  backrest:
+    <<: *service-defaults
+    build:
+      context: ./config/backrest
+      dockerfile: Dockerfile
+    image: pi-backrest:local
+    container_name: pi-backrest
+    networks:
+      - frontend
+      - immich
+      - ntfy
+      - nextcloud
+      - auth
+    expose:
+      - 9898
+    environment:
+      - BACKREST_PORT=0.0.0.0:9898
+      - BACKREST_DATA=/data
+      - BACKREST_CONFIG=/config/backrest/config.json
+      - XDG_CACHE_HOME=/cache
+      - TMPDIR=/tmp
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - HOST_NAME=${HOST_NAME:-pi.lan}
+      - DB_HOST=postgres
+      - DB_NAME=nextcloud
+      - DB_USER=nextcloud
+      - DB_PASSWORD=${PASSWORD}
+      - NEXTCLOUD_CONFIG_FILE=/userdata/nextcloud-config/config.php
+      - NEXTCLOUD_SQL_BACKUP_DIR=/userdata/nextcloud-config/backups
+      - NEXTCLOUD_SQL_BACKUP_KEEP=${NEXTCLOUD_SQL_BACKUP_KEEP:-30}
+      - NEXTCLOUD_HOOK_STATE_FILE=/tmp/nextcloud-maintenance.state
+      - AUTHELIA_DB_NAME=authelia
+      - AUTHELIA_DB_USER=authelia
+      - AUTHELIA_DB_PASSWORD=${PASSWORD}
+      - AUTHELIA_SQL_BACKUP_DIR=/userdata/authelia-config/backups
+      - AUTHELIA_SQL_BACKUP_KEEP=7
+      - LLDAP_DB_NAME=lldap
+      - LLDAP_DB_USER=lldap
+      - LLDAP_DB_PASSWORD=${PASSWORD}
+      - LLDAP_SQL_BACKUP_DIR=/userdata/lldap/backups
+      - LLDAP_SQL_BACKUP_KEEP=7
+      - RESTIC_PACK_SIZE=32
+    env_file:
+      - path: ./config/ntfy/ntfy.env
+        required: false
+    extra_hosts:
+      - "ntfy.${HOST_NAME:-pi.lan}:172.30.11.1"
+    volumes:
+      - ${DATA_LOCATION:-./data}/backrest/data:/data
+      - ./config/backrest/config.json:/config/backrest/config.json
+      - ${DATA_LOCATION:-./data}/backrest/repos:/repos
+      - ${DATA_LOCATION:-./data}/immich:/userdata/immich:ro
+      - ${DATA_LOCATION:-./data}/nextcloud:/userdata/nextcloud-data:ro
+      - ${DATA_LOCATION:-./data}/nextcloud-config:/userdata/nextcloud-config
+      - ${DATA_LOCATION:-./data}/nextcloud-themes:/userdata/nextcloud-themes:ro
+      - ${DATA_LOCATION:-./data}/uptime-kuma:/userdata/uptime-kuma:ro
+      - beszel_data:/userdata/beszel:ro
+      - ${DATA_LOCATION:-./data}/lldap:/userdata/lldap:ro
+      - ${DATA_LOCATION:-./data}/lldap/backups:/userdata/lldap/backups
+      - ${DATA_LOCATION:-./data}/authelia-config:/userdata/authelia-config
+      - ./scripts/db-backup.sh:/hooks/db-backup.sh:ro
+      - ./scripts/backrest-post-hook.sh:/hooks/backrest-post-hook.sh:ro
+      - ./scripts/backrest-unlock.sh:/hooks/backrest-unlock.sh:ro
+    tmpfs:
+      - /cache
+      - /tmp
+    depends_on:
+      immich-server:
+        condition: service_healthy
+      nextcloud:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      authelia:
+        condition: service_healthy
+    labels:
+      - "homepage.group=Backup & Recovery"
+      - "homepage.name=Backrest"
+      - "homepage.icon=backrest.png"
+      - "homepage.href=https://backrest.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Backup management"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.backrest.rule=Host(`backrest.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.backrest.entrypoints=websecure"
+      - "traefik.http.routers.backrest.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.backrest.tls=true"
+      - "traefik.http.services.backrest.loadbalancer.server.port=9898"
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "curl", "-fsS", "http://localhost:9898/"]
+      start_period: 45s
+    deploy: *cpu-request-medium
+    mem_limit: 512m
+    oom_score_adj: *oom-score-important
+
+  traefik:
+    <<: *service-defaults
+    image: traefik:v3.6
+    container_name: pi-traefik
+    environment:
+      - CLOUDFLARE_DNS_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN:-}
+    command:
+      - "--log.level=INFO"
+      - "--api.dashboard=true"
+      - "--ping=true"
+      # Entry Points
+      - "--entrypoints.web.address=:80/tcp"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443/tcp"
+      - "--entrypoints.websecure.http.middlewares=compress@docker,security-headers@docker"
+      - "--entrypoints.websecure.http.tls.certresolver=cloudflare"
+      - "--entrypoints.websecure.http3=true"
+      - "--entrypoints.websecure.forwardedHeaders.trustedIPs=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}"
+      # Providers
+      - "--providers.docker=true"
+      - "--providers.docker.watch=true"
+      - "--providers.docker.network=frontend"
+      - "--providers.docker.exposedbydefault=false"
+      # ACME (Cloudflare DNS-01)
+      - "--certificatesresolvers.cloudflare.acme.email=${EMAIL}"
+      - "--certificatesresolvers.cloudflare.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.cloudflare.acme.dnschallenge.delaybeforecheck=10"
+    labels:
+      - "homepage.group=Infrastructure"
+      - "homepage.name=Traefik"
+      - "homepage.icon=traefik.png"
+      - "homepage.href=https://traefik.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Reverse proxy dashboard"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.middlewares.compress.compress=true"
+      - "traefik.http.middlewares.security-headers.headers.stsSeconds=15552000"
+      - "traefik.http.middlewares.security-headers.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.security-headers.headers.forceSTSHeader=true"
+      - "traefik.http.middlewares.security-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.security-headers.headers.referrerPolicy=same-origin"
+      - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}"
+      - "traefik.http.routers.traefik.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.tls=true"
+      - "traefik.http.routers.traefik.tls.domains[0].main=${HOST_NAME:-pi.lan}"
+      - "traefik.http.routers.traefik.tls.domains[0].sans=*.${HOST_NAME:-pi.lan}"
+      - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+    ports:
+      - "80:80"
+      - "443:443"
+    expose:
+      - 8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${DATA_LOCATION:-./data}/traefik/letsencrypt:/letsencrypt
+    networks:
+      frontend:
+        ipv4_address: 172.30.11.250
+    healthcheck:
+      <<: *healthcheck-fast
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      start_interval: 5s
+    cpuset: "0"
+    deploy: *cpu-request-medium
+    mem_limit: 192m
+    oom_score_adj: *oom-score-critical
+
+  beszel:
+    <<: *service-defaults
+    image: henrygd/beszel:0.18.4
+    container_name: pi-beszel
+    networks:
+      - frontend
+    expose:
+      - 8090
+    environment:
+      - APP_URL=https://beszel.${HOST_NAME:-pi.lan}
+      - USER_EMAIL=${EMAIL}
+      - USER_PASSWORD=${PASSWORD}
+      - USER_CREATION=true
+      - DISABLE_PASSWORD_AUTH=true
+    volumes:
+      - beszel_data:/beszel_data
+      - beszel_socket:/beszel_socket
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      <<: *healthcheck-light
+      test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
+      start_period: 5s
+      start_interval: 3s
+    labels:
+      - "homepage.group=Monitoring"
+      - "homepage.name=Beszel"
+      - "homepage.icon=beszel.png"
+      - "homepage.href=https://beszel.${HOST_NAME:-pi.lan}"
+      - "homepage.description=System monitoring"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.beszel.rule=Host(`beszel.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.beszel.entrypoints=websecure"
+      - "traefik.http.routers.beszel.middlewares=lan@docker"
+      - "traefik.http.routers.beszel.tls=true"
+      - "traefik.http.routers.beszel-agentconnect.rule=Host(`beszel.${HOST_NAME:-pi.lan}`) && PathPrefix(`/api/beszel/agent-connect`)"
+      - "traefik.http.routers.beszel-agentconnect.entrypoints=websecure"
+      - "traefik.http.routers.beszel-agentconnect.priority=100"
+      - "traefik.http.routers.beszel-agentconnect.tls=true"
+      - "traefik.http.services.beszel.loadbalancer.server.port=8090"
+    deploy: *cpu-request-small
+    mem_limit: 64m
+    oom_score_adj: *oom-score-important
+
+  beszel-agent:
+    <<: *service-defaults
+    build:
+      context: ./config/beszel-agent
+      dockerfile: Dockerfile
+    image: pi-beszel-agent:local
+    container_name: pi-beszel-agent
+    depends_on:
+      beszel:
+        condition: service_healthy
+      traefik:
+        condition: service_healthy
+    network_mode: host
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /dev:/dev
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro
+      - /run/udev/data:/run/udev/data:ro
+      - /proc:/host/proc:ro
+      - /mnt/sdcard:/extra-filesystems/mmcblk0:ro,rslave
+      - beszel_socket:/beszel_socket
+      - beszel_agent_data:/var/lib/beszel-agent
+    env_file:
+      - path: ./config/beszel-agent/agent.env
+        required: false
+    environment:
+      LISTEN: /beszel_socket/beszel.sock
+      HUB_URL: https://beszel.${HOST_NAME:-pi.lan}
+      HOST_PROC: /host/proc
+    healthcheck:
+      <<: *healthcheck-light
+      test: ["CMD", "/agent", "health"]
+    deploy: *cpu-request-small
+    mem_limit: 64m
+    oom_score_adj: *oom-score-important
+
+  uptime-kuma:
+    <<: *service-defaults
+    image: louislam/uptime-kuma:2
+    container_name: pi-uptime-kuma
+    networks:
+      - frontend
+      - ntfy
+    expose:
+      - 3001
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - APP_URL=https://uptime.${HOST_NAME:-pi.lan}
+      - UPTIME_KUMA_DB_TYPE=sqlite
+    env_file:
+      - path: ./config/ntfy/ntfy.env
+        required: false
+    volumes:
+      - ${DATA_LOCATION:-./data}/uptime-kuma:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - "homepage.group=Monitoring"
+      - "homepage.name=Uptime Kuma"
+      - "homepage.icon=uptime-kuma.png"
+      - "homepage.href=https://uptime.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Service uptime monitoring"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.uptime-kuma.rule=Host(`uptime.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.uptime-kuma.entrypoints=websecure"
+      - "traefik.http.routers.uptime-kuma.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.uptime-kuma.tls=true"
+      - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
+    deploy: *cpu-request-small
+    mem_limit: 256m
+    oom_score_adj: *oom-score-important
+
+  dockhand:
+    <<: *service-defaults
+    image: fnsys/dockhand:v1.0.22
+    container_name: pi-dockhand
+    networks:
+      - frontend
+    expose:
+      - 3000
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - DISABLE_LOCAL_LOGIN=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - dockhand_data:/app/data
+    labels:
+      - "homepage.group=Monitoring"
+      - "homepage.name=Dockhand"
+      - "homepage.icon=docker.png"
+      - "homepage.href=https://dockhand.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Container management"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.dockhand.rule=Host(`dockhand.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.dockhand.entrypoints=websecure"
+      - "traefik.http.routers.dockhand.middlewares=lan@docker"
+      - "traefik.http.routers.dockhand.tls=true"
+      - "traefik.http.services.dockhand.loadbalancer.server.port=3000"
+    healthcheck:
+      <<: *healthcheck-light
+      test:
+        [
+          "CMD",
+          "curl",
+          "-fsSo",
+          "/dev/null",
+          "http://127.0.0.1:3000/api/auth/session",
+        ]
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-deprioritize
+
+  unbound:
+    <<: *service-defaults
+    image: mvance/unbound-rpi:1.22.0
+    container_name: pi-unbound
+    networks:
+      dns_internal:
+        ipv4_address: 172.30.53.53
+      dns_egress: {}
+    expose:
+      - 5335
+    volumes:
+      - ./config/unbound/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "drill", "@127.0.0.1", "-p", "5335", "cloudflare.com"]
+      start_period: 10s
+      start_interval: 5s
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-critical
+
+  pihole:
+    <<: *service-defaults
+    image: pihole/pihole:2026.02.0
+    container_name: pi-pihole
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+    expose:
+      - 53
+      - 8082
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+    environment:
+      TZ: ${TIMEZONE:-Europe/Paris}
+      FTLCONF_webserver_api_password: ${PASSWORD:-admin}
+      FTLCONF_dns_listeningMode: "all"
+      FTLCONF_dns_upstreams: ${PIHOLE_DNS_UPSTREAMS:-172.30.53.53#5335}
+      FTLCONF_misc_dnsmasq_lines: "address=/${HOST_NAME:-pi.lan}/${HOST_LAN_IP:-192.168.1.30}"
+      FTLCONF_webserver_port: 8082
+      FTLCONF_dns_domain_name: ${HOST_NAME:-pi.lan}
+    volumes:
+      - pihole_data:/etc/pihole
+      - ./config/pihole/dnsmasq.d:/etc/dnsmasq.d
+    networks:
+      dns_internal: {}
+      frontend: {}
+      lan:
+        ipv4_address: ${PIHOLE_IP:-192.168.1.250}
+    depends_on:
+      unbound:
+        condition: service_healthy
+    labels:
+      - "homepage.group=Infrastructure"
+      - "homepage.name=Pi-hole"
+      - "homepage.icon=pi-hole.png"
+      - "homepage.href=https://pihole.${HOST_NAME:-pi.lan}"
+      - "homepage.description=DNS filtering"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.pihole.rule=Host(`pihole.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.pihole.entrypoints=websecure"
+      - "traefik.http.routers.pihole.tls=true"
+      - "traefik.http.routers.pihole.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.services.pihole.loadbalancer.server.port=8082"
+    cpuset: "0-1"
+    deploy: *cpu-request-medium
+    mem_limit: 192m
+    oom_score_adj: *oom-score-critical
+
+  n8n:
+    <<: *service-defaults
+    image: n8nio/n8n:2.12.3
+    container_name: pi-n8n
+    expose:
+      - 5678
+    labels:
+      - "homepage.group=Automation"
+      - "homepage.name=n8n"
+      - "homepage.icon=n8n.png"
+      - "homepage.href=https://n8n.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Workflow automation"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.n8n.rule=Host(`n8n.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.n8n.entrypoints=websecure"
+      - "traefik.http.routers.n8n.tls=true"
+      - "traefik.http.routers.n8n.middlewares=lan@docker"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+    environment:
+      - N8N_HOST=n8n.${HOST_NAME:-pi.lan}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://n8n.${HOST_NAME:-pi.lan}/
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-${TIMEZONE:-Europe/Paris}}
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=${N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS:-true}
+      - DB_TYPE=sqlite
+      - DB_SQLITE_POOL_SIZE=2
+      - N8N_EMAIL_MODE=smtp
+      - N8N_SMTP_HOST=${SMTP_HOST:-localhost}
+      - N8N_SMTP_PORT=${SMTP_PORT:-587}
+      - N8N_SMTP_USER=${SMTP_USERNAME:-}
+      - N8N_SMTP_PASS=${SMTP_PASSWORD:-}
+      - N8N_SMTP_SENDER=${EMAIL:-noreply@localhost}
+      - N8N_SMTP_SSL=${SMTP_SSL:-false}
+      # Task runners (Python + JS via external sidecar)
+      - N8N_RUNNERS_MODE=external
+      - N8N_RUNNERS_BROKER_LISTEN_ADDRESS=0.0.0.0
+      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN:-n8n-runner-secret}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ${DATA_LOCATION:-./data}/n8n:/files
+    networks:
+      - frontend
+      - n8n_runners
+    depends_on:
+      - traefik
+    healthcheck:
+      <<: *healthcheck-default
+      # n8n listens internally on plain HTTP. Use explicit IPv4 loopback to avoid IPv6 (::1) resolution issues.
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:5678/healthz",
+        ]
+    deploy: *cpu-request-large
+    mem_limit: 192m
+    oom_score_adj: *oom-score-deprioritize
+
+  n8n-runners:
+    <<: *service-defaults
+    image: n8nio/runners:2.12.3
+    container_name: pi-n8n-runners
+    environment:
+      - N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679
+      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN:-n8n-runner-secret}
+    networks:
+      - n8n_runners
+    depends_on:
+      - n8n
+    healthcheck:
+      <<: *healthcheck-fast
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:5680/healthz && nc -z -w 2 n8n 5679",
+        ]
+      start_period: 5s
+      start_interval: 3s
+    deploy: *cpu-request-small
+    mem_limit: 256m
+    oom_score_adj: *oom-score-deprioritize
+
+  headplane:
+    <<: *service-defaults
+    image: ghcr.io/tale/headplane:0.6.2
+    container_name: pi-headplane
+    networks:
+      - frontend
+    extra_hosts:
+      - "headscale.${HOST_NAME:-pi.lan}:172.30.11.1"
+    expose:
+      - 3000
+    volumes:
+      - ./config/headplane/config.yaml:/etc/headplane/config.yaml:ro
+      - ./config/headscale:/etc/headscale:ro
+      - ${DATA_LOCATION:-./data}/authelia-config/secrets/oidc_headplane_secret.txt:/run/secrets/oidc_headplane_secret:ro
+      - ./config/headplane/headscale_api_key:/run/secrets/headplane_headscale_api_key:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - headplane_data:/var/lib/headplane
+      - ./config/headplane/wasm/wasm_exec.js:/app/build/client/wasm_exec.js:ro
+      - ./config/headplane/wasm/hp_ssh.wasm:/app/build/client/hp_ssh.wasm:ro
+    environment:
+      - HEADPLANE_HEADSCALE__URL=https://headscale.${HOST_NAME:-pi.lan}
+      - HEADPLANE_OIDC__ISSUER=https://auth.${HOST_NAME:-pi.lan}
+      - HEADPLANE_OIDC__CLIENT_ID=headplane
+      - HEADPLANE_OIDC__CLIENT_SECRET_PATH=/run/secrets/oidc_headplane_secret
+      - HEADPLANE_OIDC__TOKEN_ENDPOINT_AUTH_METHOD=client_secret_basic
+      - HEADPLANE_OIDC__DISABLE_API_KEY_LOGIN=true
+      - HEADPLANE_OIDC__HEADSCALE_API_KEY_PATH=/run/secrets/headplane_headscale_api_key
+      - HEADPLANE_OIDC__SCOPE=openid email profile
+    depends_on:
+      - headscale
+    labels:
+      - "homepage.group=Connectivity"
+      - "homepage.name=Headplane"
+      - "homepage.icon=headscale.png"
+      - "homepage.href=https://headscale.${HOST_NAME:-pi.lan}/admin"
+      - "homepage.description=Headscale administration"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.headplane.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && PathPrefix(`/admin`)"
+      - "traefik.http.routers.headplane.entrypoints=websecure"
+      - "traefik.http.routers.headplane.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.headplane.tls=true"
+      - "traefik.http.routers.headplane.tls.certresolver=cloudflare"
+      - "traefik.http.services.headplane.loadbalancer.server.port=3000"
+      - "traefik.http.routers.headplane-wasm.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && (Path(`/wasm_exec.js`) || Path(`/hp_ssh.wasm`))"
+      - "traefik.http.routers.headplane-wasm.entrypoints=websecure"
+      - "traefik.http.routers.headplane-wasm.tls=true"
+      - "traefik.http.routers.headplane-wasm.tls.certresolver=cloudflare"
+      - "traefik.http.routers.headplane-wasm.service=headplane"
+      - "traefik.http.routers.headplane-wasm.middlewares=wasm-path@docker"
+      - "traefik.http.middlewares.wasm-path.replacepathregex.regex=/(wasm_exec.js|hp_ssh.wasm)"
+      - "traefik.http.middlewares.wasm-path.replacepathregex.replacement=/admin/$$1"
+    healthcheck:
+      <<: *healthcheck-default
+      test:
+        [
+          "CMD",
+          "/nodejs/bin/node",
+          "-e",
+          "const net=require('node:net');const s=net.connect({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.setTimeout(5000,()=>{s.destroy();process.exit(1)});s.on('error',()=>process.exit(1));",
+        ]
+    deploy: *cpu-request-small
+    mem_limit: 192m
+    oom_score_adj: *oom-score-deprioritize
+
+  # Connectivity Stack
+  headscale:
+    <<: *service-defaults
+    image: headscale/headscale:0.28
+    container_name: pi-headscale
+    command: serve
+    environment:
+      - HEADSCALE_SERVER_URL=https://headscale.${HOST_NAME:-pi.lan}
+      - HEADSCALE_LISTEN_ADDR=0.0.0.0:8080
+      - HEADSCALE_DNS_BASE_DOMAIN=tailnet.${HOST_NAME:-pi.lan}
+    networks:
+      - frontend
+    expose:
+      - 8080
+      - 9090
+      - 50443
+    ports:
+      - "3478:3478/udp"
+    volumes:
+      - ./config/headscale:/etc/headscale:ro
+      - headscale_data:/var/lib/headscale
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      authelia:
+        condition: service_healthy
+    tmpfs:
+      - /var/run/headscale
+    labels:
+      - "homepage.group=Connectivity"
+      - "homepage.name=Headscale"
+      - "homepage.icon=tailscale.png"
+      - "homepage.href=https://headscale.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Private Tailnet coordination"
+      - "me.tale.headplane.target=headscale"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.headscale.rule=Host(`headscale.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.headscale.entrypoints=websecure"
+      - "traefik.http.routers.headscale.tls=true"
+      - "traefik.http.routers.headscale.tls.certresolver=cloudflare"
+      - "traefik.http.routers.headscale.tls.domains[0].main=${HOST_NAME:-pi.lan}"
+      - "traefik.http.routers.headscale.tls.domains[0].sans=*.${HOST_NAME:-pi.lan}"
+      - "traefik.http.routers.headscale.middlewares=cors"
+      - "traefik.http.routers.rewrite.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && Path(`/`)"
+      - "traefik.http.routers.rewrite.service=headscale"
+      - "traefik.http.routers.rewrite.middlewares=rewrite"
+      - "traefik.http.services.headscale.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.rewrite.addprefix.prefix=/admin"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowheaders=*"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowmethods=GET,POST,PUT"
+      - "traefik.http.middlewares.cors.headers.accesscontrolalloworiginlist=https://headscale.${HOST_NAME:-pi.lan}"
+      - "traefik.http.middlewares.cors.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.cors.headers.addvaryheader=true"
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "/ko-app/headscale", "health"]
+      start_period: 10s
+    cpuset: "0"
+    deploy: *cpu-request-medium
+    mem_limit: 192m
+    oom_score_adj: *oom-score-critical
+
+  tailscale:
+    <<: *service-defaults
+    image: tailscale/tailscale:stable
+    container_name: pi-tailscale
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+      - TS_EXTRA_ARGS=--login-server=https://headscale.${HOST_NAME:-pi.lan} --accept-dns=true --advertise-exit-node --advertise-routes=192.168.1.0/24 --accept-routes --ssh
+      - TS_HOSTNAME=tailscale
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      - headscale
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "tailscale", "status", "--peers=false"]
+      start_period: 30s
+    labels:
+      - "homepage.group=Connectivity"
+      - "homepage.name=Tailscale"
+      - "homepage.icon=tailscale.png"
+      - "homepage.description=VPN mesh client"
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-critical
+
+  immich-machine-learning:
+    <<: *service-defaults
+    container_name: pi-immich-machine-learning
+    image: ghcr.io/immich-app/immich-machine-learning:v2
+    networks:
+      - dns_egress
+      - immich
+    environment:
+      TZ: ${TIMEZONE:-Europe/Paris}
+      MACHINE_LEARNING_WORKERS: 2
+      MACHINE_LEARNING_REQUEST_THREADS: 2
+      MACHINE_LEARNING_MODEL_INTER_OP_THREADS: 1
+      MACHINE_LEARNING_MODEL_INTRA_OP_THREADS: 2
+      MACHINE_LEARNING_MODEL_TTL: 180
+      MACHINE_LEARNING_WORKER_TIMEOUT: 300
+      MACHINE_LEARNING_ANN: "false"
+      MACHINE_LEARNING_RKNN: "false"
+    volumes:
+      - immich_model_cache:/cache
+    cpuset: "2-3"
+    deploy: *cpu-request-medium
+    mem_limit: 3072m
+    oom_score_adj: *oom-score-deprioritize
+
+  immich-server:
+    <<: *service-defaults
+    container_name: pi-immich
+    image: ghcr.io/immich-app/immich-server:v2
+    volumes:
+      - ${DATA_LOCATION:-./data}/immich:/data
+      - ${DATA_LOCATION:-./data}/authelia-config/immich-oauth-config.yaml:/immich-oauth-config.yaml:ro
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      DB_HOSTNAME: postgres
+      DB_DATABASE_NAME: immich
+      DB_USERNAME: immich
+      DB_PASSWORD: ${PASSWORD}
+      REDIS_HOSTNAME: redis
+      IMMICH_CONFIG_FILE: /immich-oauth-config.yaml
+      IMMICH_TRUSTED_PROXIES: 172.30.11.250/32
+      CPU_CORES: 3
+      TZ: ${TIMEZONE:-Europe/Paris}
+    networks:
+      - frontend
+      - immich
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose:
+      - 2283
+    labels:
+      - "homepage.group=Storage"
+      - "homepage.name=Immich"
+      - "homepage.icon=immich.png"
+      - "homepage.href=https://immich.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Photos and videos"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.immich.rule=Host(`immich.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.immich.entrypoints=websecure"
+      - "traefik.http.routers.immich.middlewares=lan@docker"
+      - "traefik.http.routers.immich.tls=true"
+      - "traefik.http.services.immich.loadbalancer.server.port=2283"
+    cpuset: "1-3"
+    deploy: *cpu-request-xlarge
+    mem_limit: 3072m
+    oom_score_adj: *oom-score-deprioritize
+
+  nextcloud:
+    <<: *service-defaults
+    image: nextcloud:33-apache
+    container_name: pi-nextcloud
+    environment:
+      - NEXTCLOUD_ADMIN_USER=${USER}
+      - NEXTCLOUD_ADMIN_PASSWORD=${PASSWORD}
+      - NEXTCLOUD_ADMIN_EMAIL=${EMAIL}
+      - NEXTCLOUD_TRUSTED_DOMAINS=nextcloud.${HOST_NAME:-pi.lan} localhost 127.0.0.1
+      - NEXTCLOUD_DATA_DIR=/var/www/html/data
+      - OVERWRITEHOST=nextcloud.${HOST_NAME:-pi.lan}
+      - OVERWRITEPROTOCOL=https
+      - OVERWRITECLIURL=https://nextcloud.${HOST_NAME:-pi.lan}
+      - TRUSTED_PROXIES=172.30.11.250/32
+      - FORWARDED_FOR_HEADERS=HTTP_X_FORWARDED_FOR
+      - NEXTCLOUD_MAINTENANCE_WINDOW_START=${NEXTCLOUD_MAINTENANCE_WINDOW_START:-2}
+      - NEXTCLOUD_DEFAULT_PHONE_REGION=${NEXTCLOUD_DEFAULT_PHONE_REGION:-FR}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=nextcloud
+      - POSTGRES_USER=nextcloud
+      - POSTGRES_PASSWORD=${PASSWORD}
+      - REDIS_HOST=redis
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - SMTP_HOST=${SMTP_HOST:-localhost}
+      - SMTP_SECURE=${SMTP_SECURE:-tls}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_AUTHTYPE=${SMTP_AUTHTYPE:-LOGIN}
+      - SMTP_NAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - MAIL_FROM_ADDRESS=${MAIL_FROM_ADDRESS:-nextcloud}
+      - MAIL_DOMAIN=${HOST_NAME:-pi.lan}
+    volumes:
+      - nextcloud_html:/var/www/html
+      - ${DATA_LOCATION:-./data}/nextcloud:/var/www/html/data
+      - ${DATA_LOCATION:-./data}/nextcloud-config:/var/www/html/config
+      - ${DATA_LOCATION:-./data}/nextcloud-themes:/var/www/html/themes
+      - ./config/nextcloud/custom.config.php:/var/www/html/config/custom.config.php:ro
+      - ./config/nextcloud/security-headers.conf:/etc/apache2/conf-enabled/security-headers.conf:ro
+    networks:
+      - frontend
+      - nextcloud
+    labels:
+      - "homepage.group=Storage"
+      - "homepage.name=Nextcloud"
+      - "homepage.icon=nextcloud.png"
+      - "homepage.href=https://nextcloud.${HOST_NAME:-pi.lan}"
+      - "homepage.description=File sync and collaboration"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.nextcloud.middlewares=lan@docker"
+      - "traefik.http.routers.nextcloud.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud.tls=true"
+      - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "curl", "-f", "http://localhost/status.php"]
+      start_period: 60s
+      start_interval: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    cpuset: "1-3"
+    deploy: *cpu-request-large
+    mem_limit: 768m
+    oom_score_adj: *oom-score-deprioritize
+
+  homepage:
+    <<: *service-defaults
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: pi-homepage
+    networks:
+      - frontend
+    expose:
+      - 3000
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - HOMEPAGE_ALLOWED_HOSTS=homepage.${HOST_NAME:-pi.lan}
+    volumes:
+      - ./config/homepage:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    tmpfs:
+      - /app/config/logs
+    labels:
+      - "homepage.group=Dashboard"
+      - "homepage.name=Homepage"
+      - "homepage.icon=homepage.png"
+      - "homepage.href=https://homepage.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Service dashboard"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.homepage.rule=Host(`homepage.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.homepage.entrypoints=websecure"
+      - "traefik.http.routers.homepage.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.homepage.tls=true"
+      - "traefik.http.services.homepage.loadbalancer.server.port=3000"
+    depends_on:
+      - traefik
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-deprioritize
+
+  # Download Stack
+  gluetun:
+    <<: *service-defaults
+    image: qmcgaw/gluetun:v3
+    container_name: pi-gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      - frontend
+    expose:
+      - 8080
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+    env_file:
+      - path: ./config/gluetun/gluetun.env
+        required: false
+    volumes:
+      - ${DATA_LOCATION:-./data}/gluetun:/gluetun
+      - ./config/gluetun:/gluetun/custom:ro
+    labels:
+      - "homepage.group=Download"
+      - "homepage.name=qBittorrent"
+      - "homepage.icon=qbittorrent.png"
+      - "homepage.href=https://qbittorrent.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Torrent client (VPN protected)"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.qbittorrent.rule=Host(`qbittorrent.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.qbittorrent.entrypoints=websecure"
+      - "traefik.http.routers.qbittorrent.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.qbittorrent.tls=true"
+      - "traefik.http.services.qbittorrent.loadbalancer.server.port=8080"
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
+      start_period: 30s
+      start_interval: 5s
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-deprioritize
+
+  qbittorrent:
+    <<: *service-defaults
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: pi-qbittorrent
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - WEBUI_PORT=8080
+      - TORRENTING_PORT=6881
+    volumes:
+      - ${DATA_LOCATION:-./data}/qbittorrent:/config
+      - ${DATA_LOCATION:-./data}/download:/downloads
+    deploy: *cpu-request-small
+    mem_limit: 512m
+    oom_score_adj: *oom-score-deprioritize
+
+  ntfy:
+    <<: *service-defaults
+    image: binwiederhier/ntfy:v2.19.2
+    container_name: pi-ntfy
+    command: serve
+    networks:
+      - frontend
+      - ntfy
+    expose:
+      - 80
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - NTFY_BASE_URL=https://ntfy.${HOST_NAME:-pi.lan}
+      - NTFY_BEHIND_PROXY=true
+      - NTFY_CACHE_FILE=/var/cache/ntfy/cache.db
+      - NTFY_AUTH_FILE=/var/lib/ntfy/user.db
+      - NTFY_ENABLE_LOGIN=true
+      - NTFY_AUTH_DEFAULT_ACCESS=deny-all
+      - NTFY_SMTP_SENDER_ADDR=${SMTP_HOST:-localhost}:${SMTP_PORT:-587}
+      - NTFY_SMTP_SENDER_USER=${SMTP_USERNAME:-}
+      - NTFY_SMTP_SENDER_PASS=${SMTP_PASSWORD:-}
+      - NTFY_SMTP_SENDER_FROM=${EMAIL:-noreply@localhost}
+    env_file:
+      - path: ./config/ntfy/ntfy.env
+        required: false
+    volumes:
+      - ntfy_cache:/var/cache/ntfy
+      - ntfy_data:/var/lib/ntfy
+    labels:
+      - "homepage.group=Notifications"
+      - "homepage.name=ntfy"
+      - "homepage.icon=ntfy.png"
+      - "homepage.href=https://ntfy.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Self-hosted notifications"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.ntfy.rule=Host(`ntfy.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.ntfy.entrypoints=websecure"
+      - "traefik.http.routers.ntfy.middlewares=lan@docker"
+      - "traefik.http.routers.ntfy.tls=true"
+      - "traefik.http.services.ntfy.loadbalancer.server.port=80"
+    healthcheck:
+      <<: *healthcheck-light
+      test:
+        ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/v1/health"]
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-important
+
+  # Authentication & SSO
+  lldap:
+    <<: *service-defaults
+    image: lldap/lldap:stable
+    container_name: pi-lldap
+    networks:
+      - frontend
+      - auth
+    expose:
+      - 3890
+      - 17170
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - LLDAP_LDAP_BASE_DN=dc=home,dc=ldap
+      - LLDAP_LDAP_USER_EMAIL=${EMAIL}
+      - LLDAP_LDAP_USER_PASS=${PASSWORD}
+      - LLDAP_HTTP_URL=https://lldap.${HOST_NAME:-pi.lan}
+      - LLDAP_DATABASE_URL=postgres://lldap:${PASSWORD}@postgres/lldap
+      - LLDAP_VERBOSE=false
+      - LLDAP_SMTP_OPTIONS__ENABLE_PASSWORD_RESET=true
+      - LLDAP_SMTP_OPTIONS__SERVER=${SMTP_HOST:-localhost}
+      - LLDAP_SMTP_OPTIONS__PORT=${SMTP_PORT:-587}
+      - LLDAP_SMTP_OPTIONS__SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-STARTTLS}
+      - LLDAP_SMTP_OPTIONS__USER=${SMTP_USERNAME:-}
+      - LLDAP_SMTP_OPTIONS__PASSWORD=${SMTP_PASSWORD:-}
+      - LLDAP_SMTP_OPTIONS__FROM=${EMAIL:-noreply@localhost}
+    env_file:
+      - path: ./config/lldap/lldap.env
+        required: false
+    volumes:
+      - ${DATA_LOCATION:-./data}/lldap:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - "homepage.group=Authentication"
+      - "homepage.name=LLDAP"
+      - "homepage.href=https://lldap.${HOST_NAME:-pi.lan}"
+      - "homepage.description=User directory management"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.lldap.rule=Host(`lldap.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.lldap.entrypoints=websecure"
+      - "traefik.http.routers.lldap.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.lldap.tls=true"
+      - "traefik.http.services.lldap.loadbalancer.server.port=17170"
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-critical
+
+  authelia:
+    <<: *service-defaults
+    image: authelia/authelia:4.39.16
+    container_name: pi-authelia
+    networks:
+      - frontend
+      - auth
+    expose:
+      - 9091
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - X_AUTHELIA_CONFIG_FILTERS=template
+      - SMTP_HOST=${SMTP_HOST:-localhost}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-STARTTLS}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL=${EMAIL:-authelia@localhost}
+    volumes:
+      - ${DATA_LOCATION:-./data}/authelia-config/configuration.yml:/config/configuration.yml:ro
+      - ${DATA_LOCATION:-./data}/authelia-config/secrets:/config/secrets:ro
+      - ${DATA_LOCATION:-./data}/authelia-config:/config/data
+    depends_on:
+      lldap:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-default
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:9091/api/health",
+        ]
+      start_period: 10s
+      start_interval: 5s
+    labels:
+      - "homepage.group=Authentication"
+      - "homepage.name=Authelia"
+      - "homepage.icon=authelia.png"
+      - "homepage.href=https://auth.${HOST_NAME:-pi.lan}"
+      - "homepage.description=SSO authentication portal"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.authelia.rule=Host(`auth.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.authelia.entrypoints=websecure"
+      - "traefik.http.routers.authelia.tls=true"
+      - "traefik.http.services.authelia.loadbalancer.server.port=9091"
+      - "traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/authz/forward-auth"
+      # trustForwardHeader is safe here: Traefik is the only trusted upstream on the internal frontend network
+      - "traefik.http.middlewares.authelia.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
+      - "traefik.http.middlewares.authelia.forwardauth.maxResponseBodySize=4096"
+    deploy: *cpu-request-small
+    mem_limit: 128m
+    oom_score_adj: *oom-score-critical
+
+  # Database & Cache
+  postgres:
+    <<: *service-defaults
+    restart: always
+    container_name: pi-postgres
+    image: ghcr.io/immich-app/postgres:16-vectorchord0.4.3-pgvectors0.2.0@sha256:1a078b237c1d9b420b0ee59147386b4aa60d3a07a8e6a402fc84a57e41b043a4
+    environment:
+      POSTGRES_PASSWORD: ${PASSWORD}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      # Uncomment the DB_STORAGE_TYPE: 'HDD' var if your database isn't stored on SSDs
+      # DB_STORAGE_TYPE: 'HDD'
+    volumes:
+      - ${DATA_LOCATION:-./data}/postgres:/var/lib/postgresql/data
+      - ./config/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh
+    networks:
+      - immich
+      - nextcloud
+      - auth
+    healthcheck:
+      <<: *healthcheck-fast
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
+      start_interval: 3s
+    mem_limit: 2048m
+    cpuset: "1-3"
+    deploy: *cpu-request-xlarge
+    shm_size: 256mb
+    oom_score_adj: *oom-score-critical
+
+  redis:
+    <<: *service-defaults
+    restart: always
+    container_name: pi-redis
+    image: docker.io/valkey/valkey:9@sha256:3eeb09785cd61ec8e3be35f8804c8892080f3ca21934d628abc24ee4ed1698f6
+    healthcheck:
+      <<: *healthcheck-fast
+      test: ["CMD", "redis-cli", "ping"]
+      start_period: 5s
+      start_interval: 3s
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
+    volumes:
+      - ./config/redis/valkey.conf:/etc/valkey/valkey.conf:ro
+    networks:
+      - immich
+      - nextcloud
+      - auth
+    deploy: *cpu-request-small
+    mem_limit: 256m
+    oom_score_adj: *oom-score-critical
+
+volumes:
+  ddns_data:
+  beszel_data:
+  beszel_agent_data:
+  beszel_socket:
+  dockhand_data:
+  pihole_data:
+  n8n_data:
+  ntfy_cache:
+  ntfy_data:
+  immich_model_cache:
+  nextcloud_html:
+  headscale_data:
+  headplane_data:
+  tailscale_state:
+
+networks:
+  dns_internal:
+    driver: bridge
+    name: dns_internal
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.53.0/24
+          gateway: 172.30.53.1
+  dns_egress:
+    driver: bridge
+    name: dns_egress
+  frontend:
+    driver: bridge
+    name: frontend
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.11.0/24
+          gateway: 172.30.11.1
+  lan:
+    driver: macvlan
+    name: lan
+    driver_opts:
+      parent: ${HOST_LAN_PARENT:-eth0}
+    ipam:
+      driver: default
+      config:
+        - subnet: ${HOST_LAN_SUBNET:-192.168.1.0/24}
+          gateway: ${HOST_LAN_GATEWAY:-192.168.1.1}
+  nextcloud:
+    driver: bridge
+    name: nextcloud
+    internal: true
+  immich:
+    driver: bridge
+    name: immich
+    internal: true
+  ntfy:
+    driver: bridge
+    name: ntfy
+    internal: true
+  auth:
+    driver: bridge
+    name: auth
+    internal: true
+  n8n_runners:
+    driver: bridge
+    name: n8n_runners
+    internal: true

@@ -1,0 +1,13 @@
+oauth:
+  enabled: true
+  issuerUrl: 'https://auth.__HOST_NAME__'
+  clientId: 'immich'
+  clientSecret: '__OIDC_IMMICH_SECRET__'
+  autoRegister: true
+  autoLaunch: true
+  buttonText: 'Login with Authelia'
+  scope: 'openid profile email'
+  signingAlgorithm: 'RS256'
+  profileSigningAlgorithm: 'none'
+  tokenEndpointAuthMethod: 'client_secret_post'
+  storageLabelClaim: 'preferred_username'

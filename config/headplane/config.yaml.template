@@ -1,0 +1,22 @@
+server:
+  host: "0.0.0.0"
+  port: 3000
+  base_url: "__HEADSCALE_URL__/admin/"
+  cookie_secret: "__COOKIE_SECRET__"
+  cookie_secure: true
+  data_path: "/var/lib/headplane"
+
+headscale:
+  url: "__HEADSCALE_URL__"
+  config_path: "/etc/headscale/config.yaml"
+  config_strict: true
+
+integration:
+  agent:
+    enabled: true
+    pre_authkey: "__HEADPLANE_AGENT__PRE_AUTHKEY__"
+
+  docker:
+    enabled: true
+    container_label: "me.tale.headplane.target=headscale"
+    socket: "unix:///var/run/docker.sock"

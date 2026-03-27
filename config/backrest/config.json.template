@@ -1,0 +1,106 @@
+{
+  "version":  4,
+  "instance": "__BACKREST_INSTANCE__",
+  "repos": [
+    {
+      "id": "s3",
+      "uri": "__BACKREST_S3_URI__",
+      "password": "__BACKREST_S3_REPO_PASSWORD__",
+      "env": [
+        "AWS_ACCESS_KEY_ID=__BACKREST_S3_ACCESS_KEY_ID__",
+        "AWS_DEFAULT_REGION=__BACKREST_S3_REGION__",
+        "AWS_SECRET_ACCESS_KEY=__BACKREST_S3_SECRET_ACCESS_KEY__",
+        "RESTIC_RETRY_LOCK=45m"
+      ],
+      "autoInitialize": true,
+      "commandPrefix": {},
+      "prunePolicy": {
+        "schedule": {
+          "cron": "0 3 * * 0",
+          "clock": "CLOCK_LOCAL"
+        },
+        "maxUnusedBytes": "0",
+        "maxUnusedPercent": 25
+      },
+      "autoUnlock": true,
+      "checkPolicy": {
+        "schedule": {
+          "cron": "0 0 1 * *",
+          "clock": "CLOCK_LAST_RUN_TIME"
+        }
+      }
+    }
+  ],
+  "plans": [
+    {
+      "id": "s3-backup",
+      "repo": "s3",
+      "paths": ["/userdata/"],
+      "excludes": [
+        "/userdata/immich/thumbs",
+        "/userdata/immich/model-cache",
+        "/userdata/nextcloud-data/appdata_*/preview",
+        "/userdata/nextcloud-data/appdata_*/thumbnails",
+        "*.log"
+      ],
+      "schedule": {
+        "cron": "0 4 * * *",
+        "clock": "CLOCK_LOCAL"
+      },
+      "retention": {
+        "policyTimeBucketed": {
+          "daily": 7,
+          "weekly": 4,
+          "monthly": 12
+        }
+      },
+      "hooks": [
+        {
+          "conditions": ["CONDITION_SNAPSHOT_START"],
+          "onError": "ON_ERROR_IGNORE",
+          "actionCommand": {
+            "command": "/bin/sh /hooks/backrest-unlock.sh s3"
+          }
+        },
+        {
+          "conditions": ["CONDITION_SNAPSHOT_START"],
+          "onError": "ON_ERROR_FATAL",
+          "actionCommand": {
+            "command": "/bin/sh /hooks/db-backup.sh nextcloud"
+          }
+        },
+        {
+          "conditions": ["CONDITION_SNAPSHOT_START"],
+          "onError": "ON_ERROR_IGNORE",
+          "actionCommand": {
+            "command": "/bin/sh /hooks/db-backup.sh authelia"
+          }
+        },
+        {
+          "conditions": ["CONDITION_SNAPSHOT_START"],
+          "onError": "ON_ERROR_IGNORE",
+          "actionCommand": {
+            "command": "/bin/sh /hooks/db-backup.sh lldap"
+          }
+        },
+        {
+          "conditions": ["CONDITION_SNAPSHOT_SUCCESS"],
+          "onError": "ON_ERROR_IGNORE",
+          "actionCommand": {
+            "command": "/bin/sh /hooks/backrest-post-hook.sh info {{ .ShellEscape .Summary }}"
+          }
+        },
+        {
+          "conditions": ["CONDITION_ANY_ERROR"],
+          "onError": "ON_ERROR_IGNORE",
+          "actionCommand": {
+            "command": "/bin/sh /hooks/backrest-post-hook.sh errors {{ .ShellEscape .Summary }}"
+          }
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "disabled": true
+  }
+}

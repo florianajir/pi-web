@@ -1,0 +1,76 @@
+# Minimal Headscale configuration
+# server_url and dns.base_domain are overridden at runtime via HEADSCALE_* env vars in docker compose,
+# but must be present here so headplane can validate the config file.
+
+server_url: https://headscale.__HOST_NAME__
+
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 0.0.0.0:9090
+grpc_listen_addr: 0.0.0.0:50443
+
+grpc_allow_insecure: true
+disable_check_updates: true
+
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
+randomize_client_port: false
+
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+  allocation: sequential
+
+derp:
+  server:
+    enabled: true
+    region_id: 999
+    region_code: headscale
+    region_name: Pi-Web Embedded DERP
+    stun_listen_addr: 0.0.0.0:3478
+    ipv4: headscale
+    private_key_path: /var/lib/headscale/derp_server_private.key
+    automatically_add_embedded_derp_region: true
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  auto_update_enabled: true
+  update_frequency: 24h
+
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+    write_ahead_log: true
+
+log:
+  level: info
+  format: text
+
+policy:
+  mode: file
+  path: /etc/headscale/policy.hujson
+
+dns:
+  magic_dns: true
+  override_local_dns: true
+  nameservers:
+    global:
+      - 100.64.0.1
+    split:
+      __HOST_NAME__:
+        - 100.64.0.1
+
+
+oidc:
+  issuer: https://auth.__HOST_NAME__
+  client_id: headscale
+  client_secret: __OIDC_HEADSCALE_SECRET__
+  only_start_if_oidc_is_available: false
+
+logtail:
+  enabled: false
+
+taildrop:
+  enabled: true

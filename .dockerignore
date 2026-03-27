@@ -1,0 +1,13 @@
+# Exclude runtime data and secrets from Dagger source uploads.
+# Dagger respects .dockerignore when loading --src directories.
+# These paths mirror .gitignore entries that contain generated secrets
+# or bind-mount data created by Docker containers (often as root, 600 perms).
+/data
+/.env
+/config/headscale/policy.hujson
+/config/headscale/config.yaml
+/config/headplane/config.yaml
+/config/headplane/headscale_api_key
+/config/beszel-agent/agent.env
+/config/ntfy/ntfy.env
+/config/backrest/config.json

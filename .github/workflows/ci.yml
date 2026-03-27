@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Compose and YAML
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Validate Docker Compose config
+        env:
+          DATA_LOCATION: /tmp/pi-web-ci-data
+        run: |
+          set -euo pipefail
+          docker compose -f compose.yaml config >/dev/null
+          docker compose -f compose.yaml -f compose.test.yaml config >/dev/null
+
+      - name: Lint workflow and Compose YAML
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip
+          python3 -m pip install yamllint
+          yamllint -c .yamllint .
+
+  smoke-test:
+    name: Smoke Test Stack Startup
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 20
+    env:
+      HOST_NAME: test.local
+      USER: testuser
+      EMAIL: test@example.com
+      PASSWORD: testpassword123
+      HOST_LAN_IP: 192.168.1.100
+      TIMEZONE: UTC
+      CLOUDFLARE_ZONE_ID: ci-zone-placeholder
+      CLOUDFLARE_DNS_API_TOKEN: ci-token-placeholder
+      COMPOSE_FILE: compose.yaml:compose.test.yaml
+      COMPOSE_ANSI: never
+      COMPOSE_REMOVE_ORPHANS: "1"
+      COMPOSE_PROGRESS: quiet
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Create CI .env
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          HOST_NAME=test.local
+          USER=testuser
+          EMAIL=test@example.com
+          PASSWORD=testpassword123
+          HOST_LAN_IP=192.168.1.100
+          TIMEZONE=UTC
+          CLOUDFLARE_ZONE_ID=ci-zone-placeholder
+          CLOUDFLARE_DNS_API_TOKEN=ci-token-placeholder
+          DATA_LOCATION=/tmp/pi-web-ci-data
+          EOF
+          rm -rf /tmp/pi-web-ci-data
+
+      - name: Render generated configs for CI
+        run: |
+          set -euo pipefail
+          sh ./scripts/authelia-pre-start.sh
+          sh ./scripts/headscale-pre-start.sh
+
+          # Make all generated files world-readable so docker compose (and the Docker
+          # daemon) can open env_files regardless of the runner's umask or ownership.
+          chmod -R a+rX /tmp/pi-web-ci-data
+
+          # Guard against bind-mount path type mismatches in CI
+          test -f ./config/headplane/config.yaml
+          test ! -d ./config/headplane/config.yaml
+          test -f ./config/headscale/config.yaml
+          test -f ./config/headscale/policy.hujson
+
+      - name: Start stack and run smoke checks
+        run: |
+          set -euo pipefail
+          docker compose up -d --wait --wait-timeout 360 --pull missing --yes
+          docker compose ps
+
+          docker compose exec -T traefik \
+            traefik healthcheck --ping >/dev/null
+          code=""
+          for _ in $(seq 1 12); do
+            code="$(docker compose exec -T nextcloud \
+              curl -sS -o /dev/null -w '%{http_code}' http://localhost/status.php | tr -d '\r\n')"
+            if [ "$code" = "200" ] || [ "$code" = "503" ]; then
+              break
+            fi
+            sleep 5
+          done
+          if [ "$code" != "200" ] && [ "$code" != "503" ]; then
+            echo "Unexpected Nextcloud status.php HTTP code after retries: $code" >&2
+            exit 1
+          fi
+          docker compose exec -T immich-server \
+            curl -fsS http://localhost:2283/api/server/ping >/dev/null
+
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose logs --timestamps
+
+      - name: Tear down stack
+        if: always()
+        run: |
+          docker compose down -v
+          sudo rm -rf /tmp/pi-web-ci-data

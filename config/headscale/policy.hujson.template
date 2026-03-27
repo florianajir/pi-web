@@ -1,0 +1,27 @@
+{
+  "tagOwners": {
+    "tag:router": ["__HEADSCALE_USER__"]
+  },
+  "autoApprovers": {
+    "routes": {
+      "192.168.1.0/24": ["tag:router"],
+      "0.0.0.0/0": ["tag:router"],
+      "::/0": ["tag:router"]
+    }
+  },
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["*"],
+      "dst": ["*:*" ]
+    }
+  ],
+  "ssh": [
+    {
+      "action": "accept",
+      "src": ["autogroup:member"],
+      "dst": ["autogroup:self"],
+      "users": ["autogroup:nonroot", "root"]
+    }
+  ]
+}
