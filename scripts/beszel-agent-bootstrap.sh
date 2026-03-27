@@ -523,13 +523,16 @@ build_beszel_oidc_payload() {
         return 1
     fi
 
+    build_authelia_oidc_urls "$host_name"
+
     python3 -c 'import json,sys
-host = sys.argv[1]
-secret = sys.argv[2]
-provider_name = sys.argv[3]
-display_name = sys.argv[4]
-scope = sys.argv[5]
-issuer = f"https://auth.{host}"
+secret = sys.argv[1]
+provider_name = sys.argv[2]
+display_name = sys.argv[3]
+scope = sys.argv[4]
+auth_url = sys.argv[5]
+token_url = sys.argv[6]
+userinfo_url = sys.argv[7]
 payload = {
     "oauth2": {
         "enabled": True,
@@ -545,9 +548,9 @@ payload = {
                 "displayName": display_name,
                 "clientId": "beszel",
                 "clientSecret": secret,
-                "authURL": f"{issuer}/api/oidc/authorization",
-                "tokenURL": f"{issuer}/api/oidc/token",
-                "userInfoURL": f"{issuer}/api/oidc/userinfo",
+                "authURL": auth_url,
+                "tokenURL": token_url,
+                "userInfoURL": userinfo_url,
                 "pkce": True,
                 "extra": {
                     "scope": scope,
@@ -557,11 +560,13 @@ payload = {
     }
 }
 print(json.dumps(payload, separators=(",", ":")))' \
-        "$host_name" \
         "$client_secret" \
         "$DEFAULT_BESZEL_OIDC_PROVIDER_NAME" \
         "$DEFAULT_BESZEL_OIDC_PROVIDER_DISPLAY_NAME" \
-        "$DEFAULT_BESZEL_OIDC_SCOPE"
+        "$DEFAULT_BESZEL_OIDC_SCOPE" \
+        "$OIDC_AUTH_URL" \
+        "$OIDC_TOKEN_URL" \
+        "$OIDC_USERINFO_URL"
 }
 
 auth_methods_has_expected_oidc_provider() {
@@ -601,8 +606,8 @@ configure_beszel_oidc_provider() {
     host_name=$(get_env_value HOST_NAME)
     [ -n "$host_name" ] || host_name="pi.lan"
 
-    client_secret=$(get_oidc_secret "beszel" "BESZEL_OIDC_CLIENT_SECRET") || {
-        log "WARNING: Could not read Beszel OIDC client secret; skipping OIDC bootstrap"
+    client_secret=$(configure_oidc_client "beszel" "Beszel" "BESZEL_OIDC_CLIENT_SECRET") || {
+        log "WARNING: Could not set up Beszel OIDC client; skipping OIDC bootstrap"
         return 1
     }
 
@@ -1002,20 +1007,13 @@ configure_ntfy_webhook_and_temperature_alerts() {
         return 0
     fi
 
-    if [ ! -f "$NTFY_ENV_FILE" ]; then
-        log "WARNING: $NTFY_ENV_FILE not found; skipping Beszel notifications bootstrap"
+    if ! get_ntfy_credentials "$NTFY_ENV_FILE" "beszel" "$DEFAULT_BESZEL_NTFY_TOPIC"; then
+        log "WARNING: Beszel ntfy credentials missing; skipping Beszel notifications bootstrap"
         return 0
     fi
 
-    beszel_password=$(get_ntfy_env_value NTFY_BESZEL_PASSWORD)
-    beszel_topic=$(get_ntfy_env_value NTFY_BESZEL_TOPIC)
-
-    if [ -z "$beszel_password" ]; then
-        log "WARNING: NTFY_BESZEL_PASSWORD missing; skipping Beszel notifications bootstrap"
-        return 0
-    fi
-
-    [ -n "$beszel_topic" ] || beszel_topic="$DEFAULT_BESZEL_NTFY_TOPIC"
+    beszel_password="$NTFY_SERVICE_PASSWORD"
+    beszel_topic="$NTFY_SERVICE_TOPIC"
 
     password_encoded=$(url_encode "$beszel_password")
     topic_encoded=$(url_encode "$beszel_topic")

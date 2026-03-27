@@ -80,21 +80,7 @@ authenticate_dockhand() {
         return 1
     fi
 
-    usernames="$(get_env_value USER)"
-    candidate="$(get_env_value EMAIL)"
-    if [ -n "$candidate" ] && [ "$candidate" != "$usernames" ]; then
-        usernames="${usernames:+$usernames }$candidate"
-    fi
-
-    if [ -z "$usernames" ]; then
-        usernames="admin"
-    else
-        case " $usernames " in
-            *" admin "*) ;;
-            *) usernames="$usernames admin" ;;
-        esac
-    fi
-
+    usernames="$(build_username_candidates)"
     first_candidate="${usernames%% *}"
     attempted=""
 
@@ -188,9 +174,10 @@ dockhand_environment_ids() {
 
 oidc_defaults() {
     local host="$1"
-    local auth_base="https://auth.${host}"
     local dockhand_base="https://dockhand.${host}"
     local raw_scopes
+
+    build_authelia_oidc_urls "$host"
 
     OIDC_PROVIDER_NAME="$(get_env_value DOCKHAND_OIDC_PROVIDER_NAME)"
     OIDC_PROVIDER_NAME="${OIDC_PROVIDER_NAME:-Authelia}"
@@ -199,7 +186,7 @@ oidc_defaults() {
     OIDC_CLIENT_ID_VAL="${OIDC_CLIENT_ID_VAL:-dockhand}"
 
     OIDC_ISSUER_URL="$(get_env_value DOCKHAND_OIDC_ISSUER_URL)"
-    OIDC_ISSUER_URL="${OIDC_ISSUER_URL:-$auth_base}"
+    OIDC_ISSUER_URL="${OIDC_ISSUER_URL:-$OIDC_ISSUER}"
 
     OIDC_REDIRECT_URI="$(get_env_value DOCKHAND_OIDC_REDIRECT_URI)"
     OIDC_REDIRECT_URI="${OIDC_REDIRECT_URI:-$dockhand_base/api/auth/oidc/callback}"
@@ -484,12 +471,11 @@ configure_dockhand_timezone_db() {
 }
 
 dockhand_notification_defaults() {
-    DOCKHAND_NTFY_PASSWORD="$(read_env_value_from_file "$NTFY_ENV_FILE" NTFY_DOCKHAND_PASSWORD)"
-    DOCKHAND_NTFY_TOPIC="$(read_env_value_from_file "$NTFY_ENV_FILE" NTFY_DOCKHAND_TOPIC)"
-    [ -n "$DOCKHAND_NTFY_TOPIC" ] || DOCKHAND_NTFY_TOPIC="$DOCKHAND_NTFY_DEFAULT_TOPIC"
     DOCKHAND_NTFY_URL=""
 
-    if [ -n "$DOCKHAND_NTFY_PASSWORD" ]; then
+    if get_ntfy_credentials "$NTFY_ENV_FILE" "dockhand" "$DOCKHAND_NTFY_DEFAULT_TOPIC"; then
+        DOCKHAND_NTFY_PASSWORD="$NTFY_SERVICE_PASSWORD"
+        DOCKHAND_NTFY_TOPIC="$NTFY_SERVICE_TOPIC"
         DOCKHAND_NTFY_URL="ntfy://dockhand:${DOCKHAND_NTFY_PASSWORD}@ntfy/${DOCKHAND_NTFY_TOPIC}"
     fi
 }

@@ -14,17 +14,7 @@ OIDC_PROVIDER_ID="${OIDC_PROVIDER_ID:-authelia}"
 OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-nextcloud}"
 
 wait_for_occ() {
-    log "Waiting for Nextcloud OCC to be ready..."
-    for i in $(seq 1 $MAX_RETRIES); do
-        if docker exec "$NEXTCLOUD_CONTAINER" php occ status >/dev/null 2>&1; then
-            log "Nextcloud OCC is ready"
-            return 0
-        fi
-        sleep "$RETRY_INTERVAL"
-    done
-
-    log "ERROR: Nextcloud OCC did not become ready in time"
-    return 1
+    wait_for_service "Nextcloud OCC" "docker exec $NEXTCLOUD_CONTAINER php occ status" "$MAX_RETRIES" "$RETRY_INTERVAL"
 }
 
 ensure_user_oidc_app() {
@@ -49,7 +39,9 @@ ensure_user_oidc_app() {
 
 configure_provider() {
     local client_secret="$1"
-    local discovery_uri="https://auth.${HOST_NAME}/.well-known/openid-configuration"
+
+    build_authelia_oidc_urls "$HOST_NAME"
+    local discovery_uri="$OIDC_DISCOVERY_URL"
 
     docker exec \
         -e OIDC_CLIENT_SECRET="$client_secret" \
@@ -113,8 +105,8 @@ main() {
 
     ensure_user_oidc_app || exit 1
 
-    OIDC_CLIENT_SECRET="$(get_oidc_secret "nextcloud" "NEXTCLOUD_OIDC_CLIENT_SECRET")" || {
-        die "Could not read Nextcloud OIDC client secret"
+    OIDC_CLIENT_SECRET="$(configure_oidc_client "nextcloud" "Nextcloud" "NEXTCLOUD_OIDC_CLIENT_SECRET" "$MAX_RETRIES" "$RETRY_INTERVAL")" || {
+        die "Could not set up Nextcloud OIDC client"
     }
 
     if [ -z "$OIDC_CLIENT_SECRET" ]; then
