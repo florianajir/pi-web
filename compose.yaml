@@ -901,7 +901,7 @@ services:
   # Download Stack
   gluetun:
     <<: *service-defaults
-    image: qmcgaw/gluetun:v3
+    image: qmcgaw/gluetun:1243
     container_name: pi-gluetun
     cap_add:
       - NET_ADMIN
