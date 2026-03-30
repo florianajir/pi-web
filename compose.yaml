@@ -727,7 +727,7 @@ services:
   immich-machine-learning:
     <<: *service-defaults
     container_name: pi-immich-machine-learning
-    image: ghcr.io/immich-app/immich-machine-learning:v2
+    image: ghcr.io/immich-app/immich-machine-learning:v2.6.3
     networks:
       - dns_egress
       - immich
@@ -751,7 +751,7 @@ services:
   immich-server:
     <<: *service-defaults
     container_name: pi-immich
-    image: ghcr.io/immich-app/immich-server:v2
+    image: ghcr.io/immich-app/immich-server:v2.6.3
     volumes:
       - ${DATA_LOCATION:-./data}/immich:/data
       - ${DATA_LOCATION:-./data}/authelia-config/immich-oauth-config.yaml:/immich-oauth-config.yaml:ro
