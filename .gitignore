@@ -1,4 +1,5 @@
 /.env
+/compose.override.yaml
 /data
 /config/headscale/policy.hujson
 /config/headscale/config.yaml
