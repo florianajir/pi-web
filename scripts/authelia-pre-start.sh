@@ -8,6 +8,7 @@ set -e
 
 CONFIG_TEMPLATE="$PROJECT_DIR/config/authelia/configuration.yml.template"
 IMMICH_OAUTH_TEMPLATE="$PROJECT_DIR/config/immich/oauth-config.yaml.template"
+IMMICH_CONFIG="$PROJECT_DIR/config/immich/config.yaml"
 
 # Generate a plaintext secret file and its PBKDF2 hash companion.
 # Usage: generate_oidc_secret <name>  (e.g. "oidc_nextcloud_secret")
@@ -172,13 +173,20 @@ main() {
     if [ ! -f "$IMMICH_OAUTH_TEMPLATE" ]; then
         die "Immich OAuth config template not found at $IMMICH_OAUTH_TEMPLATE"
     fi
+    if [ ! -f "$IMMICH_CONFIG" ]; then
+        die "Immich config not found at $IMMICH_CONFIG"
+    fi
 
     IMMICH_OAUTH_CONFIG_FILE="$AUTHELIA_DATA_DIR/immich-oauth-config.yaml"
     IMMICH_OAUTH_SECRET="$(cat "$SECRETS_DIR/oidc_immich_secret.txt")"
-    IMMICH_OAUTH_RENDERED=$(sed \
-        -e "s|__HOST_NAME__|$HOST_NAME|g" \
-        -e "s|__OIDC_IMMICH_SECRET__|$IMMICH_OAUTH_SECRET|g" \
-        "$IMMICH_OAUTH_TEMPLATE")
+    IMMICH_OAUTH_RENDERED=$(
+        sed \
+            -e "s|__HOST_NAME__|$HOST_NAME|g" \
+            -e "s|__OIDC_IMMICH_SECRET__|$IMMICH_OAUTH_SECRET|g" \
+            "$IMMICH_OAUTH_TEMPLATE"
+        printf '\n'
+        cat "$IMMICH_CONFIG"
+    )
 
     if [ -f "$IMMICH_OAUTH_CONFIG_FILE" ] && [ "$IMMICH_OAUTH_RENDERED" = "$(cat "$IMMICH_OAUTH_CONFIG_FILE")" ]; then
         log "immich-oauth-config.yaml already up to date"

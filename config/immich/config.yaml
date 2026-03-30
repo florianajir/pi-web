@@ -1,0 +1,5 @@
+ffmpeg:
+  accel: disabled
+  preset: ultrafast
+  crf: 28
+  transcode: required
