@@ -2,6 +2,8 @@
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
+MAKEFLAGS += --no-print-directory
+
 PROJECT_PATH := $(shell pwd)
 UNIT         := pi-web.service
 COMPOSE      := docker compose
@@ -122,9 +124,7 @@ stop:
 	sudo systemctl stop $(UNIT) 2>/dev/null || true
 	@echo "✅ Stack stopped"
 
-restart:
-	$(MAKE) stop
-	$(MAKE) start
+restart: stop start
 
 update:
 	@echo "🔄 Update (git pull + restart)"
