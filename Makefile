@@ -54,6 +54,16 @@ install: check-env
 	@echo "🧰 Applying host sysctl settings..."
 	sudo cp config/sysctl.d/pi-web.conf /etc/sysctl.d/99-pi-web.conf
 	sudo sysctl --system >/dev/null
+	@echo "🌐 Adding local DNS overrides to /etc/hosts..."
+	@HOST_NAME_VAL=$$(grep -E '^HOST_NAME=' .env | tail -n1 | cut -d= -f2-); \
+	HOST_LAN_IP_VAL=$$(grep -E '^HOST_LAN_IP=' .env | tail -n1 | cut -d= -f2-); \
+	if [ -n "$$HOST_NAME_VAL" ] && [ -n "$$HOST_LAN_IP_VAL" ]; then \
+		sudo sed -i "/# pi-web local overrides/,/# end pi-web local overrides/d" /etc/hosts; \
+		printf "# pi-web local overrides\n$$HOST_LAN_IP_VAL\theadscale.$$HOST_NAME_VAL\n# end pi-web local overrides\n" | sudo tee -a /etc/hosts >/dev/null; \
+		echo "  ✔ headscale.$$HOST_NAME_VAL -> $$HOST_LAN_IP_VAL"; \
+	else \
+		echo "  ⚠ HOST_NAME or HOST_LAN_IP not set, skipping"; \
+	fi
 	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/pi-web.service > /tmp/$(UNIT)
 	sudo cp /tmp/$(UNIT) /etc/systemd/system/
 	sudo cp config/systemd/system/pi-web-restart.service /etc/systemd/system/
@@ -102,6 +112,8 @@ uninstall:
 	@echo "🧰 Removing host sysctl settings..."
 	-sudo rm -f /etc/sysctl.d/99-pi-web.conf
 	-sudo sysctl --system >/dev/null
+	@echo "🌐 Removing local DNS overrides from /etc/hosts..."
+	-sudo sed -i "/# pi-web local overrides/,/# end pi-web local overrides/d" /etc/hosts
 	@echo "🧹 Removing systemd units..."
 	-sudo systemctl disable $(UNIT) 2>/dev/null || true
 	-sudo systemctl disable pi-web-restart.timer 2>/dev/null || true
