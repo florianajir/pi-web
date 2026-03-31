@@ -794,6 +794,11 @@ services:
       - "traefik.http.routers.immich.entrypoints=websecure"
       - "traefik.http.routers.immich.middlewares=lan@docker"
       - "traefik.http.routers.immich.tls=true"
+      - "traefik.http.routers.immich.priority=10"
+      - "traefik.http.routers.immich-public.rule=Host(`immich.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/share`) || PathPrefix(`/_app`) || PathPrefix(`/api/shared-links`) || PathPrefix(`/api/assets`) || PathPrefix(`/api/albums`))"
+      - "traefik.http.routers.immich-public.entrypoints=websecure"
+      - "traefik.http.routers.immich-public.tls=true"
+      - "traefik.http.routers.immich-public.priority=20"
       - "traefik.http.services.immich.loadbalancer.server.port=2283"
     cpuset: "1-3"
     deploy: *cpu-request-xlarge
