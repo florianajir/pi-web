@@ -1068,7 +1068,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.lldap.rule=Host(`lldap.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.lldap.entrypoints=websecure"
-      - "traefik.http.routers.lldap.middlewares=lan@docker,authelia@docker,rate-limit-auth@docker"
+      - "traefik.http.routers.lldap.middlewares=lan@docker,rate-limit-auth@docker,authelia@docker"
       - "traefik.http.routers.lldap.tls=true"
       - "traefik.http.services.lldap.loadbalancer.server.port=17170"
     deploy: *cpu-request-small

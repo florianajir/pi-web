@@ -137,7 +137,7 @@ Auth endpoints (`auth.*` for Authelia, publicly accessible, and `lldap.*` for LL
 
 - **Average rate**: 10 requests/s per source IP
 - **Burst**: up to 20 requests allowed in a burst
-- Applies before authentication to prevent brute-force and credential-stuffing attacks
+- Applied on authentication endpoints to reduce brute-force and credential-stuffing attacks (for LLDAP this runs after the `authelia` forward-auth middleware, as configured in `compose.yaml`)
 
 ## Per-Service Protection
 
