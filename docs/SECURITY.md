@@ -131,24 +131,32 @@ flowchart LR
 - `X-Content-Type-Options: nosniff` — Prevent MIME type sniffing
 - `Referrer-Policy: strict-origin-when-cross-origin` — Limit referrer leakage
 
+**Rate limiting on auth routes:**
+
+Auth endpoints (`auth.*` for Authelia, publicly accessible, and `lldap.*` for LLDAP, LAN-only) are protected by the `rate-limit-auth` middleware:
+
+- **Average rate**: 10 requests/s per source IP
+- **Burst**: up to 20 requests allowed in a burst
+- Applies before authentication to prevent brute-force and credential-stuffing attacks
+
 ## Per-Service Protection
 
-| Service | `lan` Middleware | `authelia` Middleware | Own OIDC | Protection |
-|---------|:---:|:---:|:---:|----------|
-| Authelia portal | — | — | — | Public (login entry point) |
-| Nextcloud | — | — | ✓ | OIDC + LAN implicit |
-| Immich | ✓ | — | ✓ | LAN-only + OIDC |
-| Beszel | ✓ | — | ✓ | LAN-only + OIDC |
-| n8n | ✓ | — | — | LAN-only + own auth |
-| Ntfy | ✓ | — | — | LAN-only + own auth |
-| Homepage | ✓ | ✓ | — | LAN-only + SSO |
-| Uptime Kuma | ✓ | ✓ | — | LAN-only + SSO |
-| Traefik dashboard | ✓ | ✓ | — | LAN-only + admin + 2FA |
-| Pi-hole | ✓ | ✓ | — | LAN-only + admin + 2FA |
-| Backrest | ✓ | ✓ | — | LAN-only + admin + 2FA |
-| LLDAP | ✓ | ✓ | — | LAN-only + admin + 2FA + own auth |
-| Headplane | ✓ | — | ✓ | LAN-only + OIDC + admin + 2FA |
-| Dockhand | ✓ | — | ✓ | LAN-only + OIDC-only + admin + 2FA |
+| Service | `lan` Middleware | `authelia` Middleware | `rate-limit-auth` Middleware | Own OIDC | Protection |
+|---------|:---:|:---:|:---:|:---:|----------|
+| Authelia portal | — | — | ✓ | — | Public (login entry point) + rate-limited |
+| Nextcloud | — | — | — | ✓ | OIDC + LAN implicit |
+| Immich | ✓ | — | — | ✓ | LAN-only + OIDC |
+| Beszel | ✓ | — | — | ✓ | LAN-only + OIDC |
+| n8n | ✓ | — | — | — | LAN-only + own auth |
+| Ntfy | ✓ | — | — | — | LAN-only + own auth |
+| Homepage | ✓ | ✓ | — | — | LAN-only + SSO |
+| Uptime Kuma | ✓ | ✓ | — | — | LAN-only + SSO |
+| Traefik dashboard | ✓ | ✓ | — | — | LAN-only + admin + 2FA |
+| Pi-hole | ✓ | ✓ | — | — | LAN-only + admin + 2FA |
+| Backrest | ✓ | ✓ | — | — | LAN-only + admin + 2FA |
+| LLDAP | ✓ | ✓ | ✓ | — | LAN-only + admin + 2FA + own auth + rate-limited |
+| Headplane | ✓ | — | — | ✓ | LAN-only + OIDC + admin + 2FA |
+| Dockhand | ✓ | — | — | ✓ | LAN-only + OIDC-only + admin + 2FA |
 
 ## Access Control Policies
 
