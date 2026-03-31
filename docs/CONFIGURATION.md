@@ -150,6 +150,29 @@ These are auto-generated on first start; **do not edit manually**:
 
 OIDC client secrets are injected into services via Docker volumes, never exposed in environment.
 
+### Download Stack (qBittorrent + Gluetun VPN)
+
+qBittorrent runs inside Gluetun's network namespace — all torrent traffic exits through the configured VPN tunnel. The WebUI is exposed by the Gluetun container (which owns the network interface) and proxied by Traefik at `https://qbittorrent.<HOST_NAME>`.
+
+**VPN configuration** is managed via a separate env file (not `.env`):
+
+1. Copy `config/gluetun/gluetun.env.dist` to `config/gluetun/gluetun.env`
+2. Fill in your provider credentials
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `VPN_SERVICE_PROVIDER` | Provider name | `mullvad`, `nordvpn`, `protonvpn`, `custom` |
+| `VPN_TYPE` | Protocol | `wireguard` or `openvpn` |
+| `WIREGUARD_PRIVATE_KEY` | WireGuard private key | *(from provider)* |
+| `WIREGUARD_ADDRESSES` | WireGuard client address | `10.x.x.x/32` |
+| `OPENVPN_USER` / `OPENVPN_PASSWORD` | OpenVPN credentials | *(from provider)* |
+| `SERVER_COUNTRIES` | VPN server country filter | `Netherlands` |
+| `FIREWALL_VPN_INPUT_PORTS` | Allow inbound on VPN interface | `6881` (improves peer reachability) |
+
+The env file is optional — if absent, Gluetun starts without a VPN (traffic goes through the host's default route).
+
+**Credentials bootstrap** — qBittorrent credentials (`USER`/`PASSWORD` from `.env`) are applied automatically on first start by `scripts/qbittorrent-bootstrap.sh`. The config template (`config/qbittorrent/qBittorrent.conf.template`) pre-configures auth bypass for localhost and `ALLOW_IP_RANGES` so the bootstrap script can call the API unauthenticated. Idempotent on subsequent restarts.
+
 ### Headscale VPN
 
 These are auto-generated; no manual configuration needed:

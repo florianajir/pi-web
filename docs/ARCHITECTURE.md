@@ -26,6 +26,7 @@ flowchart LR
       PiholeWeb[pihole web]
       Authelia[authelia]
       Lldap[lldap]
+      Gluetun[gluetun + qbittorrent]
     end
 
     subgraph Internal["Internal app services"]
@@ -49,6 +50,7 @@ flowchart LR
   Traefik --> PiholeWeb
   Traefik --> Authelia
   Traefik --> Lldap
+  Traefik --> Gluetun
 
   Nextcloud --> Postgres
   Nextcloud --> Redis
@@ -91,6 +93,8 @@ flowchart LR
 | **PostgreSQL** | Database for Nextcloud, Immich, Authelia | App containers |
 | **Redis** | Session store, caching | App containers |
 | **Tailscale** | WireGuard VPN mesh agent | Your VPN devices |
+| **Gluetun** | VPN gateway (WireGuard/OpenVPN); owns the network namespace for qBittorrent | Internet |
+| **qBittorrent** | Torrent client; all traffic routed through Gluetun | Users via Traefik + SSO |
 
 ## Docker Networks
 
@@ -102,6 +106,7 @@ flowchart TB
         Traefik
         Authelia
         Services["Nextcloud, Immich, Dockhand,\nBeszel, n8n, Ntfy, Backrest,\nHeadplane, Homepage, Uptime Kuma"]
+        Gluetun["Gluetun (VPN gateway)\n+ qBittorrent (network_mode: service:gluetun)"]
     end
 
     subgraph auth["auth (internal)"]

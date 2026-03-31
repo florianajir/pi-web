@@ -22,6 +22,7 @@ If you're deciding between approaches, here's the short version:
 | **Cloud & Storage** | Nextcloud, Immich, n8n, Ntfy |
 | **Network & Security** | Traefik (reverse proxy), Tailscale/Headscale (VPN), Authelia (SSO), LLDAP (user directory) |
 | **DNS & Filtering** | Pi-hole (ad-blocking), Unbound (recursive DNS) |
+| **Download** | qBittorrent (torrent client), Gluetun (VPN kill-switch gateway) |
 | **Monitoring & Backup** | Beszel (monitoring), Backrest (restic backups), Dockhand (container management) |
 | **Infrastructure** | PostgreSQL, Redis, ddns-updater |
 
