@@ -798,7 +798,7 @@ services:
       - "traefik.http.routers.immich.middlewares=lan@docker"
       - "traefik.http.routers.immich.tls=true"
       - "traefik.http.routers.immich.priority=10"
-      - "traefik.http.routers.immich-public.rule=Host(`immich.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/share`) || PathPrefix(`/_app`) || PathPrefix(`/api`))"
+      - "traefik.http.routers.immich-public.rule=Host(`immich.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/share`) || PathPrefix(`/s/`) || PathPrefix(`/_app`) || PathPrefix(`/api`))"
       - "traefik.http.routers.immich-public.entrypoints=websecure"
       - "traefik.http.routers.immich-public.tls=true"
       - "traefik.http.routers.immich-public.priority=20"

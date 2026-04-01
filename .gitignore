@@ -15,3 +15,6 @@
 /config/gluetun/ca.crt
 /config/gluetun/client.crt
 /config/gluetun/client.key
+
+._.DS_Store
+.DS_Store
