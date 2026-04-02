@@ -822,6 +822,7 @@ services:
       - OVERWRITEPROTOCOL=https
       - OVERWRITECLIURL=https://nextcloud.${HOST_NAME:-pi.lan}
       - TRUSTED_PROXIES=172.30.11.250/32
+      - ALLOW_IP_RANGES=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}
       - FORWARDED_FOR_HEADERS=HTTP_X_FORWARDED_FOR
       - NEXTCLOUD_MAINTENANCE_WINDOW_START=${NEXTCLOUD_MAINTENANCE_WINDOW_START:-2}
       - NEXTCLOUD_DEFAULT_PHONE_REGION=${NEXTCLOUD_DEFAULT_PHONE_REGION:-FR}
@@ -846,6 +847,9 @@ services:
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/var/www/html/themes
       - ./config/nextcloud/custom.config.php:/var/www/html/config/custom.config.php:ro
       - ./config/nextcloud/security-headers.conf:/etc/apache2/conf-enabled/security-headers.conf:ro
+      - ./config/nextcloud/hooks/post-installation:/docker-entrypoint-hooks.d/post-installation:ro
+    extra_hosts:
+      - "auth.${HOST_NAME:-pi.lan}:172.30.11.250"
     networks:
       - frontend
       - nextcloud
@@ -861,6 +865,11 @@ services:
       - "traefik.http.routers.nextcloud.middlewares=lan@docker"
       - "traefik.http.routers.nextcloud.entrypoints=websecure"
       - "traefik.http.routers.nextcloud.tls=true"
+      - "traefik.http.routers.nextcloud.priority=10"
+      - "traefik.http.routers.nextcloud-public.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/s/`) || PathPrefix(`/public.php`) || PathPrefix(`/avatar/`) || PathPrefix(`/dist/`) || PathPrefix(`/apps/`) || PathPrefix(`/js/`) || PathPrefix(`/core/`) || PathPrefix(`/themes/`))"
+      - "traefik.http.routers.nextcloud-public.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud-public.tls=true"
+      - "traefik.http.routers.nextcloud-public.priority=20"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
     healthcheck:
       <<: *healthcheck-default

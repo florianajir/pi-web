@@ -66,10 +66,10 @@ install: check-env
 	fi
 	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/pi-web.service > /tmp/$(UNIT)
 	sudo cp /tmp/$(UNIT) /etc/systemd/system/
-	sudo cp config/systemd/system/pi-web-restart.service /etc/systemd/system/
-	sudo cp config/systemd/system/pi-web-restart.timer /etc/systemd/system/
+	sudo cp config/systemd/system/nextcloud-cron.service /etc/systemd/system/
+	sudo cp config/systemd/system/nextcloud-cron.timer /etc/systemd/system/
 	sudo systemctl daemon-reload
-	sudo systemctl enable $(UNIT)
+	sudo systemctl enable $(UNIT) nextcloud-cron.timer
 	@echo "✅ Systemd units installed"
 	@if [ "$(SKIP_START)" = "1" ]; then \
 		echo "⏭️  SKIP_START=1 set; not starting stack"; \
@@ -98,7 +98,6 @@ uninstall:
 	@echo ""
 	@echo "🛑 Stopping services..."
 	-sudo systemctl stop $(UNIT) 2>/dev/null || true
-	-sudo systemctl stop pi-web-restart.timer 2>/dev/null || true
 	@echo "🐳 Removing containers and volumes..."
 	-$(COMPOSE) down -v --remove-orphans 2>/dev/null || true
 	@echo "🧹 Removing bind-mount data directories..."
@@ -115,11 +114,10 @@ uninstall:
 	@echo "🌐 Removing local DNS overrides from /etc/hosts..."
 	-sudo sed -i "/# pi-web local overrides/,/# end pi-web local overrides/d" /etc/hosts
 	@echo "🧹 Removing systemd units..."
-	-sudo systemctl disable $(UNIT) 2>/dev/null || true
-	-sudo systemctl disable pi-web-restart.timer 2>/dev/null || true
+	-sudo systemctl disable $(UNIT) nextcloud-cron.timer 2>/dev/null || true
 	-sudo rm -f /etc/systemd/system/$(UNIT)
-	-sudo rm -f /etc/systemd/system/pi-web-restart.service
-	-sudo rm -f /etc/systemd/system/pi-web-restart.timer
+	-sudo rm -f /etc/systemd/system/nextcloud-cron.service
+	-sudo rm -f /etc/systemd/system/nextcloud-cron.timer
 	-sudo systemctl daemon-reload
 	@echo "✅ Uninstall complete"
 	@echo ""

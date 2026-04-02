@@ -61,6 +61,12 @@ $CONFIG['trusted_domains'] = array_values(array_unique(array_merge($existingTrus
 
 $CONFIG['hide_login_form'] = true;
 
+$CONFIG['allow_local_remote_servers'] = true;
+
+$CONFIG['auth.bruteforce.protection.enabled'] = true;
+
+$CONFIG['shareapi_allow_custom_url'] = true;
+
 $CONFIG['skeletondirectory'] = '';
 
 $redisHost = getenv('REDIS_HOST');

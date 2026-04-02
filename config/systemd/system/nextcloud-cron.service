@@ -1,0 +1,8 @@
+[Unit]
+Description=Nextcloud cron job
+After=docker.service pi-web.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec -u www-data pi-nextcloud php -f /var/www/html/cron.php

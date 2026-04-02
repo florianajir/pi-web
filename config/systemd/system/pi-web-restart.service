@@ -1,6 +1,0 @@
-[Unit]
-Description=Restart pi-web
-
-[Service]
-Type=oneshot
-ExecStart=/bin/systemctl restart pi-web
