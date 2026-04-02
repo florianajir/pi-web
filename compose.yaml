@@ -647,7 +647,6 @@ services:
       - HEADSCALE_SERVER_URL=https://headscale.${HOST_NAME:-pi.lan}
       - HEADSCALE_LISTEN_ADDR=0.0.0.0:8080
       - HEADSCALE_DNS_BASE_DOMAIN=tailnet.${HOST_NAME:-pi.lan}
-      - HEADSCALE_DERP_SERVER_IPV4=${HOST_LAN_IP:-192.168.1.30}
     networks:
       - frontend
     expose:
@@ -712,6 +711,7 @@ services:
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=false
       - TS_EXTRA_ARGS=--login-server=https://headscale.${HOST_NAME:-pi.lan} --accept-dns=true --advertise-exit-node --advertise-routes=192.168.1.0/24 --accept-routes --ssh
+      - TS_TAILSCALED_EXTRA_ARGS=--port=41641
       - TS_HOSTNAME=tailscale
     extra_hosts:
       - "headscale.${HOST_NAME:-pi.lan}:${HOST_LAN_IP:-192.168.1.30}"
@@ -952,7 +952,7 @@ services:
       start_period: 30s
       start_interval: 5s
     deploy: *cpu-request-small
-    mem_limit: 128m
+    mem_limit: 256m
     oom_score_adj: *oom-score-deprioritize
 
   qbittorrent:

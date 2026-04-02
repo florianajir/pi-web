@@ -29,13 +29,24 @@ If you're deciding between approaches, here's the short version:
 ## Requirements
 
 **Hardware:**
-- Raspberry Pi 5 (8GB minimum, 16GB recommended)
-- Storage: MicroSD card (16GB+) or NVMe SSD HAT
+- Raspberry Pi 5 (8GB RAM minimum, **16GB RAM recommended** for the full stack)
+- Storage: NVMe SSD HAT recommended (MicroSD cards degrade quickly under continuous I/O)
+- S3-compatible bucket (or equivalent) recommended for off-site Backrest backups
 
 **Prerequisites:**
 - Domain name + Cloudflare account (free tier OK)
 - Cloudflare API token with DNS edit permissions
 - Docker & Docker Compose installed
+
+**Router port forwarding:**
+
+| Port | Protocol | Service | Purpose |
+|------|----------|---------|---------|
+| `443` | TCP | Traefik | HTTPS access to web services |
+| `41641` | UDP | Tailscale/Headscale | WireGuard VPN tunnel |
+| `3478` | UDP | Tailscale/Headscale | STUN — peer-to-peer traversal |
+
+> Only `443` is required for basic HTTPS access. `41641` and `3478` are needed for direct VPN connections via Headscale.
 
 ## Quick Start
 
