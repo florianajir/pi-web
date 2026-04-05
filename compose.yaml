@@ -435,7 +435,7 @@ services:
 
   pihole:
     <<: *service-defaults
-    image: pihole/pihole:2026.02.0
+    image: pihole/pihole:2026.04.0
     container_name: pi-pihole
     cap_add:
       - NET_ADMIN
