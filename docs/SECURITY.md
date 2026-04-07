@@ -133,17 +133,27 @@ flowchart LR
 
 **Rate limiting on auth routes:**
 
-Auth endpoints (`auth.*` for Authelia, publicly accessible, and `lldap.*` for LLDAP, LAN-only) are protected by the `rate-limit-auth` middleware:
+The `rate-limit-auth` middleware is applied to LLDAP (`lldap.*`) only:
 
 - **Average rate**: 10 requests/s per source IP
 - **Burst**: up to 20 requests allowed in a burst
-- Applied on authentication endpoints to reduce brute-force and credential-stuffing attacks (for LLDAP this runs after the `authelia` forward-auth middleware, as configured in `compose.yaml`)
+- Applied after the `authelia` forward-auth middleware on LLDAP to prevent credential-stuffing
+
+The Authelia portal (`auth.*`) has **no IP allowlist and no rate limiting** at the Traefik level for two reasons:
+1. Its SPA makes multiple API calls on page load which would trigger the rate limit
+2. OIDC clients (Open WebUI, Nextcloud, Immich, etc.) make server-side requests to Authelia's OIDC endpoints (discovery, token exchange) — an IP allowlist would block those container-to-container calls with 403
+
+Authelia's own `regulation` config (`max_retries: 3`, `ban_time: 5m`) handles brute-force protection.
+
+**Forward-auth cookie forwarding:**
+
+The `authelia` forward-auth middleware is configured with `authRequestHeaders=Accept,Cookie,Authorization` so Traefik passes the session cookie to Authelia on every protected request. Without this, Authelia cannot look up the session in Redis and returns a "user state" error.
 
 ## Per-Service Protection
 
 | Service | `lan` Middleware | `authelia` Middleware | `rate-limit-auth` Middleware | Own OIDC | Protection |
 |---------|:---:|:---:|:---:|:---:|----------|
-| Authelia portal | — | — | ✓ | — | Public (login entry point) + rate-limited |
+| Authelia portal | — | — | — | — | Public login entry point — Authelia's `regulation` handles brute-force; no IP restriction so OIDC clients can reach it server-side |
 | Nextcloud | — | — | — | ✓ | OIDC + LAN implicit |
 | Immich | ✓ | — | — | ✓ | LAN-only + OIDC |
 | Beszel | ✓ | — | — | ✓ | LAN-only + OIDC |
@@ -155,8 +165,10 @@ Auth endpoints (`auth.*` for Authelia, publicly accessible, and `lldap.*` for LL
 | Pi-hole | ✓ | ✓ | — | — | LAN-only + admin + 2FA |
 | Backrest | ✓ | ✓ | — | — | LAN-only + admin + 2FA |
 | LLDAP | ✓ | ✓ | ✓ | — | LAN-only + admin + 2FA + own auth + rate-limited |
-| Headplane | ✓ | — | — | ✓ | LAN-only + OIDC + admin + 2FA |
-| Dockhand | ✓ | — | — | ✓ | LAN-only + OIDC-only + admin + 2FA |
+| Open WebUI | ✓ | — | — | ✓ | LAN-only + OIDC |
+| qBittorrent | ✓ | ✓ | — | — | LAN-only + SSO |
+| Headplane | ✓ | ✓ | — | ✓ | LAN-only + SSO + OIDC + admin + 2FA |
+| Dockhand | ✓ | — | — | ✓ | LAN-only + OIDC + admin + 2FA |
 
 ## Access Control Policies
 

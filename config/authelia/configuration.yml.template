@@ -49,6 +49,7 @@ access_control:
         - 'uptime.__HOST_NAME__'
         - 'homepage.__HOST_NAME__'
         - 'qbittorrent.__HOST_NAME__'
+        - 'ai.__HOST_NAME__'
       policy: one_factor
 
     - domain: 'headscale.__HOST_NAME__'
@@ -131,6 +132,7 @@ __OIDC_PRIVATE_KEY__
         - 'https://beszel.__HOST_NAME__'
         - 'https://dockhand.__HOST_NAME__'
         - 'https://headscale.__HOST_NAME__'
+        - 'https://ai.__HOST_NAME__'
     clients:
       - client_id: nextcloud
         client_name: Nextcloud
@@ -249,6 +251,25 @@ __OIDC_PRIVATE_KEY__
         consent_mode: implicit
         redirect_uris:
           - 'https://headscale.__HOST_NAME__/oidc/callback'
+        scopes:
+          - openid
+          - profile
+          - email
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+        token_endpoint_auth_method: client_secret_basic
+        userinfo_signed_response_alg: none
+
+      - client_id: open-webui
+        client_name: Open WebUI
+        client_secret: '{{ secret "/config/secrets/oidc_open-webui_secret_hash" }}'
+        public: false
+        authorization_policy: one_factor
+        consent_mode: implicit
+        redirect_uris:
+          - 'https://ai.__HOST_NAME__/oauth/oidc/callback'
         scopes:
           - openid
           - profile

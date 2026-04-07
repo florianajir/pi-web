@@ -112,7 +112,7 @@ main() {
     fi
 
     # Generate OIDC client secrets (plaintext + PBKDF2 hash)
-    for client in nextcloud immich beszel dockhand headplane headscale; do
+    for client in nextcloud immich beszel dockhand headplane headscale open-webui; do
         generate_oidc_secret "oidc_${client}_secret"
     done
 

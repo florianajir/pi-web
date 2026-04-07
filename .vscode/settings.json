@@ -14,9 +14,11 @@
 		"CONFS",
 		"containrrr",
 		"coredns",
+		"cpus",
 		"cpuset",
 		"datasource",
 		"ddns",
+		"deprioritize",
 		"dnschallenge",
 		"dnsmasq",
 		"DNSSEC",
@@ -45,6 +47,7 @@
 		"Nosniff",
 		"nslookup",
 		"ntfy",
+		"ollama",
 		"oneshot",
 		"OVERWRITEHOST",
 		"OVERWRITEPROTOCOL",
@@ -71,7 +74,9 @@
 		"totp",
 		"traefik",
 		"WEBPASSWORD",
-		"websecure"
+		"websecure",
+		"webui",
+		"xlarge"
 	],
 	"yaml.schemas": {
 		"https://json.schemastore.org/github-workflow.json": "/*.github/workflows/*.yml"

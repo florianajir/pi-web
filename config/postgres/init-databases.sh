@@ -99,6 +99,28 @@ GRANT ALL ON SCHEMA public TO lldap;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO lldap;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO lldap;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO lldap;
+-- Create Open-WebUI database and user
+DO \$\$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'open-webui') THEN
+		CREATE USER "open-webui" WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
+	ELSE
+		ALTER USER "open-webui" WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
+	END IF;
+END
+\$\$;
+SELECT 'CREATE DATABASE "open-webui"'
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'open-webui')
+\gexec
+GRANT ALL PRIVILEGES ON DATABASE "open-webui" TO "open-webui";
+ALTER DATABASE "open-webui" OWNER TO "open-webui";
+
+-- Set proper permissions for Open-WebUI user on Open-WebUI DB
+\connect "open-webui"
+GRANT ALL ON SCHEMA public TO "open-webui";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "open-webui";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "open-webui";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO "open-webui";
 EOF
 
 # Execute the SQL file
