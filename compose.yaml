@@ -762,7 +762,7 @@ services:
       - immich_model_cache:/cache
     cpuset: "2-3"
     deploy: *cpu-request-medium
-    mem_limit: 1536m
+    mem_limit: 2g
     oom_score_adj: *oom-score-deprioritize
 
   immich-server:
