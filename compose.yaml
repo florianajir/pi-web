@@ -125,6 +125,7 @@ services:
       - OPEN_WEBUI_SQL_BACKUP_DIR=/userdata/open-webui/backups
       - OPEN_WEBUI_SQL_BACKUP_KEEP=7
       - RESTIC_PACK_SIZE=32
+      - GOMEMLIMIT=1200MiB
     env_file:
       - path: ./config/ntfy/ntfy.env
         required: false
@@ -177,7 +178,7 @@ services:
       test: ["CMD", "curl", "-fsS", "http://localhost:9898/"]
       start_period: 45s
     deploy: *cpu-request-medium
-    mem_limit: 768m
+    mem_limit: 1536m
     oom_score_adj: *oom-score-important
 
   traefik:
@@ -744,7 +745,7 @@ services:
   immich-machine-learning:
     <<: *service-defaults
     container_name: pi-immich-machine-learning
-    image: ghcr.io/immich-app/immich-machine-learning:v2.6.3
+    image: ghcr.io/immich-app/immich-machine-learning:v2.7.2
     networks:
       - dns_egress
       - immich
@@ -768,7 +769,7 @@ services:
   immich-server:
     <<: *service-defaults
     container_name: pi-immich
-    image: ghcr.io/immich-app/immich-server:v2.6.3
+    image: ghcr.io/immich-app/immich-server:v2.7.2
     volumes:
       - ${DATA_LOCATION:-./data}/immich:/data
       - ${DATA_LOCATION:-./data}/authelia-config/immich-oauth-config.yaml:/immich-oauth-config.yaml:ro
@@ -818,7 +819,7 @@ services:
 
   nextcloud:
     <<: *service-defaults
-    image: nextcloud:33-apache
+    image: nextcloud:33.0.2-apache
     container_name: pi-nextcloud
     environment:
       - NEXTCLOUD_ADMIN_USER=${USER}
