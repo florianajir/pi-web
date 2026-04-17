@@ -262,7 +262,7 @@ services:
 
   beszel:
     <<: *service-defaults
-    image: henrygd/beszel:0.18.5
+    image: henrygd/beszel:0.18.7
     container_name: pi-beszel
     networks:
       - frontend
