@@ -32,9 +32,9 @@ x-cpu-request-xlarge: &cpu-request-xlarge
 
 # OOM score adjustments: lower value = less likely to be killed
 # Range: -1000 (never kill) to +1000 (kill first). Default is 0.
-x-oom-score-critical: &oom-score-critical -1000 # traefik, pihole, unbound, headscale, tailscale, ddns-updater
-x-oom-score-important: &oom-score-important -500 # postgres, redis, backrest
-x-oom-score-deprioritize: &oom-score-deprioritize 500 # n8n, immich, nextcloud
+x-oom-score-critical: &oom-score-critical -1000
+x-oom-score-important: &oom-score-important -500
+x-oom-score-deprioritize: &oom-score-deprioritize 500
 
 # Healthcheck timing presets (override individual fields as needed)
 x-healthcheck-default: &healthcheck-default

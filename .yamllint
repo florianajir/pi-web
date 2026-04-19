@@ -14,3 +14,6 @@ rules:
   document-start:
     present: false
   truthy: disable
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
