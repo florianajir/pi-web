@@ -3,24 +3,24 @@
 # https://gethomepage.dev/configs/info-widgets/
 
 - greeting:
-      text_size: xl
-      text: PI Pcloud
+        text_size: xl
+        text: PI Pcloud
 
 - search:
-      provider: duckduckgo
-      target: _blank
+        provider: duckduckgo
+        target: _blank
 
 - resources:
-      cpu: true
-      memory: true
-      disk: /
-      cputemp: true
-      tempmax: 85
-      uptime: true
-      units: metric
-      network: true
+        cpu: true
+        memory: true
+        disk: /
+        cputemp: true
+        tempmax: 85
+        uptime: true
+        units: metric
+        network: true
 
 - datetime:
-      text_size: xl
-      format:
-          timeStyle: short
+        text_size: xl
+        format:
+              timeStyle: short
