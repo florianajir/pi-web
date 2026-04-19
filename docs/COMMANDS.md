@@ -1,6 +1,6 @@
 # Commands Reference
 
-Run all commands from the pi-web directory: `/opt/pi-web`
+Run all commands from the pi-pcloud directory: `/opt/pi-pcloud`
 
 ## Make Commands
 

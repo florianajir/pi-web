@@ -211,7 +211,7 @@ See [Monitoring & Alerts](MONITORING.md#backup-strategy) for configuration detai
 ## Scaling & Failover
 
 **Single-instance design:**
-- Pi-web runs on one Raspberry Pi
+- Pi-pcloud runs on one Raspberry Pi
 - All data in `./data` directory (mount on external SSD for reliability)
 - Backups to S3 for disaster recovery
 - No clustering or replication built-in
@@ -224,7 +224,7 @@ See [Monitoring & Alerts](MONITORING.md#backup-strategy) for configuration detai
 ## Storage Layout
 
 ```
-pi-web/
+pi-pcloud/
 ├── .env                          # Configuration (secrets)
 ├── compose.yaml                  # Docker services definition
 ├── Makefile                      # Convenient commands
@@ -247,6 +247,6 @@ pi-web/
 ```
 
 **Recommended setup:**
-- Clone on SSD: `git clone ... /mnt/ssd/pi-web`
-- Symlink from `/opt`: `ln -s /mnt/ssd/pi-web /opt/pi-web`
-- Run systemd service from `/opt/pi-web`
+- Clone on SSD: `git clone ... /mnt/ssd/pi-pcloud`
+- Symlink from `/opt`: `ln -s /mnt/ssd/pi-pcloud /opt/pi-pcloud`
+- Run systemd service from `/opt/pi-pcloud`

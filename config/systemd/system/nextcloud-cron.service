@@ -1,6 +1,6 @@
 [Unit]
 Description=Nextcloud cron job
-After=docker.service pi-web.service
+After=docker.service pi-pcloud.service
 Requires=docker.service
 
 [Service]

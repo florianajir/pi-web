@@ -13,7 +13,7 @@ All configuration is managed through the `.env` file. Copy `.env.dist` and edit 
 | `USER` | LLDAP admin username | ✓ | — | `admin` |
 | `PASSWORD` | LLDAP admin & Authelia password | ✓ | — | `MySecurePassword123!` |
 | `EMAIL` | Admin email & sender address | ✓ | — | `admin@example.com` |
-| `DATA_LOCATION` | Path for persistent data | — | `./data` | `/mnt/ssd/pi-web-data` |
+| `DATA_LOCATION` | Path for persistent data | — | `./data` | `/mnt/ssd/pi-pcloud-data` |
 
 ### Network Configuration
 
@@ -54,7 +54,7 @@ For backups and file storage. Compatible with AWS S3, Scaleway, DigitalOcean Spa
 | Variable | Description | Required | Example |
 |----------|-------------|----------|---------|
 | `S3_ENDPOINT` | S3-compatible endpoint URL | — | `https://s3.fr-par.scw.cloud` |
-| `S3_BUCKET` | Bucket name | — | `my-pi-web-backup` |
+| `S3_BUCKET` | Bucket name | — | `my-pi-pcloud-backup` |
 | `S3_REGION` | Region code | — | `fr-par` |
 | `S3_ACCESS_KEY_ID` | Access key | — | *(from provider)* |
 | `S3_SECRET_ACCESS_KEY` | Secret key | — | *(from provider)* |
@@ -251,7 +251,7 @@ If something breaks:
 Always backup your `.env` and `config/` directory:
 
 ```bash
-tar -czf pi-web-config-backup.tar.gz \
+tar -czf pi-pcloud-config-backup.tar.gz \
   .env \
   config/ \
   data/authelia-config/secrets/

@@ -24,7 +24,7 @@ jobs:
 
       - name: Validate Docker Compose config
         env:
-          DATA_LOCATION: /tmp/pi-web-ci-data
+          DATA_LOCATION: /tmp/pi-pcloud-ci-data
         run: |
           set -euo pipefail
           docker compose -f compose.yaml config >/dev/null
@@ -71,9 +71,9 @@ jobs:
           TIMEZONE=UTC
           CLOUDFLARE_ZONE_ID=ci-zone-placeholder
           CLOUDFLARE_DNS_API_TOKEN=ci-token-placeholder
-          DATA_LOCATION=/tmp/pi-web-ci-data
+          DATA_LOCATION=/tmp/pi-pcloud-ci-data
           EOF
-          rm -rf /tmp/pi-web-ci-data
+          rm -rf /tmp/pi-pcloud-ci-data
 
       - name: Render generated configs for CI
         run: |
@@ -83,7 +83,7 @@ jobs:
 
           # Make all generated files world-readable so docker compose (and the Docker
           # daemon) can open env_files regardless of the runner's umask or ownership.
-          chmod -R a+rX /tmp/pi-web-ci-data
+          chmod -R a+rX /tmp/pi-pcloud-ci-data
 
           # Guard against bind-mount path type mismatches in CI
           test -f ./config/headplane/config.yaml
@@ -123,4 +123,4 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          sudo rm -rf /tmp/pi-web-ci-data
+          sudo rm -rf /tmp/pi-pcloud-ci-data

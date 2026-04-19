@@ -1,5 +1,5 @@
 #!/bin/sh
-# Shared library for pi-web scripts.
+# Shared library for pi-pcloud scripts.
 # Source with: . "$(dirname "$0")/lib.sh"
 
 # --- Project paths ---

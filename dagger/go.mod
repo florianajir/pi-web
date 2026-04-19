@@ -1,4 +1,4 @@
-module dagger/pi-web
+module dagger/pi-pcloud
 
 go 1.26.0
 

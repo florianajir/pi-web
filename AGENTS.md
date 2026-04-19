@@ -1,6 +1,6 @@
-# Pi Web
+# Pi Pcloud
 
-Pi Web is a self-hosted web application stack designed for Raspberry Pi devices. It includes a variety of services for personal cloud such as Nextcloud, Immich, n8n, and monitoring solutions, all orchestrated using Docker Compose. The stack is secured with Tailscale and managed through Headscale for private networking.
+Pi Pcloud is a self-hosted web application stack designed for Raspberry Pi devices. It includes a variety of services for personal cloud such as Nextcloud, Immich, n8n, and monitoring solutions, all orchestrated using Docker Compose. The stack is secured with Tailscale and managed through Headscale for private networking.
 
 ## Guidelines
 

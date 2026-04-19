@@ -12,7 +12,7 @@
 
 ## Prerequisites
 
-Before installing pi-web, ensure you have:
+Before installing pi-pcloud, ensure you have:
 
 1. **Domain Name** — A registered domain for accessing services via HTTPS
 2. **Cloudflare Account** — Free tier OK. You'll need:
@@ -28,8 +28,8 @@ Before installing pi-web, ensure you have:
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/florianajir/pi-web.git
-cd pi-web
+git clone https://github.com/florianajir/pi-pcloud.git
+cd pi-pcloud
 ```
 
 ### 2. Configure Environment
@@ -155,7 +155,7 @@ Common issues:
 
 Reset LLDAP admin:
 1. Stop stack: `make stop`
-2. Remove LLDAP volume: `docker volume rm pi-web_lldap_data`
+2. Remove LLDAP volume: `docker volume rm pi-pcloud_lldap_data`
 3. Restart: `make start`
 4. LLDAP admin reset to credentials in `.env`
 

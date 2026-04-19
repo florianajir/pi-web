@@ -394,8 +394,8 @@ def main():
         else:
             log("WARNING: NTFY_UPTIME_KUMA_PASSWORD not found; skipping ntfy notification setup")
 
-        # Ensure "pi-web" group monitor
-        group_id = api.ensure_group_monitor("pi-web", notification_id)
+        # Ensure "pi-pcloud" group monitor
+        group_id = api.ensure_group_monitor("pi-pcloud", notification_id)
 
         # Get container names from compose.yaml
         container_names = get_container_names_from_compose(project_dir)

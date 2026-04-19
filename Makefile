@@ -5,7 +5,7 @@ REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL USER PASSWORD HOST_LAN_IP CLOUDFLA
 MAKEFLAGS += --no-print-directory
 
 PROJECT_PATH := $(shell pwd)
-UNIT         := pi-web.service
+UNIT         := pi-pcloud.service
 COMPOSE      := docker compose
 
 ifeq (headscale-register,$(firstword $(MAKECMDGOALS)))
@@ -52,19 +52,19 @@ preflight: check-env
 install: check-env
 	@echo "📦 Installing..."
 	@echo "🧰 Applying host sysctl settings..."
-	sudo cp config/sysctl.d/pi-web.conf /etc/sysctl.d/99-pi-web.conf
+	sudo cp config/sysctl.d/pi-pcloud.conf /etc/sysctl.d/99-pi-pcloud.conf
 	sudo sysctl --system >/dev/null
 	@echo "🌐 Adding local DNS overrides to /etc/hosts..."
 	@HOST_NAME_VAL=$$(grep -E '^HOST_NAME=' .env | tail -n1 | cut -d= -f2-); \
 	HOST_LAN_IP_VAL=$$(grep -E '^HOST_LAN_IP=' .env | tail -n1 | cut -d= -f2-); \
 	if [ -n "$$HOST_NAME_VAL" ] && [ -n "$$HOST_LAN_IP_VAL" ]; then \
-		sudo sed -i "/# pi-web local overrides/,/# end pi-web local overrides/d" /etc/hosts; \
-		printf "# pi-web local overrides\n$$HOST_LAN_IP_VAL\theadscale.$$HOST_NAME_VAL\n# end pi-web local overrides\n" | sudo tee -a /etc/hosts >/dev/null; \
+		sudo sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts; \
+		printf "# pi-pcloud local overrides\n$$HOST_LAN_IP_VAL\theadscale.$$HOST_NAME_VAL\n# end pi-pcloud local overrides\n" | sudo tee -a /etc/hosts >/dev/null; \
 		echo "  ✔ headscale.$$HOST_NAME_VAL -> $$HOST_LAN_IP_VAL"; \
 	else \
 		echo "  ⚠ HOST_NAME or HOST_LAN_IP not set, skipping"; \
 	fi
-	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/pi-web.service > /tmp/$(UNIT)
+	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/pi-pcloud.service > /tmp/$(UNIT)
 	sudo cp /tmp/$(UNIT) /etc/systemd/system/
 	sudo cp config/systemd/system/nextcloud-cron.service /etc/systemd/system/
 	sudo cp config/systemd/system/nextcloud-cron.timer /etc/systemd/system/
@@ -81,7 +81,7 @@ install: check-env
 	@echo "✅ Installation complete"
 
 uninstall:
-	@echo "🗑️  Uninstalling Pi-Web..."
+	@echo "🗑️  Uninstalling Pi-Pcloud..."
 	@echo ""
 	@echo "⚠️  WARNING: This will remove ALL data including:"
 	@echo "   - Docker volumes (Pi-hole, Headscale, etc.)"
@@ -109,10 +109,10 @@ uninstall:
 	-rm -f ./config/ntfy/ntfy.env
 	-rm -f ./config/beszel-agent/agent.env
 	@echo "🧰 Removing host sysctl settings..."
-	-sudo rm -f /etc/sysctl.d/99-pi-web.conf
+	-sudo rm -f /etc/sysctl.d/99-pi-pcloud.conf
 	-sudo sysctl --system >/dev/null
 	@echo "🌐 Removing local DNS overrides from /etc/hosts..."
-	-sudo sed -i "/# pi-web local overrides/,/# end pi-web local overrides/d" /etc/hosts
+	-sudo sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts
 	@echo "🧹 Removing systemd units..."
 	-sudo systemctl disable $(UNIT) nextcloud-cron.timer 2>/dev/null || true
 	-sudo rm -f /etc/systemd/system/$(UNIT)
@@ -124,12 +124,12 @@ uninstall:
 	@echo "ℹ️  Note: .env file preserved. Remove manually if needed."
 
 start:
-	@echo "🚀 Starting Pi-Web stack..."
+	@echo "🚀 Starting Pi-Pcloud stack..."
 	sudo systemctl start $(UNIT)
 	@echo "✅ Stack started"
 
 stop:
-	@echo "🛑 Stopping Pi-Web stack..."
+	@echo "🛑 Stopping Pi-Pcloud stack..."
 	$(COMPOSE) down --remove-orphans
 	sudo systemctl stop $(UNIT) 2>/dev/null || true
 	@echo "✅ Stack stopped"
@@ -162,7 +162,7 @@ headscale-register:
 # directory (which can be 100+ GB) into the engine. .daggerignore is not
 # honoured for *dagger.Directory function arguments in Dagger v0.20.
 # GitHub Actions runners have a clean checkout, so --src . is fine there.
-CI_SRC := /tmp/pi-web-ci-src
+CI_SRC := /tmp/pi-pcloud-ci-src
 
 .PHONY: ci-stage
 ci-stage:

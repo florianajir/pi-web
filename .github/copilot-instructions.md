@@ -1,4 +1,4 @@
-# PI Web Docker Compose Stack
+# PI Pcloud Docker Compose Stack
 
 A personal self-hosted web stack for Raspberry Pi, built with Docker Compose. It includes a variety of services for personal cloud storage, media management, VPN connectivity, DNS filtering, monitoring, and more.
 

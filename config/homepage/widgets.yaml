@@ -4,7 +4,7 @@
 
 - greeting:
       text_size: xl
-      text: PI Web
+      text: PI Pcloud
 
 - search:
       provider: duckduckgo

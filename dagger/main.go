@@ -1,4 +1,4 @@
-// Dagger CI pipeline for pi-web.
+// Dagger CI pipeline for pi-pcloud.
 //
 // Provides two callable functions mirroring the GitHub Actions CI pipeline:
 //   - validate: lints YAML files (no Docker daemon needed)
@@ -23,12 +23,12 @@ import (
 const (
 	// hostProjectDir is the absolute path of the project on the host.
 	// Generated config files are exported back here so docker compose bind-mounts can find them.
-	hostProjectDir = "/opt/pi-web"
+	hostProjectDir = "/opt/pi-pcloud"
 
 	// ciDataDir is a temporary, writable directory on the host used for all CI bind-mount data.
 	// Using a path outside of hostProjectDir avoids conflicts with production data that may
 	// be owned by root or initialised with a different password.
-	ciDataDir = "/tmp/pi-web-ci-data"
+	ciDataDir = "/tmp/pi-pcloud-ci-data"
 
 	// ciEnvBase contains shared CI environment variables used by both pre-start scripts and docker compose.
 	ciEnvBase = `HOST_NAME=test.local
@@ -46,14 +46,14 @@ CLOUDFLARE_DNS_API_TOKEN=ci-token-placeholder
 	ciEnvContent = ciEnvBase + "DATA_LOCATION=" + ciDataDir + "\n"
 )
 
-// PiWeb is the Dagger CI module for pi-web.
-type PiWeb struct{}
+// PiPcloud is the Dagger CI module for pi-pcloud.
+type PiPcloud struct{}
 
 // Validate lints all YAML files using yamllint.
 // No Docker daemon is required.
 //
 //	dagger call validate --src .
-func (m *PiWeb) Validate(ctx context.Context, src *dagger.Directory) (string, error) {
+func (m *PiPcloud) Validate(ctx context.Context, src *dagger.Directory) (string, error) {
 	out, err := dag.Container().
 		From("python:3.12-alpine").
 		WithExec([]string{"pip", "install", "--quiet", "yamllint"}).
@@ -71,7 +71,7 @@ func (m *PiWeb) Validate(ctx context.Context, src *dagger.Directory) (string, er
 // It mirrors the GitHub Actions smoke-test job exactly.
 //
 //	dagger call smoke-test --src . --docker-sock /var/run/docker.sock
-func (m *PiWeb) SmokeTest(ctx context.Context, src *dagger.Directory, dockerSock *dagger.Socket) (string, error) {
+func (m *PiPcloud) SmokeTest(ctx context.Context, src *dagger.Directory, dockerSock *dagger.Socket) (string, error) {
 	var sb strings.Builder
 
 	// Phase 1 — run pre-start scripts via the host Docker daemon.
@@ -111,7 +111,7 @@ func (m *PiWeb) SmokeTest(ctx context.Context, src *dagger.Directory, dockerSock
 // ciDataDir mounted as the writable data directory.  Generated files (Authelia secrets,
 // rendered configuration.yml, lldap JWT secret) are written directly to ciDataDir on the
 // HOST filesystem — no Dagger Directory.Export needed, avoiding SDK export issues.
-func (m *PiWeb) generateAndExportConfigs(ctx context.Context, src *dagger.Directory, sock *dagger.Socket) error {
+func (m *PiPcloud) generateAndExportConfigs(ctx context.Context, src *dagger.Directory, sock *dagger.Socket) error {
 	// Build the shell command: install deps, run authelia-pre-start.sh.
 	// DATA_LOCATION is passed as an env var (absolute path) so the script writes to
 	// /ci-data inside the helper container = ciDataDir on the host.
@@ -142,13 +142,13 @@ func (m *PiWeb) generateAndExportConfigs(ctx context.Context, src *dagger.Direct
 // project directory mounted at the same host path so compose bind-mounts resolve correctly.
 // ciDataDir is also mounted so compose sees DATA_LOCATION bind-mount data and files generated
 // by pre-start scripts via the host Docker daemon.
-func (m *PiWeb) dockerCLI(src *dagger.Directory, dockerSock *dagger.Socket) *dagger.Container {
+func (m *PiPcloud) dockerCLI(src *dagger.Directory, dockerSock *dagger.Socket) *dagger.Container {
 	return dag.Container().
 		From("docker:cli").
 		WithUnixSocket("/var/run/docker.sock", dockerSock).
 		// Mount project at the SAME path as on the host so --project-directory resolves correctly.
 		WithMountedDirectory(hostProjectDir, src.WithNewFile(".env", ciEnvContent)).
-		// Mount CI data so docker compose can read env_files (DATA_LOCATION=/tmp/pi-web-ci-data).
+		// Mount CI data so docker compose can read env_files (DATA_LOCATION=/tmp/pi-pcloud-ci-data).
 		WithMountedDirectory(ciDataDir, dag.Host().Directory(ciDataDir)).
 		WithWorkdir(hostProjectDir).
 		WithEnvVariable("COMPOSE_ANSI", "never").
@@ -157,38 +157,38 @@ func (m *PiWeb) dockerCLI(src *dagger.Directory, dockerSock *dagger.Socket) *dag
 }
 
 // composeArgs builds a docker compose command with the CI compose file pair.
-// Uses project name "pi-web-ci" to avoid conflicting with any production "pi-web" stack.
+// Uses project name "pi-pcloud-ci" to avoid conflicting with any production stack.
 func composeArgs(args ...string) []string {
 	return append([]string{
 		"docker", "compose",
 		"-f", hostProjectDir + "/compose.yaml",
 		"-f", hostProjectDir + "/compose.test.yaml",
 		"--project-directory", hostProjectDir,
-		"--project-name", "pi-web-ci",
+		"--project-name", "pi-pcloud-ci",
 	}, args...)
 }
 
-func (m *PiWeb) composeUp(ctx context.Context, src *dagger.Directory, sock *dagger.Socket) error {
+func (m *PiPcloud) composeUp(ctx context.Context, src *dagger.Directory, sock *dagger.Socket) error {
 	_, err := m.dockerCLI(src, sock).
 		WithExec(composeArgs("up", "-d", "--wait", "--wait-timeout", "360", "--pull", "missing", "--yes")).
 		Stdout(ctx)
 	return err
 }
 
-func (m *PiWeb) composeLogs(ctx context.Context, src *dagger.Directory, sock *dagger.Socket) (string, error) {
+func (m *PiPcloud) composeLogs(ctx context.Context, src *dagger.Directory, sock *dagger.Socket) (string, error) {
 	return m.dockerCLI(src, sock).
 		WithExec(composeArgs("logs", "--timestamps")).
 		Stdout(ctx)
 }
 
-func (m *PiWeb) composeDown(ctx context.Context, src *dagger.Directory, sock *dagger.Socket) error {
+func (m *PiPcloud) composeDown(ctx context.Context, src *dagger.Directory, sock *dagger.Socket) error {
 	_, err := m.dockerCLI(src, sock).
 		WithExec(composeArgs("down", "-v")).
 		Stdout(ctx)
 	return err
 }
 
-func (m *PiWeb) runHealthChecks(ctx context.Context, src *dagger.Directory, sock *dagger.Socket, sb *strings.Builder) error {
+func (m *PiPcloud) runHealthChecks(ctx context.Context, src *dagger.Directory, sock *dagger.Socket, sb *strings.Builder) error {
 	cli := m.dockerCLI(src, sock)
 
 	// check runs a command inside a compose service container and records the result.

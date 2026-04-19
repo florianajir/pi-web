@@ -33,7 +33,7 @@ if [ -z "${BACKREST_S3_URI:-}" ] && [ -n "${S3_ENDPOINT}" ] && [ -n "${S3_BUCKET
 fi
 BACKREST_S3_URI="${BACKREST_S3_URI:-}"
 BACKREST_S3_REPO_PASSWORD="${BACKREST_S3_REPO_PASSWORD:-}"
-BACKREST_INSTANCE="${BACKREST_INSTANCE:-${HOST_NAME:-$(hostname 2>/dev/null || echo pi-web)}}"
+BACKREST_INSTANCE="${BACKREST_INSTANCE:-${HOST_NAME:-$(hostname 2>/dev/null || echo pi-pcloud)}}"
 
 if [ ! -f "${TEMPLATE_FILE}" ]; then
   die "template not found at ${TEMPLATE_FILE}"

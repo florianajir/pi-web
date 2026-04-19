@@ -51,6 +51,7 @@
 		"oneshot",
 		"OVERWRITEHOST",
 		"OVERWRITEPROTOCOL",
+		"pcloud",
 		"PEERDNS",
 		"PERSISTENTKEEPALIVE",
 		"pihole",
