@@ -81,10 +81,10 @@ install: check-env
 	@echo "✅ Installation complete"
 
 uninstall:
-	@echo "🗑️  Uninstalling Pi-Pcloud..."
+	@echo "🗑️  Uninstalling pi-pcloud..."
 	@echo ""
 	@echo "⚠️  WARNING: This will remove ALL data including:"
-	@echo "   - Docker volumes (Pi-hole, Headscale, etc.)"
+	@echo "   - Docker volumes (pi-hole, headscale, etc.)"
 	@echo "   - Bind-mount data dirs: ./data/nextcloud, ./data/postgres, ./data/n8n, ./data/immich"
 	@echo "   - Generated config: ./data/authelia-config/configuration.yml"
 	@echo "   - Generated config: ./config/headplane/config.yaml" 
@@ -124,12 +124,12 @@ uninstall:
 	@echo "ℹ️  Note: .env file preserved. Remove manually if needed."
 
 start:
-	@echo "🚀 Starting Pi-Pcloud stack..."
+	@echo "🚀 Starting pi-pcloud stack..."
 	sudo systemctl start $(UNIT)
 	@echo "✅ Stack started"
 
 stop:
-	@echo "🛑 Stopping Pi-Pcloud stack..."
+	@echo "🛑 Stopping pi-pcloud stack..."
 	$(COMPOSE) down --remove-orphans
 	sudo systemctl stop $(UNIT) 2>/dev/null || true
 	@echo "✅ Stack stopped"

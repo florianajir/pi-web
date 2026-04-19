@@ -28,7 +28,7 @@ derp:
     enabled: true
     region_id: 999
     region_code: headscale
-    region_name: Pi-Pcloud Embedded DERP
+    region_name: pi-pcloud Embedded DERP
     stun_listen_addr: 0.0.0.0:3478
     ipv4: headscale
     private_key_path: /var/lib/headscale/derp_server_private.key

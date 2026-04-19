@@ -13,7 +13,7 @@ telemetry:
 webauthn:
   disable: false
   enable_passkey_login: true
-  display_name: 'Pi-Pcloud'
+  display_name: 'pi-pcloud'
 
 totp:
   issuer: __HOST_NAME__
