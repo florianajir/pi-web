@@ -1,7 +1,8 @@
 # pi-pcloud
 
-[![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docker.com/)
-[![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Compatible-red.svg)](https://www.raspberrypi.org/)
+[![CI](https://github.com/florianajir/pi-pcloud/actions/workflows/ci.yml/badge.svg)](https://github.com/florianajir/pi-pcloud/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/florianajir/pi-pcloud/actions/workflows/codeql.yml/badge.svg)](https://github.com/florianajir/pi-pcloud/actions/workflows/codeql.yml)
+[![Dependabot](https://badgen.net/badge/icon/dependabot?icon=dependabot&label)](https://github.com/florianajir/pi-pcloud/actions/workflows/dependabot/dependabot-updates)
 
 A production-ready, privacy-focused web stack for Raspberry Pi—from DNS filtering to personal cloud—deployed in minutes.
 
