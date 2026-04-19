@@ -196,6 +196,41 @@ To customize, either:
 
 Changes require: `make restart`
 
+### Disabling Containers with `compose.override.yaml`
+
+Use `compose.override.yaml` to disable optional services without editing `compose.yaml`.
+
+`docker compose` automatically loads:
+- `compose.yaml`
+- `compose.override.yaml` (if present)
+
+To disable a service by default, assign it to a profile that you do not enable (for example `disabled`):
+
+```yaml
+services:
+  n8n:
+    profiles:
+      - disabled
+
+  n8n-runners:
+    profiles:
+      - disabled
+
+  open-webui:
+    profiles:
+      - disabled
+```
+
+With this override in place:
+- `make start` / `make restart` keeps those services stopped
+- The rest of the stack starts normally
+
+To re-enable one temporarily, start it with its profile explicitly enabled.
+
+To make it permanent again, remove the `profiles` block for that service from `compose.override.yaml` and restart the stack.
+
+Verify what is running with `make status` (or `docker compose ps`).
+
 ### Adding New Services
 
 To add a service:
