@@ -15,19 +15,7 @@ PORTAINER_ENDPOINT_ROLE_ID=1
 PORTAINER_TEAM_MEMBER_ROLE=2
 
 wait_for_authelia_health() {
-    local status
-
-    for i in $(seq 1 $MAX_RETRIES); do
-        status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' pi-authelia 2>/dev/null || true)
-        if [ "$status" = "healthy" ]; then
-            log "Authelia container is healthy"
-            return 0
-        fi
-        sleep "$RETRY_INTERVAL"
-    done
-
-    log "WARNING: Timed out waiting for Authelia health"
-    return 1
+    wait_for_health_warning "pi-authelia" "$MAX_RETRIES" "$RETRY_INTERVAL"
 }
 
 restart_authelia_if_running() {
@@ -95,17 +83,7 @@ ensure_authelia_portainer_materials() {
 }
 
 wait_for_portainer_http() {
-    log "Waiting for Portainer HTTP API..."
-    for i in $(seq 1 $MAX_RETRIES); do
-        if docker_curl "$PORTAINER_URL_DOCKER/" >/dev/null 2>&1; then
-            log "Portainer HTTP endpoint is reachable"
-            return 0
-        fi
-        sleep "$RETRY_INTERVAL"
-    done
-
-    log "ERROR: Portainer HTTP endpoint did not become reachable"
-    return 1
+    wait_for_http_endpoint "$PORTAINER_URL_DOCKER/" "Portainer HTTP API" "$MAX_RETRIES" "$RETRY_INTERVAL"
 }
 
 init_portainer_admin() {
@@ -202,20 +180,7 @@ authenticate_portainer() {
         return 1
     fi
 
-    # Build candidate username list: EMAIL, USER (if different), admin (if not already listed)
-    usernames="$(get_env_value EMAIL)"
-    candidate="$(get_env_value USER)"
-    if [ -n "$candidate" ] && [ "$candidate" != "$usernames" ]; then
-        usernames="${usernames:+$usernames }$candidate"
-    fi
-    if [ -z "$usernames" ]; then
-        usernames="admin"
-    else
-        case " $usernames " in
-            *" admin "*) ;;
-            *) usernames="$usernames admin" ;;
-        esac
-    fi
+    usernames="$(build_username_candidates)"
 
     attempted=""
     for candidate in $usernames; do
@@ -461,21 +426,22 @@ ensure_portainer_users_are_admin() {
 # Compute OIDC defaults once, reused by build and verify
 oidc_defaults() {
     local host="$1"
-    local auth_base="https://auth.${host}"
     local portainer_base="https://portainer.${host}"
+
+    build_authelia_oidc_urls "$host"
 
     OIDC_CLIENT_ID_VAL="$(get_env_value PORTAINER_OIDC_CLIENT_ID)"
     OIDC_CLIENT_ID_VAL="${OIDC_CLIENT_ID_VAL:-portainer}"
     OIDC_AUTH_URI="$(get_env_value PORTAINER_OIDC_AUTHORIZATION_URI)"
-    OIDC_AUTH_URI="${OIDC_AUTH_URI:-${auth_base}/api/oidc/authorization}"
+    OIDC_AUTH_URI="${OIDC_AUTH_URI:-$OIDC_AUTH_URL}"
     OIDC_TOKEN_URI="$(get_env_value PORTAINER_OIDC_TOKEN_URI)"
-    OIDC_TOKEN_URI="${OIDC_TOKEN_URI:-${auth_base}/api/oidc/token}"
+    OIDC_TOKEN_URI="${OIDC_TOKEN_URI:-$OIDC_TOKEN_URL}"
     OIDC_RESOURCE_URI="$(get_env_value PORTAINER_OIDC_RESOURCE_URI)"
-    OIDC_RESOURCE_URI="${OIDC_RESOURCE_URI:-${auth_base}/api/oidc/userinfo}"
+    OIDC_RESOURCE_URI="${OIDC_RESOURCE_URI:-$OIDC_USERINFO_URL}"
     OIDC_REDIRECT_URI="$(get_env_value PORTAINER_OIDC_REDIRECT_URI)"
     OIDC_REDIRECT_URI="${OIDC_REDIRECT_URI:-${portainer_base}}"
     OIDC_LOGOUT_URI="$(get_env_value PORTAINER_OIDC_LOGOUT_URI)"
-    OIDC_LOGOUT_URI="${OIDC_LOGOUT_URI:-${auth_base}/logout}"
+    OIDC_LOGOUT_URI="${OIDC_LOGOUT_URI:-$OIDC_LOGOUT_URL}"
     OIDC_USER_ID="$(get_env_value PORTAINER_OIDC_USER_IDENTIFIER)"
     OIDC_USER_ID="${OIDC_USER_ID:-preferred_username}"
 

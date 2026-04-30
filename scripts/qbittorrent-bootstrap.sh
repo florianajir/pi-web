@@ -19,16 +19,7 @@ qb_curl() {
 }
 
 wait_for_qbittorrent() {
-    log "Waiting for qBittorrent WebUI to be ready..."
-    for i in $(seq 1 $MAX_RETRIES); do
-        if qb_curl -f "$QB_API/app/webapiVersion" >/dev/null 2>&1; then
-            log "qBittorrent WebUI is ready"
-            return 0
-        fi
-        sleep "$RETRY_INTERVAL"
-    done
-    log "ERROR: qBittorrent WebUI did not become ready in time"
-    return 1
+    wait_for_service "qBittorrent WebUI" "qb_curl -f $QB_API/app/webapiVersion" "$MAX_RETRIES" "$RETRY_INTERVAL"
 }
 
 # Returns 0 when expected credentials are persisted in qBittorrent.conf.

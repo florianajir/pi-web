@@ -385,3 +385,157 @@ normalize_json() {
 
     printf '%s' "$1" | jq -c 'if type == "array" then sort else . end'
 }
+
+# --- Generic service readiness ---
+
+# Wait for a service by retrying an arbitrary check command.
+# Usage: wait_for_service <name> <check_cmd> [max_retries] [interval_seconds]
+# The check_cmd is evaluated via `eval` and should return 0 when the service is ready.
+wait_for_service() {
+    local name="$1"
+    local check_cmd="$2"
+    local max_retries="${3:-120}"
+    local interval="${4:-2}"
+
+    log "Waiting for $name to be ready..."
+    for _i in $(seq 1 "$max_retries"); do
+        if eval "$check_cmd" >/dev/null 2>&1; then
+            log "$name is ready"
+            return 0
+        fi
+        sleep "$interval"
+    done
+
+    log "ERROR: $name did not become ready in time"
+    return 1
+}
+
+# --- Username candidate list ---
+
+# Build a space-separated fallback username list from .env (EMAIL, USER, admin).
+# Both Portainer and Dockhand use this pattern for authentication attempts.
+# Usage: build_username_candidates
+# Outputs the list to stdout.
+build_username_candidates() {
+    local usernames candidate
+
+    usernames="$(get_env_value EMAIL)"
+    candidate="$(get_env_value USER)"
+    if [ -n "$candidate" ] && [ "$candidate" != "$usernames" ]; then
+        usernames="${usernames:+$usernames }$candidate"
+    fi
+    if [ -z "$usernames" ]; then
+        usernames="admin"
+    else
+        case " $usernames " in
+            *" admin "*) ;;
+            *) usernames="$usernames admin" ;;
+        esac
+    fi
+
+    printf '%s' "$usernames"
+}
+
+# --- OIDC client setup ---
+
+# One-shot OIDC client setup: ensure Authelia materials exist and return the secret.
+# Usage: configure_oidc_client <client_id> <display_name> [env_var_name] [max_retries] [interval]
+# Prints the plaintext client secret to stdout.
+configure_oidc_client() {
+    local client_id="$1"
+    local display_name="$2"
+    local env_var_name="${3:-}"
+    local max_retries="${4:-120}"
+    local interval="${5:-2}"
+
+    ensure_authelia_oidc_materials "$client_id" "$display_name" "$max_retries" "$interval" || {
+        log "ERROR: Failed to ensure Authelia OIDC materials for $display_name"
+        return 1
+    }
+
+    get_oidc_secret "$client_id" "$env_var_name" || {
+        log "ERROR: Could not retrieve OIDC client secret for $display_name"
+        return 1
+    }
+}
+
+# Generate standard Authelia OIDC endpoint URLs for a given host.
+# Sets shell variables: OIDC_ISSUER, OIDC_AUTH_URL, OIDC_TOKEN_URL,
+# OIDC_USERINFO_URL, OIDC_LOGOUT_URL, OIDC_DISCOVERY_URL.
+# Usage: build_authelia_oidc_urls <host_name>
+build_authelia_oidc_urls() {
+    local host="$1"
+    local auth_base="https://auth.${host}"
+
+    OIDC_ISSUER="$auth_base"
+    OIDC_AUTH_URL="${auth_base}/api/oidc/authorization"
+    OIDC_TOKEN_URL="${auth_base}/api/oidc/token"
+    OIDC_USERINFO_URL="${auth_base}/api/oidc/userinfo"
+    OIDC_LOGOUT_URL="${auth_base}/logout"
+    OIDC_DISCOVERY_URL="${auth_base}/.well-known/openid-configuration"
+}
+
+# --- SMTP configuration ---
+
+# Read SMTP settings from .env into shell variables.
+# Sets: SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_TLS.
+# Returns 1 if SMTP_HOST is not set (SMTP not configured).
+# Usage: configure_smtp_env
+configure_smtp_env() {
+    SMTP_HOST="$(get_env_value SMTP_HOST)"
+    [ -n "$SMTP_HOST" ] || return 1
+
+    SMTP_PORT="$(get_env_value SMTP_PORT)"
+    SMTP_PORT="${SMTP_PORT:-587}"
+    SMTP_USERNAME="$(get_env_value SMTP_USERNAME)"
+    SMTP_PASSWORD="$(get_env_value SMTP_PASSWORD)"
+    # Implicit TLS on port 465, STARTTLS on 587
+    if [ "$SMTP_PORT" = "465" ]; then
+        SMTP_TLS="true"
+    else
+        SMTP_TLS="false"
+    fi
+}
+
+# --- S3 configuration ---
+
+# Read S3 settings from .env into shell variables.
+# Sets: S3_ENDPOINT, S3_BUCKET, S3_REGION, S3_ACCESS_KEY, S3_SECRET_KEY.
+# Returns 1 if S3_ENDPOINT or S3_BUCKET is not set.
+# Usage: configure_s3_env
+configure_s3_env() {
+    S3_ENDPOINT="$(get_env_value S3_ENDPOINT)"
+    S3_BUCKET="$(get_env_value S3_BUCKET)"
+    [ -n "$S3_ENDPOINT" ] && [ -n "$S3_BUCKET" ] || return 1
+
+    S3_REGION="$(get_env_value S3_REGION)"
+    S3_ACCESS_KEY="$(get_env_value S3_ACCESS_KEY_ID)"
+    S3_SECRET_KEY="$(get_env_value S3_SECRET_ACCESS_KEY)"
+}
+
+# --- Ntfy credentials ---
+
+# Read ntfy credentials for a given service from the ntfy env file.
+# Usage: get_ntfy_credentials <ntfy_env_file> <service_name> <default_topic>
+# Sets: NTFY_SERVICE_PASSWORD, NTFY_SERVICE_TOPIC.
+# Returns 1 if the password is not set.
+get_ntfy_credentials() {
+    local ntfy_env_file="$1"
+    local service_name="$2"
+    local default_topic="${3:-pi}"
+    local password_key topic_key
+
+    if [ ! -f "$ntfy_env_file" ]; then
+        log "WARNING: $ntfy_env_file not found"
+        return 1
+    fi
+
+    password_key="NTFY_$(printf '%s' "$service_name" | tr '[:lower:]' '[:upper:]')_PASSWORD"
+    topic_key="NTFY_$(printf '%s' "$service_name" | tr '[:lower:]' '[:upper:]')_TOPIC"
+
+    NTFY_SERVICE_PASSWORD="$(read_env_value_from_file "$ntfy_env_file" "$password_key")"
+    [ -n "$NTFY_SERVICE_PASSWORD" ] || return 1
+
+    NTFY_SERVICE_TOPIC="$(read_env_value_from_file "$ntfy_env_file" "$topic_key")"
+    [ -n "$NTFY_SERVICE_TOPIC" ] || NTFY_SERVICE_TOPIC="$default_topic"
+}

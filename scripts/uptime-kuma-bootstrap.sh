@@ -14,19 +14,7 @@ MAX_RETRIES=90
 RETRY_INTERVAL=2
 
 wait_for_kuma_health() {
-    local status
-
-    log "Waiting for Uptime Kuma health status..."
-    for i in $(seq 1 $MAX_RETRIES); do
-        status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' pi-uptime-kuma 2>/dev/null || true)
-        if [ "$status" = "healthy" ]; then
-            log "Uptime Kuma container is healthy"
-            return 0
-        fi
-        sleep "$RETRY_INTERVAL"
-    done
-    log "ERROR: Uptime Kuma container did not become healthy in time"
-    return 1
+    wait_for_health "pi-uptime-kuma" "$MAX_RETRIES" "$RETRY_INTERVAL"
 }
 
 main() {
