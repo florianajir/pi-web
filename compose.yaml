@@ -1133,7 +1133,7 @@ services:
 
   authelia:
     <<: *service-defaults
-    image: authelia/authelia:4.39.18
+    image: authelia/authelia:4.39.19
     container_name: pi-authelia
     networks:
       - frontend
