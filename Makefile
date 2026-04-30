@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset ci-stage ci-validate ci-smoke-test
+.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -26,8 +26,6 @@ help:
 	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  headscale-reset  Reset all Headscale nodes, preauth keys, and IP allocations"
 	@echo "  check-env        Validate required .env variables"
-	@echo "  ci-validate      Run Dagger YAML lint (no Docker daemon needed)"
-	@echo "  ci-smoke-test    Run Dagger smoke test (requires Docker socket)"
 	@echo "  help             This help"
 
 check-env:
@@ -158,24 +156,6 @@ headscale-register:
 	if [ -z "$$EMAIL_FROM_ENV" ]; then echo "❌ EMAIL not set in .env"; exit 1; fi; \
 	$(COMPOSE) run --rm headscale nodes register --key "$(HEADSCALE_KEY)" --user "$$EMAIL_FROM_ENV"
 
-# Stage a filtered source tree so Dagger does not sync the production data/
-# directory (which can be 100+ GB) into the engine. .daggerignore is not
-# honoured for *dagger.Directory function arguments in Dagger v0.20.
-# GitHub Actions runners have a clean checkout, so --src . is fine there.
-CI_SRC := /tmp/pi-pcloud-ci-src
-
-.PHONY: ci-stage
-ci-stage:
-	@rm -rf $(CI_SRC) && mkdir -p $(CI_SRC)
-	@tar -cf - --exclude='./data' --exclude='./.git' --exclude='./.env' . \
-	    | tar -xf - -C $(CI_SRC)
-
-ci-validate: ci-stage
-	dagger call validate --src $(CI_SRC)
-
-ci-smoke-test: ci-stage
-	dagger call smoke-test --src $(CI_SRC) --docker-sock /var/run/docker.sock
-
 headscale-reset:
 	@echo "⚠️  This will WIPE ALL Headscale nodes, preauth keys, and IP allocations!"
 	@read -p "Are you sure? Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
@@ -186,4 +166,3 @@ headscale-reset:
 	@echo "🧹 Resetting Headscale IP allocations (restarting service)..."
 	-docker compose restart headscale
 	@echo "✅ Headscale reset complete"
-

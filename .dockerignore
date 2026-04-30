@@ -1,5 +1,4 @@
-# Exclude runtime data and secrets from Dagger source uploads.
-# Dagger respects .dockerignore when loading --src directories.
+# Exclude runtime data and secrets from repository-derived build contexts.
 # These paths mirror .gitignore entries that contain generated secrets
 # or bind-mount data created by Docker containers (often as root, 600 perms).
 /data

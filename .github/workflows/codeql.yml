@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: ["go", "javascript-typescript", "python"]
+        language: ["javascript-typescript", "python"]
 
     steps:
       - name: Checkout code

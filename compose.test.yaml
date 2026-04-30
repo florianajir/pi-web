@@ -56,7 +56,6 @@ services:
       - ./config/nextcloud/security-headers.conf:/etc/apache2/conf-enabled/security-headers.conf:ro
     healthcheck:
       # Accept both 200 (ready) and 503 (still initialising DB) as healthy for CI.
-      # The Dagger smoke-test health check separately verifies the final state.
       test:
         [
           "CMD-SHELL",
@@ -76,6 +75,17 @@ services:
     volumes: !override
       - postgres_ci_data:/var/lib/postgresql/data
       - ./config/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh
+
+  # --- authelia: keep generated config mounts writable in CI ---
+  # CI pre-renders configuration.yml and secrets into DATA_LOCATION before the
+  # stack starts. Authelia adjusts ownership under /config during startup, so
+  # the generated config mounts must be writable here even though production
+  # keeps them read-only.
+  authelia:
+    volumes: !override
+      - ${DATA_LOCATION:-./data}/authelia-config/configuration.yml:/config/configuration.yml
+      - ${DATA_LOCATION:-./data}/authelia-config/secrets:/config/secrets
+      - ${DATA_LOCATION:-./data}/authelia-config:/config/data
 
   # --- lldap: set JWT secret inline for CI ---
   # compose.yaml loads lldap.env from ./config/lldap/lldap.env.
