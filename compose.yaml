@@ -1110,7 +1110,10 @@ services:
       - postgres
     healthcheck:
       <<: *healthcheck-default
-      test: [ "CMD-SHELL", "ps aux | grep -q '[l]ldap' || exit 1" ]
+      # Use the official lldap health-check binary which verifies the HTTP API at
+      # localhost:17170 is responding.  This confirms lldap is fully initialised
+      # (including the LDAP port) before authelia attempts its startup dial.
+      test: ["CMD", "/app/lldap_health_check"]
       start_period: 30s
     labels:
       - "homepage.group=Authentication"
