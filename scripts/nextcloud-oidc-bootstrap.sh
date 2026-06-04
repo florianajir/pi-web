@@ -27,6 +27,37 @@ wait_for_occ() {
     return 1
 }
 
+wait_for_nextcloud_upgrade() {
+    log "Waiting for Nextcloud upgrade to complete..."
+    
+    # Short wait period (1 minute) - if upgrade isn't ready in that time,
+    # gracefully exit and let the bootstrap retry on next startup
+    local upgrade_wait_retries=12
+    local upgrade_check_interval=5
+    
+    for i in $(seq 1 $upgrade_wait_retries); do
+        # Check if OCC is available and not in upgrade mode
+        local status_output
+        status_output="$(docker exec "$NEXTCLOUD_CONTAINER" php occ status 2>&1 || true)"
+        
+        # If we don't see the upgrade message, the upgrade is complete
+        # (needsDbUpgrade: false confirms this)
+        if ! echo "$status_output" | grep -q "Nextcloud or one of the apps require upgrade"; then
+            log "Nextcloud upgrade is complete"
+            return 0
+        fi
+        
+        log "Nextcloud is still upgrading, waiting... ($i/$upgrade_wait_retries)"
+        sleep "$upgrade_check_interval"
+    done
+
+    # Upgrade took longer than expected, but gracefully skip for now
+    # The bootstrap is idempotent and will retry on next start
+    log "WARNING: Nextcloud upgrade still in progress after $(($upgrade_wait_retries * $upgrade_check_interval)) seconds"
+    log "WARNING: OIDC bootstrap will skip for now and retry on next service start"
+    return 0
+}
+
 ensure_user_oidc_app() {
     if docker exec "$NEXTCLOUD_CONTAINER" php occ app:list | grep -qE '^[[:space:]]+- user_oidc:'; then
         log "user_oidc app already enabled"
@@ -110,6 +141,22 @@ main() {
     if ! wait_for_occ; then
         exit 1
     fi
+
+    # Wait for upgrade, but this won't fail - it will skip if upgrade takes too long
+    wait_for_nextcloud_upgrade
+
+    # Check if we can actually proceed with OIDC configuration
+    # If Nextcloud is still upgrading, skip and exit gracefully
+    local status_output
+    status_output="$(docker exec "$NEXTCLOUD_CONTAINER" php occ status 2>&1 || true)"
+    if echo "$status_output" | grep -q "Nextcloud or one of the apps require upgrade"; then
+        log "Nextcloud is still in upgrade mode, skipping OIDC configuration"
+        log "Bootstrap will retry on next service start"
+        exit 0
+    fi
+
+    # Nextcloud upgrade is complete, proceed with OIDC configuration
+    # The ensure_user_oidc_app function will handle installing the app if needed
 
     ensure_user_oidc_app || exit 1
 
