@@ -998,7 +998,7 @@ services:
 
   stremio:
     <<: *service-defaults
-    image: stremio/server:v4.20.17
+    image: stremio/server:v4.21.0
     container_name: pi-stremio
     network_mode: "service:gluetun"
     depends_on:
