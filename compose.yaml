@@ -688,9 +688,6 @@ services:
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
-    sysctls:
-      net.ipv4.ip_forward: "1"
-      net.ipv6.conf.all.forwarding: "1"
     environment:
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=false
@@ -1024,7 +1021,7 @@ services:
       test: [ "CMD", "curl", "-f", "http://localhost:11470/" ]
       start_period: 30s
     deploy: *cpu-request-small
-    mem_limit: 512m
+    mem_limit: 1024m
     oom_score_adj: *oom-score-deprioritize
 
   ntfy:
