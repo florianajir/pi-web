@@ -4,10 +4,9 @@ updates:
   - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "sunday"
+      interval: "daily"
       time: "04:00"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     labels:
       - "dependencies"
     commit-message:
@@ -20,10 +19,9 @@ updates:
       - "/config/backrest"
       - "/config/beszel-agent"
     schedule:
-      interval: "weekly"
-      day: "sunday"
+      interval: "daily"
       time: "04:00"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     labels:
       - "dependencies"
     commit-message:
