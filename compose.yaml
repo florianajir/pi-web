@@ -621,7 +621,7 @@ services:
   # Connectivity Stack
   headscale:
     <<: *service-defaults
-    image: headscale/headscale:0.28
+    image: headscale/headscale:v0.29
     container_name: pi-headscale
     command: serve
     environment:
