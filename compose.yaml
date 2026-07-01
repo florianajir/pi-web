@@ -1187,7 +1187,7 @@ services:
   # AI
   open-webui:
     <<: *service-defaults
-    image: ghcr.io/open-webui/open-webui:v0.9.6
+    image: ghcr.io/open-webui/open-webui:v0.10.1
     container_name: pi-open-webui
     networks:
       - frontend
