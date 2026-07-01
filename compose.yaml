@@ -673,7 +673,7 @@ services:
       - "traefik.http.middlewares.cors.headers.addvaryheader=true"
     healthcheck:
       <<: *healthcheck-default
-      test: [ "CMD", "/ko-app/headscale", "health" ]
+      test: [ "CMD", "headscale", "health" ]
       start_period: 10s
     cpuset: "0"
     deploy: *cpu-request-medium

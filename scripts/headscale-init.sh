@@ -8,7 +8,7 @@ set -e
 
 MAX_RETRIES=60
 RETRY_INTERVAL=2
-HEADSCALE_BIN="/ko-app/headscale"
+HEADSCALE_BIN="headscale"
 HEADPLANE_OIDC_KEY_UPDATED=0
 
 check_headscale_ready() {
