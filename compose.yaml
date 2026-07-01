@@ -180,7 +180,7 @@ services:
 
   traefik:
     <<: *service-defaults
-    image: traefik:v3.6
+    image: traefik:v3.7
     container_name: pi-traefik
     environment:
       - CLOUDFLARE_DNS_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN:-}
