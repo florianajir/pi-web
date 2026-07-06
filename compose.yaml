@@ -560,7 +560,7 @@ services:
 
   headplane:
     <<: *service-defaults
-    image: ghcr.io/tale/headplane:0.6.3
+    image: ghcr.io/tale/headplane:0.7.0
     container_name: pi-headplane
     networks:
       - frontend
