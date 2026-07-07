@@ -1082,6 +1082,46 @@ services:
     mem_limit: 512m
     oom_score_adj: *oom-score-deprioritize
 
+  kavita:
+    <<: *service-defaults
+    image: lscr.io/linuxserver/kavita:0.9.0
+    container_name: pi-kavita
+    networks:
+      - frontend
+    expose:
+      - 5000
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TIMEZONE:-Europe/Paris}
+    volumes:
+      - kavita_config:/config
+      # Downloads mounted read-only as the reading library (qBittorrent output).
+      - ${DATA_LOCATION:-./data}/download:/library:ro
+    labels:
+      - "homepage.group=Storage"
+      - "homepage.name=Kavita"
+      - "homepage.icon=kavita.png"
+      - "homepage.href=https://kavita.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Comics, manga and ebooks reader"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      # Kavita has its own account system (and OPDS clients cannot pass interactive SSO),
+      # so lan@docker only — no authelia in front (same rationale as Immich).
+      - "traefik.http.routers.kavita.rule=Host(`kavita.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.kavita.entrypoints=websecure"
+      - "traefik.http.routers.kavita.middlewares=lan@docker"
+      - "traefik.http.routers.kavita.tls=true"
+      - "traefik.http.services.kavita.loadbalancer.server.port=5000"
+    healthcheck:
+      <<: *healthcheck-default
+      # linuxserver base ships curl; Kavita exposes /api/health.
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/api/health"]
+      start_period: 45s
+    deploy: *cpu-request-small
+    mem_limit: 512m
+    oom_score_adj: *oom-score-deprioritize
+
   ntfy:
     <<: *service-defaults
     image: binwiederhier/ntfy:v2.25.0
@@ -1348,6 +1388,7 @@ volumes:
   ddns_data:
   stremio_data:
   comet_data:
+  kavita_config:
   beszel_data:
   beszel_agent_data:
   beszel_socket:
