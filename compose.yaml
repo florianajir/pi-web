@@ -917,6 +917,8 @@ services:
       - 8080
       - 11470
       - 12470
+      - 9696
+      - 5656
     environment:
       - TZ=${TIMEZONE:-Europe/Paris}
     env_file:
@@ -934,6 +936,18 @@ services:
       - "traefik.http.routers.qbittorrent.tls=true"
       - "traefik.http.routers.qbittorrent.service=qbittorrent"
       - "traefik.http.services.qbittorrent.loadbalancer.server.port=8080"
+      - "traefik.http.routers.prowlarr.rule=Host(`prowlarr.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.prowlarr.entrypoints=websecure"
+      - "traefik.http.routers.prowlarr.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.prowlarr.tls=true"
+      - "traefik.http.routers.prowlarr.service=prowlarr"
+      - "traefik.http.services.prowlarr.loadbalancer.server.port=9696"
+      - "traefik.http.routers.kapowarr.rule=Host(`kapowarr.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.kapowarr.entrypoints=websecure"
+      - "traefik.http.routers.kapowarr.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.kapowarr.tls=true"
+      - "traefik.http.routers.kapowarr.service=kapowarr"
+      - "traefik.http.services.kapowarr.loadbalancer.server.port=5656"
       - "traefik.http.routers.stremio-root.rule=Host(`stremio.${HOST_NAME:-pi.lan}`) && Path(`/`)"
       - "traefik.http.routers.stremio-root.entrypoints=websecure"
       - "traefik.http.routers.stremio-root.middlewares=lan@docker,stremio-webui-redirect@docker"
@@ -1010,7 +1024,7 @@ services:
       - TZ=${TIMEZONE:-Europe/Paris}
     labels:
       - "traefik.enable=false"
-      - "homepage.group=Download"
+      - "homepage.group=Media"
       - "homepage.name=Stremio"
       - "homepage.icon=stremio.png"
       - "homepage.href=https://stremio.${HOST_NAME:-pi.lan}"
@@ -1059,7 +1073,7 @@ services:
     volumes:
       - comet_data:/data
     labels:
-      - "homepage.group=Download"
+      - "homepage.group=Media"
       - "homepage.name=Comet"
       - "homepage.href=https://comet.${HOST_NAME:-pi.lan}"
       - "homepage.description=Stremio debrid addon (TorBox)"
@@ -1078,6 +1092,76 @@ services:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8000/health"]
       # First boot blocks ~2-3 min downloading anime mappings before the API serves.
       start_period: 180s
+    deploy: *cpu-request-small
+    mem_limit: 512m
+    oom_score_adj: *oom-score-deprioritize
+
+  prowlarr:
+    <<: *service-defaults
+    image: lscr.io/linuxserver/prowlarr:2.4.0
+    container_name: pi-prowlarr
+    # Shares gluetun's network namespace (VPN): indexer traffic is tunnelled and it
+    # reaches qBittorrent directly at localhost:8080. Traefik routing lives on gluetun.
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=false"
+      - "homepage.group=Download"
+      - "homepage.name=Prowlarr"
+      - "homepage.icon=prowlarr.png"
+      - "homepage.href=https://prowlarr.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Indexer manager (VPN protected)"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TIMEZONE:-Europe/Paris}
+    volumes:
+      - ${DATA_LOCATION:-./data}/prowlarr:/config
+    healthcheck:
+      <<: *healthcheck-default
+      # linuxserver base ships curl; Prowlarr's /ping needs no auth.
+      test: ["CMD", "curl", "-fsS", "http://localhost:9696/ping"]
+      start_period: 45s
+    deploy: *cpu-request-small
+    mem_limit: 512m
+    oom_score_adj: *oom-score-deprioritize
+
+  kapowarr:
+    <<: *service-defaults
+    image: mrcas/kapowarr:v1.3.1
+    container_name: pi-kapowarr
+    # Same gluetun namespace as qBittorrent (localhost:8080) so torrent path mapping
+    # is an identity mapping; GetComics direct downloads also go through the VPN.
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=false"
+      - "homepage.group=Download"
+      - "homepage.name=Kapowarr"
+      - "homepage.icon=kapowarr.png"
+      - "homepage.href=https://kapowarr.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Comics manager (VPN protected)"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TIMEZONE:-Europe/Paris}
+    volumes:
+      - ${DATA_LOCATION:-./data}/kapowarr/db:/app/db
+      # Own temp dir for GetComics direct downloads (entrypoint chowns it to PUID).
+      - ${DATA_LOCATION:-./data}/kapowarr/downloads:/app/temp_downloads
+      # Shared download folder mounted at the SAME path qBittorrent uses, so torrents
+      # grabbed via the qBittorrent client import with an identity path mapping.
+      - ${DATA_LOCATION:-./data}/download:/downloads
+      - ${DATA_LOCATION:-./data}/comics:/comics
+    healthcheck:
+      <<: *healthcheck-default
+      # python-slim base — no curl/wget; probe the UI with the bundled interpreter.
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5656/').status==200 else 1)"]
+      start_period: 45s
     deploy: *cpu-request-small
     mem_limit: 512m
     oom_score_adj: *oom-score-deprioritize
@@ -1102,7 +1186,7 @@ services:
       # Downloads mounted read-only as the reading library (qBittorrent output).
       - ${DATA_LOCATION:-./data}/download:/library:ro
     labels:
-      - "homepage.group=Storage"
+      - "homepage.group=Media"
       - "homepage.name=Kavita"
       - "homepage.icon=kavita.png"
       - "homepage.href=https://kavita.${HOST_NAME:-pi.lan}"

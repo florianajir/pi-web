@@ -49,6 +49,8 @@ access_control:
         - 'uptime.__HOST_NAME__'
         - 'homepage.__HOST_NAME__'
         - 'qbittorrent.__HOST_NAME__'
+        - 'prowlarr.__HOST_NAME__'
+        - 'kapowarr.__HOST_NAME__'
         - 'ai.__HOST_NAME__'
       policy: one_factor
 
