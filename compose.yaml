@@ -172,7 +172,7 @@ services:
       - "traefik.http.services.backrest.loadbalancer.server.port=9898"
     healthcheck:
       <<: *healthcheck-default
-      test: [ "CMD", "curl", "-fsS", "http://localhost:9898/" ]
+      test: ["CMD", "curl", "-fsS", "http://localhost:9898/"]
       start_period: 45s
     deploy: *cpu-request-medium
     mem_limit: 1536m
@@ -250,7 +250,7 @@ services:
         ipv4_address: 172.30.11.250
     healthcheck:
       <<: *healthcheck-fast
-      test: [ "CMD", "traefik", "healthcheck", "--ping" ]
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
       start_interval: 5s
     cpuset: "0"
     deploy: *cpu-request-medium
@@ -278,7 +278,7 @@ services:
       - "host.docker.internal:host-gateway"
     healthcheck:
       <<: *healthcheck-light
-      test: [ "CMD", "/beszel", "health", "--url", "http://localhost:8090" ]
+      test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
       start_period: 5s
       start_interval: 3s
     labels:
@@ -334,7 +334,7 @@ services:
       HOST_PROC: /host/proc
     healthcheck:
       <<: *healthcheck-light
-      test: [ "CMD", "/agent", "health" ]
+      test: ["CMD", "/agent", "health"]
     deploy: *cpu-request-small
     mem_limit: 64m
     oom_score_adj: *oom-score-important
@@ -405,7 +405,7 @@ services:
       - "traefik.http.services.dockhand.loadbalancer.server.port=3000"
     healthcheck:
       <<: *healthcheck-light
-      test: [ "CMD", "curl", "-fsSo", "/dev/null", "http://127.0.0.1:3000/api/auth/session" ]
+      test: ["CMD", "curl", "-fsSo", "/dev/null", "http://127.0.0.1:3000/api/auth/session"]
     deploy: *cpu-request-small
     mem_limit: 192m
     oom_score_adj: *oom-score-deprioritize
@@ -424,7 +424,7 @@ services:
       - ./config/unbound/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
     healthcheck:
       <<: *healthcheck-default
-      test: [ "CMD", "drill", "@127.0.0.1", "-p", "5335", "cloudflare.com" ]
+      test: ["CMD", "drill", "@127.0.0.1", "-p", "5335", "cloudflare.com"]
       start_period: 10s
       start_interval: 5s
     deploy: *cpu-request-small
@@ -534,7 +534,7 @@ services:
     healthcheck:
       <<: *healthcheck-default
       # n8n listens internally on plain HTTP. Use explicit IPv4 loopback to avoid IPv6 (::1) resolution issues.
-      test: [ "CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5678/healthz" ]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5678/healthz"]
     deploy: *cpu-request-large
     mem_limit: 768m
     oom_score_adj: *oom-score-deprioritize
@@ -552,7 +552,7 @@ services:
       - n8n
     healthcheck:
       <<: *healthcheck-fast
-      test: [ "CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:5680/healthz && nc -z -w 2 n8n 5679" ]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:5680/healthz && nc -z -w 2 n8n 5679"]
       start_period: 5s
       start_interval: 3s
     deploy: *cpu-request-small
@@ -614,7 +614,7 @@ services:
       - "traefik.http.middlewares.wasm-path.replacepathregex.replacement=/admin/$$1"
     healthcheck:
       <<: *healthcheck-default
-      test: [ "CMD", "/nodejs/bin/node", "-e", "const net=require('node:net');const s=net.connect({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.setTimeout(5000,()=>{s.destroy();process.exit(1)});s.on('error',()=>process.exit(1));" ]
+      test: ["CMD", "/nodejs/bin/node", "-e", "const net=require('node:net');const s=net.connect({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.setTimeout(5000,()=>{s.destroy();process.exit(1)});s.on('error',()=>process.exit(1));"]
     deploy: *cpu-request-small
     mem_limit: 192m
     oom_score_adj: *oom-score-deprioritize
@@ -674,7 +674,7 @@ services:
       - "traefik.http.middlewares.cors.headers.addvaryheader=true"
     healthcheck:
       <<: *healthcheck-default
-      test: [ "CMD", "headscale", "health" ]
+      test: ["CMD", "headscale", "health"]
       start_period: 10s
     cpuset: "0"
     deploy: *cpu-request-medium
@@ -704,7 +704,7 @@ services:
       - headscale
     healthcheck:
       <<: *healthcheck-default
-      test: [ "CMD", "tailscale", "status", "--peers=false" ]
+      test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s
     labels:
       - "homepage.group=Connectivity"
@@ -855,7 +855,7 @@ services:
       - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
     healthcheck:
       <<: *healthcheck-default
-      test: [ "CMD", "curl", "-f", "http://localhost/status.php" ]
+      test: ["CMD", "curl", "-f", "http://localhost/status.php"]
       start_period: 60s
       start_interval: 10s
     depends_on:
@@ -958,7 +958,7 @@ services:
       - "traefik.http.middlewares.stremio-webui-redirect.redirectregex.permanent=false"
     healthcheck:
       <<: *healthcheck-default
-      test: [ "CMD", "/gluetun-entrypoint", "healthcheck" ]
+      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
       start_period: 30s
       start_interval: 5s
     deploy: *cpu-request-small
@@ -991,7 +991,7 @@ services:
       - ${DATA_LOCATION:-./data}/download:/downloads
     healthcheck:
       <<: *healthcheck-default
-      test: [ "CMD", "curl", "-f", "http://localhost:8080/" ]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       start_period: 30s
     deploy: *cpu-request-small
     mem_limit: 256m
@@ -1019,10 +1019,67 @@ services:
       - stremio_data:/root/.stremio-server
     healthcheck:
       <<: *healthcheck-default
-      test: [ "CMD", "curl", "-f", "http://localhost:11470/" ]
+      test: ["CMD", "curl", "-f", "http://localhost:11470/"]
       start_period: 30s
     deploy: *cpu-request-small
     mem_limit: 1024m
+    oom_score_adj: *oom-score-deprioritize
+
+  comet:
+    <<: *service-defaults
+    # No semver image tags are published; pin latest (currently v2.54.1) by digest.
+    image: ghcr.io/g0ldyy/comet:latest@sha256:8bcce8d72a1cde469b68c1746e6fe216b5ca10bc648ef9ce5bdcb15b9c97647a
+    container_name: pi-comet
+    networks:
+      - frontend
+    expose:
+      - 8000
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      - FASTAPI_HOST=0.0.0.0
+      - FASTAPI_PORT=8000
+      - FASTAPI_WORKERS=1
+      # Single uvicorn process keeps the footprint small on the Pi (gunicorn preloads extra workers).
+      - USE_GUNICORN=False
+      - DATABASE_TYPE=sqlite
+      - DATABASE_PATH=/data/comet.db
+      # TorBox itself is configured per-user in the /configure web UI (paste the TorBox API key there);
+      # these passwords gate Comet's own admin dashboard and configuration page.
+      - ADMIN_DASHBOARD_PASSWORD=${PASSWORD:-admin}
+      - CONFIGURE_PAGE_PASSWORD=${PASSWORD:-admin}
+      # CONFIGURE_PAGE_PASSWORD makes Comet prefix addon URLs with /s/<PUBLIC_API_TOKEN>/. The token
+      # auto-generates into this file; keep it on the /data volume so it survives recreates (default is
+      # the ephemeral /app/data), otherwise every recreate mints a new token and breaks installed addons.
+      - PUBLIC_API_TOKEN_FILE=/data/public_api_token.txt
+      # Torrent SOURCES. TorBox is only the debrid (it checks/streams hashes) — it does not find torrents.
+      # Without at least one scraper enabled, Comet returns zero results. These use public default instances.
+      - SCRAPE_TORRENTIO=True
+      - SCRAPE_MEDIAFUSION=True
+      - SCRAPE_ZILEAN=True
+    volumes:
+      - comet_data:/data
+    labels:
+      - "homepage.group=Download"
+      - "homepage.name=Comet"
+      - "homepage.href=https://comet.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Stremio debrid addon (TorBox)"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      # LAN/tailnet only (lan@docker covers the tailscale ranges). No authelia: Stremio clients fetch the
+      # manifest/stream endpoints programmatically and cannot pass an interactive SSO login.
+      - "traefik.http.routers.comet.rule=Host(`comet.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.comet.entrypoints=websecure"
+      - "traefik.http.routers.comet.middlewares=lan@docker"
+      - "traefik.http.routers.comet.tls=true"
+      - "traefik.http.services.comet.loadbalancer.server.port=8000"
+    healthcheck:
+      <<: *healthcheck-default
+      # Alpine (busybox) base — wget is available; curl is not.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8000/health"]
+      # First boot blocks ~2-3 min downloading anime mappings before the API serves.
+      start_period: 180s
+    deploy: *cpu-request-small
+    mem_limit: 512m
     oom_score_adj: *oom-score-deprioritize
 
   ntfy:
@@ -1068,7 +1125,7 @@ services:
       - "traefik.http.services.ntfy.loadbalancer.server.port=80"
     healthcheck:
       <<: *healthcheck-light
-      test: [ "CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/v1/health" ]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/v1/health"]
     deploy: *cpu-request-small
     mem_limit: 128m
     oom_score_adj: *oom-score-important
@@ -1110,7 +1167,7 @@ services:
       <<: *healthcheck-default
       # Verify the lldap HTTP API is responding (confirms full initialisation,
       # including the LDAP port) before authelia attempts its startup dial.
-      test: [ "CMD", "curl", "-sf", "http://localhost:17170/" ]
+      test: ["CMD", "curl", "-sf", "http://localhost:17170/"]
       start_period: 30s
     labels:
       - "homepage.group=Authentication"
@@ -1159,7 +1216,7 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *healthcheck-default
-      test: [ "CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9091/api/health" ]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9091/api/health"]
       start_period: 10s
       start_interval: 5s
     labels:
@@ -1197,7 +1254,7 @@ services:
       - "auth.${HOST_NAME:-pi.lan}:172.30.11.1"
     expose:
       - 8080
-    entrypoint: [ "bash", "-c", "export OAUTH_CLIENT_SECRET=$(cat /run/secrets/oidc_open-webui_secret) && exec bash start.sh" ]
+    entrypoint: ["bash", "-c", "export OAUTH_CLIENT_SECRET=$(cat /run/secrets/oidc_open-webui_secret) && exec bash start.sh"]
     environment:
       - WEBUI_AUTH=true
       - ENABLE_LOGIN_FORM=false
@@ -1217,7 +1274,7 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *healthcheck-relaxed
-      test: [ "CMD", "curl", "-fsS", "http://localhost:8080" ]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080"]
       start_period: 60s
     labels:
       - "homepage.group=AI"
@@ -1256,7 +1313,7 @@ services:
       - ai
     healthcheck:
       <<: *healthcheck-fast
-      test: [ "CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}" ]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
       start_interval: 3s
     mem_limit: 1536m
     cpuset: "1-3"
@@ -1271,10 +1328,10 @@ services:
     image: docker.io/valkey/valkey:9@sha256:4963247afc4cd33c7d3b2d2816b9f7f8eeebab148d29056c2ca4d7cbc966f2d9
     healthcheck:
       <<: *healthcheck-fast
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: ["CMD", "redis-cli", "ping"]
       start_period: 5s
       start_interval: 3s
-    command: [ "valkey-server", "/etc/valkey/valkey.conf" ]
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
     volumes:
       - ./config/redis/valkey.conf:/etc/valkey/valkey.conf:ro
       - redis_data:/data
@@ -1290,6 +1347,7 @@ volumes:
   open_webui_data:
   ddns_data:
   stremio_data:
+  comet_data:
   beszel_data:
   beszel_agent_data:
   beszel_socket:
