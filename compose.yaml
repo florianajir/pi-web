@@ -1088,6 +1088,9 @@ services:
     container_name: pi-kavita
     networks:
       - frontend
+    extra_hosts:
+      # Let Kavita reach Authelia's OIDC discovery endpoint via Traefik internally.
+      - "auth.${HOST_NAME:-pi.lan}:172.30.11.250"
     expose:
       - 5000
     environment:
