@@ -7,6 +7,7 @@ OUTPUT_FILE="${PROJECT_DIR}/config/ntfy/ntfy.env"
 OUTPUT_DIR="$(dirname "$OUTPUT_FILE")"
 NTFY_IMAGE="${NTFY_IMAGE:-binwiederhier/ntfy:v2.17.0}"
 NTFY_AUTO_TOPIC="pi"
+NTFY_DOWNLOADS_TOPIC="downloads"
 
 hash_password() {
     _password="$1"
@@ -44,6 +45,9 @@ main() {
     NTFY_UPTIME_KUMA_PASSWORD_VALUE=""
     NTFY_UPTIME_KUMA_TOKEN_VALUE=""
     UPTIME_KUMA_ADMIN_PASSWORD_VALUE=""
+    NTFY_PROWLARR_PASSWORD_VALUE=""
+    NTFY_QBITTORRENT_PASSWORD_VALUE=""
+    NTFY_QBITTORRENT_TOKEN_VALUE=""
 
     if [ -f "$OUTPUT_FILE" ]; then
         NTFY_BACKREST_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_BACKREST_PASSWORD)
@@ -56,6 +60,9 @@ main() {
         NTFY_UPTIME_KUMA_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_UPTIME_KUMA_PASSWORD)
         NTFY_UPTIME_KUMA_TOKEN_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_UPTIME_KUMA_TOKEN)
         UPTIME_KUMA_ADMIN_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" UPTIME_KUMA_ADMIN_PASSWORD)
+        NTFY_PROWLARR_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_PROWLARR_PASSWORD)
+        NTFY_QBITTORRENT_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_QBITTORRENT_PASSWORD)
+        NTFY_QBITTORRENT_TOKEN_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_QBITTORRENT_TOKEN)
     fi
 
     if [ -z "$USER_VALUE" ]; then
@@ -96,18 +103,35 @@ main() {
         log "Generated UPTIME_KUMA_ADMIN_PASSWORD for uptime-kuma admin account"
     fi
 
+    if [ -z "$NTFY_PROWLARR_PASSWORD_VALUE" ]; then
+        NTFY_PROWLARR_PASSWORD_VALUE="$(generate_password)"
+        log "Generated NTFY_PROWLARR_PASSWORD for prowlarr ntfy user"
+    fi
+
+    if [ -z "$NTFY_QBITTORRENT_PASSWORD_VALUE" ]; then
+        NTFY_QBITTORRENT_PASSWORD_VALUE="$(generate_password)"
+        log "Generated NTFY_QBITTORRENT_PASSWORD for qbittorrent ntfy user"
+    fi
+
+    if [ -z "$NTFY_QBITTORRENT_TOKEN_VALUE" ]; then
+        NTFY_QBITTORRENT_TOKEN_VALUE="$(generate_token)"
+        log "Generated NTFY_QBITTORRENT_TOKEN for qbittorrent ntfy user"
+    fi
+
     log "Generating bcrypt hashes for ntfy predefined users"
     USER_HASH="$(hash_password "$PASSWORD_VALUE")"
     BACKREST_HASH="$(hash_password "$NTFY_BACKREST_PASSWORD_VALUE")"
     BESZEL_HASH="$(hash_password "$NTFY_BESZEL_PASSWORD_VALUE")"
     DOCKHAND_HASH="$(hash_password "$NTFY_DOCKHAND_PASSWORD_VALUE")"
     UPTIME_KUMA_HASH="$(hash_password "$NTFY_UPTIME_KUMA_PASSWORD_VALUE")"
+    PROWLARR_HASH="$(hash_password "$NTFY_PROWLARR_PASSWORD_VALUE")"
+    QBITTORRENT_HASH="$(hash_password "$NTFY_QBITTORRENT_PASSWORD_VALUE")"
 
     mkdir -p "$OUTPUT_DIR"
 
-    AUTH_USERS_VALUE="${USER_VALUE}:${USER_HASH}:admin,backrest:${BACKREST_HASH}:user,beszel:${BESZEL_HASH}:user,dockhand:${DOCKHAND_HASH}:user,uptime-kuma:${UPTIME_KUMA_HASH}:user"
-    AUTH_ACCESS_VALUE="backrest:${NTFY_AUTO_TOPIC}:rw,beszel:${NTFY_AUTO_TOPIC}:rw,dockhand:${NTFY_AUTO_TOPIC}:rw,uptime-kuma:${NTFY_AUTO_TOPIC}:rw"
-    AUTH_TOKENS_VALUE="uptime-kuma:${NTFY_UPTIME_KUMA_TOKEN_VALUE}:Uptime Kuma notification token"
+    AUTH_USERS_VALUE="${USER_VALUE}:${USER_HASH}:admin,backrest:${BACKREST_HASH}:user,beszel:${BESZEL_HASH}:user,dockhand:${DOCKHAND_HASH}:user,uptime-kuma:${UPTIME_KUMA_HASH}:user,prowlarr:${PROWLARR_HASH}:user,qbittorrent:${QBITTORRENT_HASH}:user"
+    AUTH_ACCESS_VALUE="backrest:${NTFY_AUTO_TOPIC}:rw,beszel:${NTFY_AUTO_TOPIC}:rw,dockhand:${NTFY_AUTO_TOPIC}:rw,uptime-kuma:${NTFY_AUTO_TOPIC}:rw,prowlarr:${NTFY_DOWNLOADS_TOPIC}:rw,qbittorrent:${NTFY_DOWNLOADS_TOPIC}:rw"
+    AUTH_TOKENS_VALUE="uptime-kuma:${NTFY_UPTIME_KUMA_TOKEN_VALUE}:Uptime Kuma notification token,qbittorrent:${NTFY_QBITTORRENT_TOKEN_VALUE}:qBittorrent download notifications"
 
     {
         printf '# Managed by scripts/ntfy-pre-start.sh\n'
@@ -116,6 +140,10 @@ main() {
         printf 'NTFY_DOCKHAND_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_DOCKHAND_PASSWORD_VALUE")"
         printf 'NTFY_UPTIME_KUMA_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_UPTIME_KUMA_PASSWORD_VALUE")"
         printf 'NTFY_UPTIME_KUMA_TOKEN=%s\n' "$NTFY_UPTIME_KUMA_TOKEN_VALUE"
+        printf 'NTFY_PROWLARR_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_PROWLARR_PASSWORD_VALUE")"
+        printf 'NTFY_QBITTORRENT_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_QBITTORRENT_PASSWORD_VALUE")"
+        printf 'NTFY_QBITTORRENT_TOKEN=%s\n' "$NTFY_QBITTORRENT_TOKEN_VALUE"
+        printf 'NTFY_DOWNLOADS_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_DOWNLOADS_TOPIC")"
         printf 'NTFY_BESZEL_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_AUTO_TOPIC")"
         printf 'NTFY_DOCKHAND_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_AUTO_TOPIC")"
         printf 'NTFY_AUTH_USERS=%s\n' "$(escape_compose_env_value "$AUTH_USERS_VALUE")"

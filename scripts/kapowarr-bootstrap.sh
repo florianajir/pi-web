@@ -1,7 +1,8 @@
 #!/bin/sh
 # Bootstrap Kapowarr: add the /comics root folder and register qBittorrent as an
-# external download client (idempotent). Kapowarr shares gluetun's namespace, so
-# qBittorrent is reachable at localhost:8080 and the API at localhost:5656.
+# external download client (idempotent). Kapowarr shares gluetun's namespace; its own
+# API is at localhost:5656, but qBittorrent must be reached at gluetun:8080 (localhost
+# returns 403 — see QB_BASE_URL note below).
 # The image ships no curl/jq, so we drive its (undocumented) API with the bundled
 # python3. Credentials are passed via the environment, never on the command line.
 # Runs as ExecStartPost after docker compose up. Best-effort (warns, never fails start).
@@ -74,21 +75,47 @@ try:
 except Exception as e:
     log(f"WARNING: root folder step failed: {e}")
 
-# qBittorrent external client (idempotent), only when credentials are available.
+# download_folder MUST be /downloads (only path mounted identically in both Kapowarr and
+# qBittorrent) so torrents qBittorrent saves are found and imported into /comics.
+# flaresolverr_base_url lets Kapowarr solve Cloudflare on GetComics (same solver Prowlarr uses).
+DESIRED_SETTINGS = {
+    "download_folder": "/downloads",
+    "flaresolverr_base_url": "http://flaresolverr:8191",
+}
+try:
+    _, res = call("GET", "/settings", params={"api_key": key})
+    cur = res.get("result", {})
+    changed = {k: v for k, v in DESIRED_SETTINGS.items()
+               if (cur.get(k) or "").rstrip("/") != v.rstrip("/")}
+    if changed:
+        call("PUT", "/settings", params={"api_key": key}, body=changed)
+        log("Updated settings: " + ", ".join(sorted(changed)))
+    else:
+        log("Settings already correct (download_folder, flaresolverr_base_url)")
+except Exception as e:
+    log(f"WARNING: settings step failed: {e}")
+
+QB_BASE_URL = "http://gluetun:8080"
 if USER and PASS:
     try:
         _, res = call("GET", "/externalclients", params={"api_key": key})
-        titles = [c.get("title") for c in (res.get("result") or [])]
-        if "qBittorrent" not in titles:
-            call("POST", "/externalclients", params={"api_key": key}, body={
-                "client_type": "qBittorrent",
-                "title": "qBittorrent",
-                "base_url": "http://localhost:8080",
-                "username": USER,
-                "password": PASS,
-                "api_token": None,
-            })
+        clients = res.get("result") or []
+        existing = next((c for c in clients if c.get("title") == "qBittorrent"), None)
+        body = {
+            "title": "qBittorrent",
+            "base_url": QB_BASE_URL,
+            "username": USER,
+            "password": PASS,
+            "api_token": None,
+        }
+        if existing is None:
+            call("POST", "/externalclients", params={"api_key": key},
+                 body={"client_type": "qBittorrent", **body})
             log("Added qBittorrent external client")
+        elif existing.get("base_url") != QB_BASE_URL:
+            # Migrate a stale base_url (e.g. http://localhost:8080 -> gluetun).
+            call("PUT", f"/externalclients/{existing['id']}", params={"api_key": key}, body=body)
+            log(f"Updated qBittorrent external client base_url to {QB_BASE_URL}")
         else:
             log("qBittorrent external client already present")
     except Exception as e:

@@ -917,7 +917,6 @@ services:
       - 8080
       - 11470
       - 12470
-      - 9696
       - 5656
     environment:
       - TZ=${TIMEZONE:-Europe/Paris}
@@ -936,12 +935,6 @@ services:
       - "traefik.http.routers.qbittorrent.tls=true"
       - "traefik.http.routers.qbittorrent.service=qbittorrent"
       - "traefik.http.services.qbittorrent.loadbalancer.server.port=8080"
-      - "traefik.http.routers.prowlarr.rule=Host(`prowlarr.${HOST_NAME:-pi.lan}`)"
-      - "traefik.http.routers.prowlarr.entrypoints=websecure"
-      - "traefik.http.routers.prowlarr.middlewares=lan@docker,authelia@docker"
-      - "traefik.http.routers.prowlarr.tls=true"
-      - "traefik.http.routers.prowlarr.service=prowlarr"
-      - "traefik.http.services.prowlarr.loadbalancer.server.port=9696"
       - "traefik.http.routers.kapowarr.rule=Host(`kapowarr.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.kapowarr.entrypoints=websecure"
       - "traefik.http.routers.kapowarr.middlewares=lan@docker,authelia@docker"
@@ -1076,7 +1069,7 @@ services:
       - "homepage.group=Media"
       - "homepage.name=Comet"
       - "homepage.href=https://comet.${HOST_NAME:-pi.lan}"
-      - "homepage.description=Stremio debrid addon (TorBox)"
+      - "homepage.description=Stremio debrid addon"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       # LAN/tailnet only (lan@docker covers the tailscale ranges). No authelia: Stremio clients fetch the
@@ -1100,19 +1093,26 @@ services:
     <<: *service-defaults
     image: lscr.io/linuxserver/prowlarr:2.4.0
     container_name: pi-prowlarr
-    # Shares gluetun's network namespace (VPN): indexer traffic is tunnelled and it
-    # reaches qBittorrent directly at localhost:8080. Traefik routing lives on gluetun.
-    network_mode: "service:gluetun"
-    depends_on:
-      gluetun:
-        condition: service_healthy
+    networks:
+      - frontend
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    expose:
+      - 9696
     labels:
-      - "traefik.enable=false"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.prowlarr.rule=Host(`prowlarr.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.prowlarr.entrypoints=websecure"
+      - "traefik.http.routers.prowlarr.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.prowlarr.tls=true"
+      - "traefik.http.services.prowlarr.loadbalancer.server.port=9696"
       - "homepage.group=Download"
       - "homepage.name=Prowlarr"
       - "homepage.icon=prowlarr.png"
       - "homepage.href=https://prowlarr.${HOST_NAME:-pi.lan}"
-      - "homepage.description=Indexer manager (VPN protected)"
+      - "homepage.description=Indexer manager"
     environment:
       - PUID=1000
       - PGID=1000
@@ -1144,7 +1144,7 @@ services:
       - "homepage.name=Kapowarr"
       - "homepage.icon=kapowarr.png"
       - "homepage.href=https://kapowarr.${HOST_NAME:-pi.lan}"
-      - "homepage.description=Comics manager (VPN protected)"
+      - "homepage.description=Comics manager"
     environment:
       - PUID=1000
       - PGID=1000
@@ -1166,6 +1166,30 @@ services:
     mem_limit: 512m
     oom_score_adj: *oom-score-deprioritize
 
+  flaresolverr:
+    <<: *service-defaults
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
+    container_name: pi-flaresolverr
+    networks:
+      - frontend
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    expose:
+      - 8191
+    environment:
+      - LOG_LEVEL=info
+      - TZ=${TIMEZONE:-Europe/Paris}
+    # Chrome crashes with the default 64MB /dev/shm; give it room to render pages.
+    shm_size: "256m"
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "curl", "-fsS", "http://localhost:8191/health"]
+      start_period: 45s
+    deploy: *cpu-request-small
+    mem_limit: 768m
+    oom_score_adj: *oom-score-deprioritize
+
   kavita:
     <<: *service-defaults
     image: lscr.io/linuxserver/kavita:0.9.0
@@ -1185,6 +1209,9 @@ services:
       - kavita_config:/config
       # Downloads mounted read-only as the reading library (qBittorrent output).
       - ${DATA_LOCATION:-./data}/download:/library:ro
+      # Kapowarr's managed comic library, read-only: Kapowarr writes comics here,
+      # Kavita serves them. Add a Kavita library pointing at /comics after first start.
+      - ${DATA_LOCATION:-./data}/comics:/comics:ro
     labels:
       - "homepage.group=Media"
       - "homepage.name=Kavita"
