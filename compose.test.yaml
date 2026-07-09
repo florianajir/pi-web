@@ -26,6 +26,10 @@ services:
     # Depends on gluetun which is excluded from CI.
     profiles: [ci-excluded]
 
+  kapowarr:
+    # Depends on gluetun which is excluded from CI.
+    profiles: [ci-excluded]
+
   stremio:
     # Depends on gluetun which is excluded from CI.
     profiles: [ci-excluded]
