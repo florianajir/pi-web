@@ -718,7 +718,7 @@ services:
   immich-machine-learning:
     <<: *service-defaults
     container_name: pi-immich-machine-learning
-    image: ghcr.io/immich-app/immich-machine-learning:v2.7.5
+    image: ghcr.io/immich-app/immich-machine-learning:v3.0.2
     networks:
       - dns_egress
       - immich
