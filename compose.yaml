@@ -130,7 +130,7 @@ services:
       - "ntfy.${HOST_NAME:-pi.lan}:172.30.11.1"
     volumes:
       - ${DATA_LOCATION:-./data}/backrest/data:/data
-      - ./config/backrest/config.json:/config/backrest/config.json
+      - ./config/backrest:/config/backrest
       - ${DATA_LOCATION:-./data}/backrest/repos:/repos
       - ${DATA_LOCATION:-./data}/immich:/userdata/immich:ro
       - ${DATA_LOCATION:-./data}/nextcloud:/userdata/nextcloud-data:ro
