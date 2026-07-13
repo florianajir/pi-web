@@ -377,7 +377,7 @@ services:
 
   dockhand:
     <<: *service-defaults
-    image: fnsys/dockhand:v1.0.36
+    image: fnsys/dockhand:v1.0.37
     container_name: pi-dockhand
     networks:
       - frontend
