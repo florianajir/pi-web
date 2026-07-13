@@ -51,11 +51,20 @@ if ! command -v restic >/dev/null 2>&1; then
   exit 0
 fi
 
-# unlock removes stale locks only; safe to run before each snapshot
-if restic -r "${repo_uri}" unlock >/dev/null 2>&1; then
+# Removing stale locks requires reading each lock's content, which can hang
+# for the full RESTIC_RETRY_LOCK duration (45m) if a lock object is corrupt
+# and can't be read back from the backend. Bound it so this hook can't stall
+# the snapshot, and fall back to a forced removal (which only deletes lock
+# keys, never reads them) if the bounded attempt fails.
+if unlock_output="$(timeout 30 restic -r "${repo_uri}" --retry-lock=10s unlock 2>&1)"; then
   log "stale lock cleanup checked for repo '${repo_id}'"
 else
-  log "unable to run unlock for repo '${repo_id}' (continuing)"
+  log "unlock for repo '${repo_id}' failed or timed out, forcing removal: ${unlock_output}"
+  if remove_all_output="$(timeout 30 restic -r "${repo_uri}" unlock --remove-all 2>&1)"; then
+    log "forced lock removal succeeded for repo '${repo_id}': ${remove_all_output}"
+  else
+    log "forced lock removal also failed for repo '${repo_id}' (continuing): ${remove_all_output}"
+  fi
 fi
 
 exit 0
