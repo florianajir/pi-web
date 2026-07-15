@@ -448,7 +448,8 @@ services:
       TZ: ${TIMEZONE:-Europe/Paris}
       FTLCONF_webserver_api_password: ${PASSWORD:-admin}
       FTLCONF_dns_listeningMode: "all"
-      FTLCONF_dns_upstreams: ${PIHOLE_DNS_UPSTREAMS:-172.30.53.53#5335}
+      # Unbound is primary; public resolvers are only used as failover if Unbound stops answering.
+      FTLCONF_dns_upstreams: ${PIHOLE_DNS_UPSTREAMS:-172.30.53.53#5335;1.1.1.1;9.9.9.9}
       FTLCONF_misc_dnsmasq_lines: "address=/${HOST_NAME:-pi.lan}/${HOST_LAN_IP:-192.168.1.30}"
       FTLCONF_webserver_port: 8082
       FTLCONF_dns_domain_name: ${HOST_NAME:-pi.lan}
