@@ -1092,7 +1092,7 @@ services:
 
   prowlarr:
     <<: *service-defaults
-    image: lscr.io/linuxserver/prowlarr:2.4.0
+    image: lscr.io/linuxserver/prowlarr:2.5.2
     container_name: pi-prowlarr
     networks:
       - frontend
