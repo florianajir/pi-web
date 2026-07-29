@@ -12,9 +12,6 @@
 /config/backrest/config.json
 /config/gluetun/gluetun.env
 /config/gluetun/openvpn.ovpn
-/config/gluetun/ca.crt
-/config/gluetun/client.crt
-/config/gluetun/client.key
 
 ._.DS_Store
 .DS_Store

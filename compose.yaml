@@ -928,6 +928,11 @@ services:
       - ${DATA_LOCATION:-./data}/gluetun:/gluetun
       - ./config/gluetun:/gluetun/custom:ro
     labels:
+      - "homepage.group=Gluetun"
+      - "homepage.name=Gluetun"
+      - "homepage.icon=gluetun.png"
+      - "homepage.href=https://gluetun.${HOST_NAME:-pi.lan}"
+      - "homepage.description=VPN client"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.qbittorrent.rule=Host(`qbittorrent.${HOST_NAME:-pi.lan}`)"
