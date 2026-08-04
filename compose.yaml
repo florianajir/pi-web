@@ -211,11 +211,11 @@ services:
       - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
       - "--certificatesresolvers.cloudflare.acme.dnschallenge.delaybeforecheck=10"
     labels:
-      - "homepage.group=Infrastructure"
+      - "homepage.group=Network"
       - "homepage.name=Traefik"
       - "homepage.icon=traefik.png"
       - "homepage.href=https://traefik.${HOST_NAME:-pi.lan}"
-      - "homepage.description=Reverse proxy dashboard"
+      - "homepage.description=Reverse proxy"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.middlewares.compress.compress=true"
@@ -465,7 +465,7 @@ services:
       unbound:
         condition: service_healthy
     labels:
-      - "homepage.group=Infrastructure"
+      - "homepage.group=Network"
       - "homepage.name=Pi-hole"
       - "homepage.icon=pi-hole.png"
       - "homepage.href=https://pihole.${HOST_NAME:-pi.lan}"
@@ -592,7 +592,7 @@ services:
     depends_on:
       - headscale
     labels:
-      - "homepage.group=Connectivity"
+      - "homepage.group=Network"
       - "homepage.name=Headplane"
       - "homepage.icon=headscale.png"
       - "homepage.href=https://headscale.${HOST_NAME:-pi.lan}/admin"
@@ -620,7 +620,7 @@ services:
     mem_limit: 192m
     oom_score_adj: *oom-score-deprioritize
 
-  # Connectivity Stack
+  # Network Stack
   headscale:
     <<: *service-defaults
     image: headscale/headscale:v0.29
@@ -648,7 +648,7 @@ services:
     tmpfs:
       - /var/run/headscale
     labels:
-      - "homepage.group=Connectivity"
+      - "homepage.group=Network"
       - "homepage.name=Headscale"
       - "homepage.icon=tailscale.png"
       - "homepage.href=https://headscale.${HOST_NAME:-pi.lan}"
@@ -708,7 +708,7 @@ services:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s
     labels:
-      - "homepage.group=Connectivity"
+      - "homepage.group=Network"
       - "homepage.name=Tailscale"
       - "homepage.icon=tailscale.png"
       - "homepage.description=VPN mesh client"
@@ -928,7 +928,7 @@ services:
       - ${DATA_LOCATION:-./data}/gluetun:/gluetun
       - ./config/gluetun:/gluetun/custom:ro
     labels:
-      - "homepage.group=Gluetun"
+      - "homepage.group=Network"
       - "homepage.name=Gluetun"
       - "homepage.icon=gluetun.png"
       - "homepage.href=https://gluetun.${HOST_NAME:-pi.lan}"
@@ -987,7 +987,14 @@ services:
       gluetun:
         condition: service_healthy
     labels:
-      - "traefik.enable=false"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.qbittorrent.rule=Host(`qbittorrent.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.qbittorrent.entrypoints=websecure"
+      - "traefik.http.routers.qbittorrent.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.qbittorrent.tls=true"
+      - "traefik.http.routers.qbittorrent.service=qbittorrent"
+      - "traefik.http.services.qbittorrent.loadbalancer.server.port=8080"
       - "homepage.group=Download"
       - "homepage.name=qBittorrent"
       - "homepage.icon=qbittorrent.png"
@@ -1023,7 +1030,7 @@ services:
       - TZ=${TIMEZONE:-Europe/Paris}
     labels:
       - "traefik.enable=false"
-      - "homepage.group=Media"
+      - "homepage.group=Video"
       - "homepage.name=Stremio"
       - "homepage.icon=stremio.png"
       - "homepage.href=https://stremio.${HOST_NAME:-pi.lan}"
@@ -1072,10 +1079,11 @@ services:
     volumes:
       - comet_data:/data
     labels:
-      - "homepage.group=Media"
+      - "homepage.group=Video"
       - "homepage.name=Comet"
       - "homepage.href=https://comet.${HOST_NAME:-pi.lan}"
       - "homepage.description=Stremio debrid addon"
+      - "homepage.icon=stremio.png"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       # LAN/tailnet only (lan@docker covers the tailscale ranges). No authelia: Stremio clients fetch the
@@ -1145,8 +1153,15 @@ services:
       gluetun:
         condition: service_healthy
     labels:
-      - "traefik.enable=false"
-      - "homepage.group=Download"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.kapowarr.rule=Host(`kapowarr.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.kapowarr.entrypoints=websecure"
+      - "traefik.http.routers.kapowarr.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.kapowarr.tls=true"
+      - "traefik.http.routers.kapowarr.service=kapowarr"
+      - "traefik.http.services.kapowarr.loadbalancer.server.port=5656"
+      - "homepage.group=Books"
       - "homepage.name=Kapowarr"
       - "homepage.icon=kapowarr.png"
       - "homepage.href=https://kapowarr.${HOST_NAME:-pi.lan}"
@@ -1219,7 +1234,7 @@ services:
       # Kavita serves them. Add a Kavita library pointing at /comics after first start.
       - ${DATA_LOCATION:-./data}/comics:/comics:ro
     labels:
-      - "homepage.group=Media"
+      - "homepage.group=Books"
       - "homepage.name=Kavita"
       - "homepage.icon=kavita.png"
       - "homepage.href=https://kavita.${HOST_NAME:-pi.lan}"
@@ -1334,6 +1349,7 @@ services:
       - "homepage.name=LLDAP"
       - "homepage.href=https://lldap.${HOST_NAME:-pi.lan}"
       - "homepage.description=User directory management"
+      - "homepage.icon=ldap.png"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.lldap.rule=Host(`lldap.${HOST_NAME:-pi.lan}`)"
