@@ -1048,7 +1048,7 @@ services:
   comet:
     <<: *service-defaults
     # No semver image tags are published; pin latest (currently v2.54.1) by digest.
-    image: ghcr.io/g0ldyy/comet:latest@sha256:9e248ed0e1c4c7fb85e2b71b5d50700d6cb662936fc4b876992c5c0ce1471019
+    image: ghcr.io/g0ldyy/comet:latest@sha256:dca62133336e02784d02aaad861381820674d1c8e3e98a03797610b81ee4defe
     container_name: pi-comet
     networks:
       - frontend
