@@ -10,7 +10,7 @@ All configuration is managed through the `.env` file. Copy `.env.dist` and edit 
 |----------|-------------|----------|---------|---------|
 | `HOST_NAME` | Your domain name | ✓ | — | `pi.example.com` |
 | `TIMEZONE` | Server timezone | ✓ | — | `Europe/Paris` |
-| `USER` | LLDAP admin username | ✓ | — | `admin` |
+| `ADMIN_USER` | Stack-wide admin username | ✓ | — | `admin` |
 | `PASSWORD` | LLDAP admin & Authelia password | ✓ | — | `MySecurePassword123!` |
 | `EMAIL` | Admin email & sender address | ✓ | — | `admin@example.com` |
 | `DATA_LOCATION` | Path for persistent data | — | `./data` | `/mnt/ssd/pi-pcloud-data` |
@@ -171,7 +171,7 @@ qBittorrent runs inside Gluetun's network namespace — all torrent traffic exit
 
 The env file is optional — if absent, Gluetun starts without a VPN (traffic goes through the host's default route).
 
-**Credentials bootstrap** — qBittorrent credentials (`USER`/`PASSWORD` from `.env`) are applied automatically on first start by `scripts/qbittorrent-bootstrap.sh`. The config template (`config/qbittorrent/qBittorrent.conf.template`) pre-configures auth bypass for localhost and `ALLOW_IP_RANGES` so the bootstrap script can call the API unauthenticated. Idempotent on subsequent restarts.
+**Credentials bootstrap** — qBittorrent credentials (`ADMIN_USER`/`PASSWORD` from `.env`) are applied automatically on first start by `scripts/qbittorrent-bootstrap.sh`. The config template (`config/qbittorrent/qBittorrent.conf.template`) pre-configures auth bypass for localhost and `ALLOW_IP_RANGES` so the bootstrap script can call the API unauthenticated. Idempotent on subsequent restarts.
 
 ### Headscale VPN
 

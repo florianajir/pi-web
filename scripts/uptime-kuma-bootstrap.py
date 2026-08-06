@@ -417,10 +417,10 @@ def main():
     env_values = read_env_file(env_file)
     ntfy_env = read_env_file(ntfy_env_file)
 
-    username = env_values.get("USER", "")
+    username = env_values.get("ADMIN_USER", "")
     password = ntfy_env.get("UPTIME_KUMA_ADMIN_PASSWORD", "")
     if not username:
-        log("ERROR: USER must be set in .env")
+        log("ERROR: ADMIN_USER must be set in .env")
         sys.exit(1)
     if not password:
         log("ERROR: UPTIME_KUMA_ADMIN_PASSWORD not found in ntfy.env; run ntfy-pre-start.sh first")

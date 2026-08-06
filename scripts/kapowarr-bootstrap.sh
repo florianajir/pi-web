@@ -17,7 +17,7 @@ main() {
     container_is_running "$KAPOWARR_CONTAINER" || { log "Kapowarr not running, skipping"; return 0; }
 
     local user password
-    user="$(get_env_value USER)"
+    user="$(get_env_value ADMIN_USER)"
     password="$(get_env_value PASSWORD)"
 
     KAP_USER="$user" KAP_PASS="$password" docker exec -i \
@@ -121,7 +121,7 @@ if USER and PASS:
     except Exception as e:
         log(f"WARNING: external client step failed: {e}")
 else:
-    log("USER/PASSWORD not set; skipping qBittorrent client")
+    log("ADMIN_USER/PASSWORD not set; skipping qBittorrent client")
 PY
 
     log "Kapowarr bootstrap complete"

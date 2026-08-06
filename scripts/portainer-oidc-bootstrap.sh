@@ -171,7 +171,7 @@ init_portainer_admin() {
     fi
 
     admin_username="$(get_env_value EMAIL)"
-    [ -n "$admin_username" ] || admin_username="$(get_env_value USER)"
+    [ -n "$admin_username" ] || admin_username="$(get_env_value ADMIN_USER)"
     [ -n "$admin_username" ] || admin_username="admin"
 
     log "Initializing Portainer admin user '$admin_username'..."
@@ -202,9 +202,9 @@ authenticate_portainer() {
         return 1
     fi
 
-    # Build candidate username list: EMAIL, USER (if different), admin (if not already listed)
+    # Build candidate username list: EMAIL, ADMIN_USER (if different), admin (if not already listed)
     usernames="$(get_env_value EMAIL)"
-    candidate="$(get_env_value USER)"
+    candidate="$(get_env_value ADMIN_USER)"
     if [ -n "$candidate" ] && [ "$candidate" != "$usernames" ]; then
         usernames="${usernames:+$usernames }$candidate"
     fi
@@ -615,7 +615,7 @@ main() {
     JWT_TOKEN="$(authenticate_portainer)" || {
         log "WARNING: Unable to authenticate to Portainer; OIDC bootstrap skipped"
         log "         Ensure .env PASSWORD matches the Portainer local account password"
-        log "         (user candidates tried: .env EMAIL, then .env USER, then 'admin')"
+        log "         (user candidates tried: .env EMAIL, then .env ADMIN_USER, then 'admin')"
         exit 1
     }
 

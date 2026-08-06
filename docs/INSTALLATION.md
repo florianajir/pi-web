@@ -46,7 +46,7 @@ cp .env.dist .env
 |----------|-------------|---------|
 | `HOST_NAME` | Your domain | `pi.example.com` |
 | `TIMEZONE` | Server timezone | `Europe/Paris` |
-| `USER` | LLDAP admin username | `admin` |
+| `ADMIN_USER` | Stack-wide admin username | `admin` |
 | `PASSWORD` | LLDAP admin & Authelia password | `strong-password-here` |
 | `EMAIL` | Admin email & sender address | `admin@example.com` |
 | `CLOUDFLARE_DNS_API_TOKEN` | Cloudflare API token | *(from Cloudflare dashboard)* |

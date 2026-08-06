@@ -44,7 +44,7 @@ jobs:
     timeout-minutes: 20
     env:
       HOST_NAME: test.local
-      USER: testuser
+      ADMIN_USER: testuser
       EMAIL: test@example.com
       PASSWORD: testpassword123
       HOST_LAN_IP: 192.168.1.100
@@ -64,7 +64,7 @@ jobs:
           set -euo pipefail
           cat > .env << 'EOF'
           HOST_NAME=test.local
-          USER=testuser
+          ADMIN_USER=testuser
           EMAIL=test@example.com
           PASSWORD=testpassword123
           HOST_LAN_IP=192.168.1.100

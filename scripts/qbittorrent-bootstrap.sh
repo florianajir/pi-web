@@ -68,7 +68,7 @@ set_credentials() {
         --data @- \
         "$QB_API/app/setPreferences" < "$prefs_file")
     rm -f "$prefs_file"
-    # Non-fatal: qBittorrent 5.x rejects usernames < 3 chars, so a short .env USER (e.g.
+    # Non-fatal: qBittorrent 5.x rejects usernames < 3 chars, so a short .env ADMIN_USER (e.g.
     # "pi") leaves the WebUI on its default login. Don't abort — notifications must still
     # get configured. qBittorrent stays reachable behind the VPN + Authelia regardless.
     if [ "$http_code" != "200" ]; then
@@ -111,9 +111,9 @@ main() {
     wait_for_qbittorrent
 
     local username password
-    username="$(get_env_value USER)"
+    username="$(get_env_value ADMIN_USER)"
     password="$(get_env_value PASSWORD)"
-    [ -n "$username" ] && [ -n "$password" ] || die "USER or PASSWORD not set in .env"
+    [ -n "$username" ] && [ -n "$password" ] || die "ADMIN_USER or PASSWORD not set in .env"
 
     # Credentials (fast path if already persisted from a previous run). Best-effort:
     # a failure here must not stop the notification setup below.
@@ -121,7 +121,7 @@ main() {
         log "Credentials already configured, skipping"
     elif [ "${#username}" -lt 3 ]; then
         # qBittorrent 5.x rejects usernames < 3 chars; don't retry every boot.
-        log "USER '$username' is under qBittorrent's 3-char minimum; leaving WebUI on its default login"
+        log "ADMIN_USER '$username' is under qBittorrent's 3-char minimum; leaving WebUI on its default login"
     else
         log "Setting credentials..."
         set_credentials "$username" "$password" || true

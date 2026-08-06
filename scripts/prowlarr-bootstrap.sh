@@ -75,9 +75,9 @@ wait_for_prowlarr() {
 
 ensure_download_client() {
     local user password schema payload code existing current current_host id updated
-    user="$(get_env_value USER)"
+    user="$(get_env_value ADMIN_USER)"
     password="$(get_env_value PASSWORD)"
-    [ -n "$user" ] && [ -n "$password" ] || { log "WARNING: USER/PASSWORD not set; skipping download client"; return 0; }
+    [ -n "$user" ] && [ -n "$password" ] || { log "WARNING: ADMIN_USER/PASSWORD not set; skipping download client"; return 0; }
 
     existing="$(px_curl -H "X-Api-Key: $KEY" "$API/downloadclient" 2>/dev/null)"
     current="$(printf '%s' "$existing" | jq -c --arg n "$QB_CLIENT_NAME" '.[]? | select(.name==$n)' 2>/dev/null)"

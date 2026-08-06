@@ -80,7 +80,7 @@ authenticate_dockhand() {
         return 1
     fi
 
-    usernames="$(get_env_value USER)"
+    usernames="$(get_env_value ADMIN_USER)"
     candidate="$(get_env_value EMAIL)"
     if [ -n "$candidate" ] && [ "$candidate" != "$usernames" ]; then
         usernames="${usernames:+$usernames }$candidate"
@@ -123,7 +123,7 @@ ensure_dockhand_local_admin_user() {
         return 1
     }
 
-    admin_username="$(get_env_value USER)"
+    admin_username="$(get_env_value ADMIN_USER)"
     [ -n "$admin_username" ] || admin_username="$(get_env_value EMAIL)"
     [ -n "$admin_username" ] || admin_username="admin"
 

@@ -37,7 +37,7 @@ main() {
         die ".env not found at $ENV_FILE"
     fi
 
-    USER_VALUE=$(get_env_value USER)
+    USER_VALUE=$(get_env_value ADMIN_USER)
     PASSWORD_VALUE=$(get_env_value PASSWORD)
     NTFY_BACKREST_PASSWORD_VALUE=""
     NTFY_BESZEL_PASSWORD_VALUE=""
@@ -66,7 +66,7 @@ main() {
     fi
 
     if [ -z "$USER_VALUE" ]; then
-        die "USER is not set in .env"
+        die "ADMIN_USER is not set in .env"
     fi
 
     if [ -z "$PASSWORD_VALUE" ]; then
