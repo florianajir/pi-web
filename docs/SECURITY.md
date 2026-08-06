@@ -277,7 +277,7 @@ flowchart LR
 1. **Set strong passwords** — LLDAP admin & Authelia system account
 2. **Enable 2FA** — Especially for admin users
 3. **Use WebAuthn** — More secure than TOTP (resistant to phishing)
-4. **Rotate credentials** — Change passwords regularly, especially after compromises
+4. **Rotate credentials** — After a compromise, run `make rotate-password` (LLDAP admin + Authelia, the actual SSO master credential) or `make rotate-password-full` (also every Postgres role and every other service using `PASSWORD`) — see `scripts/rotate-password.sh` and `docs/CONFIGURATION.md`'s "Changing Passwords" section
 5. **Monitor logs** — Check Authelia logs for brute-force attempts
 6. **Keep secrets secure** — Never share `.env`, `authelia-config/secrets/`, API tokens
 7. **Backup verification** — Test restores from backups periodically

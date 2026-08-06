@@ -1,4 +1,6 @@
 /.env
+/.env.bak.*
+/.rotate-password.*
 /compose.override.yaml
 /data
 /config/headscale/policy.hujson

@@ -377,6 +377,27 @@ sql_escape() {
     printf '%s' "$1" | sed "s/'/''/g"
 }
 
+# Build a deduped, space-separated list of candidate usernames to try
+# authenticating with, in the given priority order, always ending with
+# "admin" as a fallback if it isn't already present.
+# Usage: build_candidate_usernames "$EMAIL" "$ADMIN_USER"
+build_candidate_usernames() {
+    local result="" candidate
+    for candidate in "$@"; do
+        [ -n "$candidate" ] || continue
+        case " $result " in
+            *" $candidate "*) ;;
+            *) result="${result:+$result }$candidate" ;;
+        esac
+    done
+    [ -n "$result" ] || result="admin"
+    case " $result " in
+        *" admin "*) ;;
+        *) result="$result admin" ;;
+    esac
+    printf '%s' "$result"
+}
+
 normalize_json() {
     if [ -z "${1:-}" ]; then
         printf '[]'

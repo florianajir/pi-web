@@ -1,0 +1,707 @@
+#!/bin/sh
+# Rotate the shared PASSWORD (.env) and push the new value into every service
+# that actually stores its own persisted copy, not just the ones that read
+# ${PASSWORD} fresh from the environment at container start.
+#
+# Use this after PASSWORD has been exposed (leaked, shoulder-surfed, committed,
+# etc). It does NOT rotate ADMIN_USER, EMAIL, or any of the independent
+# per-service secrets (NTFY_*_PASSWORD, OIDC client secrets, S3/backup keys) -
+# those aren't derived from PASSWORD and don't need touching here.
+#
+# Lessons baked in from doing this rotation live on this exact stack once:
+#   - The LLDAP admin account's password is NOT "self-healing" on container
+#     recreate, despite docs/CONFIGURATION.md's old claim. Recreating lldap
+#     with a new LLDAP_LDAP_USER_PASS does nothing to the already-provisioned
+#     admin user. The only way to actually change it is the LDAP
+#     password-modify extended operation (ldappasswd), authenticated with the
+#     OLD password.
+#   - Authelia's real Postgres credential is the `db_password` SECRET FILE
+#     (referenced by configuration.yml.template), not the AUTHELIA_DB_PASSWORD
+#     env var in compose.yaml (that env var is effectively vestigial/unused by
+#     Authelia itself). Writing it before the `authelia` Postgres role is
+#     actually rotated makes Authelia crash-loop on DB ping.
+#   - Nextcloud's DB password lives in config.php, written once at install.
+#     You MUST update it via `occ config:system:set dbpassword` while the OLD
+#     Postgres role password is still valid (i.e. BEFORE rotating the
+#     `nextcloud` role), or Nextcloud loses its DB connection in the gap.
+#   - .env's PASSWORD feeds Postgres connection strings for lldap,
+#     immich-server, open-webui, and backrest, AND local-login fallbacks for
+#     pihole/homepage/comet. Writing a new PASSWORD into .env without also
+#     rotating the Postgres roles those services hold poisons .env for a
+#     FUTURE, unrelated container recreate (a reboot, `make restart`, an image
+#     bump) to break on - so --skip-postgres mode never touches .env at all.
+#   - Every Postgres role rotation is followed by a real re-authentication
+#     check, and every step that depends on a role having actually rotated
+#     (writing Authelia's db_password, recreating lldap/open-webui/
+#     immich-server/nextcloud/backrest) is gated on that specific role's
+#     success - a role that failed to rotate is left exactly as it was,
+#     nothing downstream is touched into a broken state.
+#   - The authelia-config/secrets directory can end up owned by root (this
+#     stack's systemd unit runs docker compose as root, and some root-run init
+#     path can flip ownership between edits). Secret-file writes below try a
+#     plain write first and fall back to sudo.
+#   - The new password is never printed to stdout/logs (see AGENTS.md's "never
+#     print secrets" rule) - it's written to a chmod-600 result file whose
+#     path is printed instead. Read it once, then delete it.
+#
+# Best-effort by design for everything past the Postgres/LDAP/Authelia core
+# (same philosophy as the other bootstrap scripts in this directory): each
+# step logs and continues on failure rather than aborting the whole rotation,
+# because a partial rotation you can see the report for is much safer to
+# recover from than one that dies halfway with no summary. Read the final
+# report and fix up anything marked FAILED manually.
+#
+# Usage: sh scripts/rotate-password.sh [--yes] [--skip-postgres]
+#   --yes             Skip the interactive confirmation (the Makefile target
+#                      already confirms before calling this, so it passes
+#                      --yes).
+#   --skip-postgres    Rotate only the LLDAP admin account + Authelia's
+#                      matching ldap_password secret (the actual SSO master
+#                      credential). Does not touch .env, any Postgres role, or
+#                      any other service - see the header note above on why
+#                      writing .env without rotating the roles it also feeds
+#                      would be worse than not rotating at all.
+
+. "$(dirname "$0")/lib.sh"
+
+# No `set -e` on purpose: nearly every step below is deliberately best-effort
+# (log and continue on failure - see the file header). Under `set -e`, a
+# single transient curl/docker-exec failure inside a plain `var=$(cmd)`
+# assignment (e.g. a connection hiccup probing Prowlarr's API) would abort the
+# ENTIRE rotation, including unrelated later steps - the opposite of what this
+# script is for. Each function already guards its own risky commands with
+# explicit `if`/`[ -n ... ]` checks instead.
+
+ASSUME_YES=0
+SKIP_POSTGRES=0
+for arg in "$@"; do
+    case "$arg" in
+        --yes|-y) ASSUME_YES=1 ;;
+        --skip-postgres) SKIP_POSTGRES=1 ;;
+    esac
+done
+
+# Matches compose.yaml's lldap service (LLDAP_LDAP_BASE_DN) - not overridable
+# via env, same as every other hardcoded container/network name in this file.
+LLDAP_BASE_DN="dc=home,dc=ldap"
+LLDAP_ADMIN_USERNAME="admin"
+LDAP_CLIENT_IMAGE="osixia/openldap:1.5.0"
+
+SUMMARY=""
+note() {
+    SUMMARY="${SUMMARY}$1
+"
+    log "$1"
+}
+
+confirm() {
+    [ "$ASSUME_YES" = "1" ] && return 0
+    echo ""
+    if [ "$SKIP_POSTGRES" = "1" ]; then
+        echo "⚠️  This will rotate the LLDAP admin password (the SSO master credential"
+        echo "   Authelia uses to bind to LDAP) and update Authelia's matching secret."
+        echo "   .env is NOT touched and no Postgres role or other service is rotated."
+    else
+        echo "⚠️  This will rotate PASSWORD everywhere it's persisted:"
+        echo "   Postgres roles (postgres, immich, nextcloud, authelia, lldap, open-webui),"
+        echo "   the LLDAP admin account (LDAP password-modify, not env), Authelia's"
+        echo "   ldap_password + db_password secrets, Nextcloud (DB + admin login),"
+        echo "   Pi-hole, Beszel, ntfy, qBittorrent, Prowlarr, Kapowarr, Dockhand,"
+        echo "   and recreates the containers that bake it into their environment."
+    fi
+    echo "   Active sessions on Authelia/Nextcloud/etc. may be interrupted."
+    echo ""
+    printf "Type 'yes' to confirm: "
+    read -r reply
+    [ "$reply" = "yes" ] || { echo "Aborted"; exit 1; }
+}
+
+compose() {
+    (cd "$PROJECT_DIR" && docker compose "$@")
+}
+
+recreate() {
+    local service="$1"
+    local container="${2:-pi-$service}"
+    if container_is_running "$container"; then
+        if compose up -d --force-recreate --no-deps "$service" >/dev/null 2>&1; then
+            note "✔ Recreated $service"
+        else
+            note "✘ FAILED to recreate $service (check 'docker compose logs $service')"
+        fi
+    else
+        note "… Skipped $service (not running)"
+    fi
+}
+
+# Secret files under authelia-config/secrets can end up root-owned (this
+# stack's root-run systemd path touches them) - try a plain write, fall back
+# to sudo so the rotation doesn't die on an ownership fluke.
+write_secret_file() {
+    local path="$1"
+    local content="$2"
+    if printf '%s' "$content" > "$path" 2>/dev/null; then
+        safe_chmod 600 "$path"
+        return 0
+    fi
+    if command -v sudo >/dev/null 2>&1 && printf '%s' "$content" | sudo tee "$path" >/dev/null 2>&1; then
+        sudo chmod 600 "$path" 2>/dev/null || true
+        return 0
+    fi
+    return 1
+}
+
+# Unlike write_secret_file, a backup failure is not swallowed - it's reported
+# via the return code so callers can warn instead of silently proceeding with
+# no safety net.
+backup_secret_file() {
+    local path="$1"
+    local backup="$2"
+    [ -f "$path" ] || return 0
+    cp "$path" "$backup" 2>/dev/null && return 0
+    sudo cp "$path" "$backup" 2>/dev/null && return 0
+    return 1
+}
+
+# --- Postgres: generic role rotation + live auth verification ---
+# ALTER ROLE takes effect immediately and never crashes Postgres itself; the
+# only risk is a client still holding the OLD password in its own env failing
+# its NEXT new connection attempt. Existing established connections are
+# unaffected. Verification below is a real auth check, not just "ALTER ROLE
+# returned OK" - and the return code is what every caller gates its dependent
+# step on (see main()) so a failed role rotation never cascades into a
+# crash-looped container or a crash-looped Authelia.
+
+rotate_postgres_role() {
+    local role="$1"
+    local db="$2"
+    local sql_role="$role"
+    case "$role" in
+        open-webui) sql_role='"open-webui"' ;;
+    esac
+
+    if ! compose exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres \
+        -c "ALTER ROLE $sql_role WITH ENCRYPTED PASSWORD '$(sql_escape "$NEW_PASSWORD")';" >/dev/null 2>&1; then
+        note "✘ FAILED to rotate postgres role '$role'"
+        return 1
+    fi
+
+    if compose exec -T postgres env PGPASSWORD="$NEW_PASSWORD" psql -U "$role" -d "$db" -h localhost -tAc "SELECT 1;" >/dev/null 2>&1; then
+        note "✔ Rotated + verified postgres role '$role'"
+        return 0
+    fi
+
+    note "✘ Rotated postgres role '$role' but verification connect FAILED - check manually"
+    return 1
+}
+
+# Sets IMMICH_ROLE_OK / AUTHELIA_ROLE_OK / LLDAP_ROLE_OK / OPEN_WEBUI_ROLE_OK
+# to "1"/"0" so main() can gate each role's dependent step (Authelia's
+# db_password, or a container recreate) on whether IT specifically succeeded -
+# not on whether the batch as a whole ran. The `postgres` superuser role has
+# no dependent step (nothing else authenticates as it), so its result is just
+# logged by rotate_postgres_role itself, nothing to gate.
+rotate_postgres_roles() {
+    if ! container_is_running "pi-postgres"; then
+        note "✘ SKIPPED all postgres roles (pi-postgres not running)"
+        IMMICH_ROLE_OK=0; AUTHELIA_ROLE_OK=0; LLDAP_ROLE_OK=0; OPEN_WEBUI_ROLE_OK=0
+        return 0
+    fi
+    rotate_postgres_role postgres postgres
+    rotate_postgres_role immich immich          && IMMICH_ROLE_OK=1     || IMMICH_ROLE_OK=0
+    rotate_postgres_role authelia authelia      && AUTHELIA_ROLE_OK=1   || AUTHELIA_ROLE_OK=0
+    rotate_postgres_role lldap lldap            && LLDAP_ROLE_OK=1      || LLDAP_ROLE_OK=0
+    rotate_postgres_role open-webui open-webui  && OPEN_WEBUI_ROLE_OK=1 || OPEN_WEBUI_ROLE_OK=0
+    # nextcloud is rotated separately, in rotate_nextcloud_db_password(),
+    # AFTER config.php is updated - see the ordering note in main(). It sets
+    # NEXTCLOUD_ROLE_OK itself.
+}
+
+# --- LLDAP: the actual admin login password (LDAP password-modify, not env) ---
+# Proven live: recreating lldap with a new LLDAP_LDAP_USER_PASS does NOT reset
+# an existing admin account's password. This uses the standard LDAP
+# password-modify extended operation instead, authenticated with the OLD
+# password (captured before any edits).
+
+rotate_lldap_admin_password() {
+    local bind_dn="uid=${LLDAP_ADMIN_USERNAME},ou=people,${LLDAP_BASE_DN}"
+
+    if ! container_is_running "pi-lldap"; then
+        note "✘ SKIPPED LLDAP admin password (pi-lldap not running)"
+        LLDAP_ADMIN_OK=0
+        return 1
+    fi
+
+    if ! docker run --rm --network frontend --entrypoint ldappasswd "$LDAP_CLIENT_IMAGE" \
+        -x -H ldap://pi-lldap:3890 -D "$bind_dn" -w "$OLD_PASSWORD" \
+        -s "$NEW_PASSWORD" "$bind_dn" >/dev/null 2>&1; then
+        note "✘ FAILED to rotate LLDAP admin password (old password may already be wrong, or bind DN '$bind_dn' is wrong for this deployment)"
+        LLDAP_ADMIN_OK=0
+        return 1
+    fi
+
+    if docker run --rm --network frontend --entrypoint ldapwhoami "$LDAP_CLIENT_IMAGE" \
+        -x -H ldap://pi-lldap:3890 -D "$bind_dn" -w "$NEW_PASSWORD" >/dev/null 2>&1; then
+        note "✔ Rotated + verified LLDAP admin ($LLDAP_ADMIN_USERNAME) password"
+        LLDAP_ADMIN_OK=1
+        return 0
+    fi
+
+    note "✘ Rotated LLDAP admin password but verification bind FAILED - check manually"
+    LLDAP_ADMIN_OK=0
+    return 1
+}
+
+# --- Authelia secrets (files, not env - a restart re-reads them) ---
+# Split in two, called at two different points in main(), because the two
+# files have different dependencies:
+#   - ldap_password only needs the LLDAP admin password already rotated (LDAP
+#     protocol, no Postgres involved) - written immediately so the SSO outage
+#     window is as short as possible, in BOTH modes.
+#   - db_password is Authelia's ACTUAL Postgres credential (the
+#     AUTHELIA_DB_PASSWORD compose env var is not what Authelia reads) and is
+#     only safe to write once the `authelia` Postgres role has actually
+#     rotated - writing it before that crash-loops Authelia on its own DB
+#     ping. Full-mode only, gated by main() on AUTHELIA_ROLE_OK.
+
+rotate_authelia_ldap_secret() {
+    local data_root secrets_dir
+
+    if [ "$LLDAP_ADMIN_OK" != "1" ]; then
+        note "… Skipped Authelia ldap_password update - LLDAP admin rotation did not succeed, leaving it unchanged so Authelia keeps binding with a password that still works"
+        return 0
+    fi
+
+    data_root="$(resolve_data_location_path)"
+    secrets_dir="$data_root/authelia-config/secrets"
+    if [ ! -d "$secrets_dir" ]; then
+        note "✘ SKIPPED Authelia ldap_password ($secrets_dir missing)"
+        return 0
+    fi
+
+    if backup_secret_file "$secrets_dir/ldap_password" "$secrets_dir/ldap_password.bak.$(date +%Y%m%d-%H%M%S)"; then
+        :
+    else
+        note "⚠ Could not back up Authelia ldap_password before overwriting it (proceeding anyway)"
+    fi
+
+    if write_secret_file "$secrets_dir/ldap_password" "$NEW_PASSWORD"; then
+        note "✔ Rewrote Authelia ldap_password secret"
+    else
+        note "✘ FAILED to rewrite Authelia ldap_password (check ownership on $secrets_dir)"
+        return 1
+    fi
+
+    if container_is_running "pi-authelia"; then
+        if compose restart authelia >/dev/null 2>&1; then
+            wait_for_health_warning "pi-authelia" 60 2 || true
+            note "✔ Restarted Authelia to load new ldap_password"
+        else
+            note "✘ FAILED to restart Authelia (ldap_password written but not loaded - restart manually)"
+        fi
+    fi
+}
+
+rotate_authelia_db_secret() {
+    local data_root secrets_dir
+
+    if [ "$AUTHELIA_ROLE_OK" != "1" ]; then
+        note "… Skipped Authelia db_password update - the 'authelia' Postgres role did not rotate, leaving db_password unchanged so Authelia doesn't crash-loop on its own DB ping"
+        return 0
+    fi
+
+    data_root="$(resolve_data_location_path)"
+    secrets_dir="$data_root/authelia-config/secrets"
+    if [ ! -d "$secrets_dir" ]; then
+        note "✘ SKIPPED Authelia db_password ($secrets_dir missing)"
+        return 0
+    fi
+
+    if ! backup_secret_file "$secrets_dir/db_password" "$secrets_dir/db_password.bak.$(date +%Y%m%d-%H%M%S)"; then
+        note "⚠ Could not back up Authelia db_password before overwriting it (proceeding anyway)"
+    fi
+
+    if write_secret_file "$secrets_dir/db_password" "$NEW_PASSWORD"; then
+        note "✔ Rewrote Authelia db_password secret"
+    else
+        note "✘ FAILED to rewrite Authelia db_password (check ownership on $secrets_dir) - authelia role is rotated but the secret isn't, restart would crash-loop it"
+        return 1
+    fi
+
+    if container_is_running "pi-authelia"; then
+        if compose restart authelia >/dev/null 2>&1; then
+            wait_for_health_warning "pi-authelia" 60 2 || true
+            note "✔ Restarted Authelia to load new db_password"
+        else
+            note "✘ FAILED to restart Authelia (db_password written but not loaded - restart manually)"
+        fi
+    fi
+}
+
+# --- Nextcloud: config.php dbpassword + real admin account ---
+# Must happen BEFORE the postgres role password is rotated: occ needs the
+# CURRENT (old) password to still be valid to boot and write the new one into
+# config.php. Nextcloud is briefly unable to reach its DB between this step
+# and the nextcloud ALTER ROLE - that's expected and self-heals immediately.
+# Sets NEXTCLOUD_ROLE_OK so main() can gate the later `recreate nextcloud` and
+# backrest's recreate (which bundles this role's password too) on it.
+
+rotate_nextcloud_db_password() {
+    NEXTCLOUD_ROLE_OK=0
+
+    if ! container_is_running "pi-nextcloud"; then
+        note "✘ SKIPPED Nextcloud dbpassword (pi-nextcloud not running)"
+        return 0
+    fi
+
+    if docker exec -e OC_PASS="$NEW_PASSWORD" pi-nextcloud php occ config:system:set dbpassword --value="$NEW_PASSWORD" >/dev/null 2>&1; then
+        note "✔ Updated Nextcloud config.php dbpassword"
+    else
+        note "✘ FAILED to update Nextcloud config.php dbpassword - NOT rotating postgres role 'nextcloud', or Nextcloud would be locked out of its DB"
+        return 1
+    fi
+
+    if rotate_postgres_role nextcloud nextcloud; then
+        NEXTCLOUD_ROLE_OK=1
+    else
+        return 1
+    fi
+
+    if docker exec pi-nextcloud php occ status >/dev/null 2>&1; then
+        note "✔ Verified Nextcloud can still reach its DB"
+    else
+        note "✘ Nextcloud DB connectivity check FAILED after dbpassword rotation - check manually"
+        NEXTCLOUD_ROLE_OK=0
+    fi
+}
+
+rotate_nextcloud_admin_password() {
+    local username
+    if ! container_is_running "pi-nextcloud"; then
+        note "✘ SKIPPED Nextcloud admin password (pi-nextcloud not running)"
+        return 0
+    fi
+
+    # The real admin account was provisioned as $EMAIL, not $ADMIN_USER (see
+    # compose.yaml homepage service comment) - NEXTCLOUD_ADMIN_USER only ever
+    # applied at first install. Try EMAIL first, fall back to ADMIN_USER.
+    for username in "$EMAIL" "$ADMIN_USER"; do
+        [ -n "$username" ] || continue
+        if docker exec -e OC_PASS="$NEW_PASSWORD" pi-nextcloud php occ user:resetpassword --password-from-env "$username" >/dev/null 2>&1; then
+            note "✔ Reset Nextcloud admin password for user '$username'"
+            return 0
+        fi
+    done
+    note "✘ FAILED to reset Nextcloud admin password (tried '$EMAIL', '$ADMIN_USER') - reset manually via occ user:resetpassword"
+}
+
+# --- ntfy: regenerate the admin user hash and reload it ---
+
+rotate_ntfy() {
+    if sh "$PROJECT_DIR/scripts/ntfy-pre-start.sh" >/dev/null 2>&1; then
+        note "✔ Regenerated ntfy admin credentials"
+    else
+        note "✘ FAILED to regenerate ntfy admin credentials"
+        return 0
+    fi
+    recreate ntfy
+}
+
+# --- qBittorrent: live WebUI API call, no recreate needed ---
+# QBITTORRENT_CREDENTIALS_OK reflects whether qBittorrent's WebUI password
+# actually rotated - not just the one failure mode (a too-short ADMIN_USER)
+# that was hit live. Any reason it didn't rotate (not running, too-short
+# username, or an API call failure) leaves it "0", so rotate_prowlarr/
+# rotate_kapowarr correctly skip updating their stored copy of a password
+# qBittorrent itself never actually adopted.
+
+rotate_qbittorrent() {
+    local http_code
+    QBITTORRENT_CREDENTIALS_OK=0
+
+    if ! container_is_running "pi-qbittorrent"; then
+        note "✘ SKIPPED qBittorrent (pi-qbittorrent not running)"
+        return 1
+    fi
+    if [ "${#ADMIN_USER}" -lt 3 ]; then
+        note "… Skipped qBittorrent (ADMIN_USER under 3-char WebUI minimum, left on default login)"
+        return 1
+    fi
+
+    http_code=$(printf 'json=%s' "$(jq -nc --arg u "$ADMIN_USER" --arg p "$NEW_PASSWORD" '{web_ui_username:$u,web_ui_password:$p}')" | \
+        docker exec -i pi-qbittorrent curl -sS \
+        -X POST -H "Referer: http://127.0.0.1:8080" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -w "%{http_code}" -o /dev/null --data @- \
+        "http://127.0.0.1:8080/api/v2/app/setPreferences")
+
+    if [ "$http_code" = "200" ]; then
+        note "✔ Rotated qBittorrent WebUI password"
+        QBITTORRENT_CREDENTIALS_OK=1
+        return 0
+    fi
+
+    note "✘ FAILED to rotate qBittorrent WebUI password (HTTP $http_code)"
+    return 1
+}
+
+# --- Prowlarr: update the stored qBittorrent download-client password ---
+
+rotate_prowlarr() {
+    local key existing id updated code
+    if ! container_is_running "pi-prowlarr"; then
+        note "✘ SKIPPED Prowlarr (pi-prowlarr not running)"
+        return 0
+    fi
+    if [ "$QBITTORRENT_CREDENTIALS_OK" != "1" ]; then
+        note "… Skipped Prowlarr's stored qBittorrent password (qBittorrent's own WebUI login was never rotated - see above)"
+        return 0
+    fi
+
+    key="$(docker exec pi-prowlarr sh -c "grep -oE '<ApiKey>[^<]+</ApiKey>' /config/config.xml" 2>/dev/null \
+        | sed -e 's|<ApiKey>||' -e 's|</ApiKey>||' | tr -d '\r\n')"
+    [ -n "$key" ] || { note "✘ FAILED to rotate Prowlarr download client (no API key)"; return 0; }
+
+    existing="$(docker exec pi-prowlarr curl -sS -H "X-Api-Key: $key" "http://localhost:9696/api/v1/downloadclient" 2>/dev/null \
+        | jq -c '.[]? | select(.name=="qBittorrent")' 2>/dev/null)"
+    [ -n "$existing" ] && [ "$existing" != "null" ] || { note "… Skipped Prowlarr (no qBittorrent download client registered)"; return 0; }
+
+    id="$(printf '%s' "$existing" | jq -r '.id')"
+    updated="$(printf '%s' "$existing" | jq -c --arg pass "$NEW_PASSWORD" \
+        '.fields = ([.fields[] | if .name=="password" then .value=$pass else . end])')"
+    code="$(printf '%s' "$updated" | docker exec -i pi-prowlarr curl -sS -o /dev/null -w '%{http_code}' \
+        -X PUT -H "X-Api-Key: $key" -H "Content-Type: application/json" \
+        --data @- "http://localhost:9696/api/v1/downloadclient/$id")"
+
+    case "$code" in
+        20*) note "✔ Rotated Prowlarr qBittorrent download client password" ;;
+        *)   note "✘ FAILED to rotate Prowlarr download client password (HTTP $code)" ;;
+    esac
+}
+
+# --- Kapowarr: update the stored qBittorrent external client password ---
+
+rotate_kapowarr() {
+    local out
+    if ! container_is_running "pi-kapowarr"; then
+        note "✘ SKIPPED Kapowarr (pi-kapowarr not running)"
+        return 0
+    fi
+    if [ "$QBITTORRENT_CREDENTIALS_OK" != "1" ]; then
+        note "… Skipped Kapowarr's stored qBittorrent password (qBittorrent's own WebUI login was never rotated - see above)"
+        return 0
+    fi
+
+    out="$(KAP_USER="$ADMIN_USER" KAP_PASS="$NEW_PASSWORD" docker exec -i \
+        -e KAP_USER -e KAP_PASS pi-kapowarr python3 - <<'PY' 2>&1
+import json, os, urllib.parse, urllib.request
+
+BASE = "http://localhost:5656/api"
+USER = os.environ.get("KAP_USER") or None
+PASS = os.environ.get("KAP_PASS") or None
+
+
+def call(method, path, params=None, body=None):
+    url = BASE + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method,
+                                  headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return r.status, json.loads(r.read() or b"{}")
+
+
+_, res = call("POST", "/auth", body={"username": USER, "password": PASS})
+key = (res.get("result") or {}).get("api_key")
+if not key:
+    raise SystemExit("no api_key")
+
+_, res = call("GET", "/externalclients", params={"api_key": key})
+clients = res.get("result") or []
+existing = next((c for c in clients if c.get("title") == "qBittorrent"), None)
+if existing is None:
+    raise SystemExit("no qBittorrent external client registered")
+
+body = {
+    "title": "qBittorrent",
+    "base_url": existing.get("base_url"),
+    "username": USER,
+    "password": PASS,
+    "api_token": None,
+}
+call("PUT", f"/externalclients/{existing['id']}", params={"api_key": key}, body=body)
+print("rotated")
+PY
+)"
+
+    if printf '%s\n' "$out" | grep -q '^rotated$'; then
+        note "✔ Rotated Kapowarr qBittorrent external client password"
+    else
+        note "✘ FAILED to rotate Kapowarr external client password ($(printf '%s\n' "$out" | tail -n1))"
+    fi
+}
+
+# --- Dockhand: authenticate with the OLD password, then update it ---
+
+rotate_dockhand() {
+    local url usernames candidate cookie users_json user_id payload response status
+
+    if ! container_is_running "pi-dockhand"; then
+        note "✘ SKIPPED Dockhand (pi-dockhand not running)"
+        return 0
+    fi
+    url="http://pi-dockhand:3000"
+    usernames="$(build_candidate_usernames "$ADMIN_USER" "$EMAIL")"
+
+    cookie=""
+    for candidate in $usernames; do
+        response="$(docker run --rm --network frontend "${CURL_IMAGE:-curlimages/curl:8.12.1}" \
+            -sS -i -X POST -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg u "$candidate" --arg p "$OLD_PASSWORD" '{username:$u,password:$p,provider:"local"}')" \
+            "$url/api/auth/login" 2>/dev/null || true)"
+        status="$(printf '%s' "$response" | awk 'NR==1 {print $2}')"
+        cookie="$(printf '%s' "$response" | awk 'tolower($0) ~ /^set-cookie:/ {sub(/^[^:]*:[[:space:]]*/, "", $0); split($0, a, ";"); print a[1]; exit}' | tr -d '\r\n')"
+        [ "$status" = "200" ] && [ -n "$cookie" ] && break
+        cookie=""
+    done
+    [ -n "$cookie" ] || { note "✘ FAILED to rotate Dockhand admin password (could not authenticate with old password)"; return 0; }
+
+    users_json="$(api_get_with_cookie "$url" "/api/users" "$cookie")"
+    user_id="$(printf '%s' "$users_json" | jq -r --arg u "$candidate" '[.[] | select(.username==$u)] | first | .id // empty')"
+    [ -n "$user_id" ] || { note "✘ FAILED to rotate Dockhand admin password (could not find user id for '$candidate')"; return 0; }
+
+    payload="$(jq -nc --arg p "$NEW_PASSWORD" '{password:$p}')"
+    if api_put_json_with_cookie "$url" "/api/users/$user_id" "$payload" "$cookie" >/dev/null 2>&1; then
+        note "✔ Rotated Dockhand password for local user '$candidate'"
+    else
+        note "✘ FAILED to rotate Dockhand admin password (PUT /api/users/$user_id rejected)"
+    fi
+}
+
+# --- Beszel: best-effort PocketBase superuser reset ---
+# DISABLE_PASSWORD_AUTH=true means this account is a break-glass credential
+# (normal login goes through Authelia OIDC), so a failure here is low-impact.
+
+rotate_beszel_superuser() {
+    if ! container_is_running "pi-beszel"; then
+        note "✘ SKIPPED Beszel (pi-beszel not running)"
+        return 0
+    fi
+    [ -n "$EMAIL" ] || { note "✘ SKIPPED Beszel superuser (EMAIL not set)"; return 0; }
+
+    if docker exec pi-beszel /beszel superuser upsert "$EMAIL" "$NEW_PASSWORD" >/dev/null 2>&1; then
+        note "✔ Rotated Beszel superuser password (break-glass only, DISABLE_PASSWORD_AUTH is on)"
+    else
+        note "… Beszel superuser reset unavailable via CLI - low impact, login is via OIDC (DISABLE_PASSWORD_AUTH=true)"
+    fi
+}
+
+main() {
+    [ -f "$ENV_FILE" ] || die ".env missing at $ENV_FILE"
+
+    OLD_PASSWORD="$(get_env_value PASSWORD)"
+    ADMIN_USER="$(get_env_value ADMIN_USER)"
+    EMAIL="$(get_env_value EMAIL)"
+    [ -n "$OLD_PASSWORD" ] || die "PASSWORD is not set in .env"
+
+    confirm
+
+    NEW_PASSWORD="$(generate_secret)"
+    TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+
+    # The new password is never echoed to stdout/logs (AGENTS.md: never print
+    # secrets) - it's written once to this chmod-600 file instead. Read it,
+    # then delete it.
+    RESULT_FILE="$PROJECT_DIR/.rotate-password.new-password.$TIMESTAMP"
+    if ! write_secret_file "$RESULT_FILE" "$NEW_PASSWORD"; then
+        die "Could not write $RESULT_FILE to record the new password - aborting before making any change"
+    fi
+
+    if [ "$SKIP_POSTGRES" = "1" ]; then
+        log "=== --skip-postgres: .env is not touched (see file header for why) ==="
+    else
+        BACKUP_FILE="$ENV_FILE.bak.$TIMESTAMP"
+        if ! cp "$ENV_FILE" "$BACKUP_FILE"; then
+            die "Could not back up .env to $BACKUP_FILE - aborting before touching .env"
+        fi
+        log "Backed up .env to $BACKUP_FILE"
+
+        log "=== Writing new PASSWORD to .env ==="
+        if ! grep -q '^PASSWORD=' "$ENV_FILE"; then
+            die "PASSWORD= line not found in .env; restore from $BACKUP_FILE and check manually"
+        fi
+        if sed -i "s|^PASSWORD=.*|PASSWORD=$NEW_PASSWORD|" "$ENV_FILE" && [ "$(get_env_value PASSWORD)" = "$NEW_PASSWORD" ]; then
+            note "✔ Updated PASSWORD in .env"
+        else
+            die "Failed to update PASSWORD in .env (or the write didn't verify) - restore from $BACKUP_FILE and check manually"
+        fi
+    fi
+
+    log "=== LLDAP admin account (the SSO master credential) ==="
+    rotate_lldap_admin_password
+
+    log "=== Authelia ldap_password (independent of Postgres - see file header) ==="
+    rotate_authelia_ldap_secret
+
+    if [ "$SKIP_POSTGRES" = "1" ]; then
+        log "=== --skip-postgres set: stopping here ==="
+    else
+        log "=== Nextcloud (pre-rotation: needs the OLD password still valid) ==="
+        rotate_nextcloud_db_password
+        rotate_nextcloud_admin_password
+
+        log "=== Remaining Postgres roles ==="
+        rotate_postgres_roles
+
+        log "=== Authelia db_password (gated on the authelia role above) ==="
+        rotate_authelia_db_secret
+
+        log "=== Recreating containers that bake PASSWORD into their environment ==="
+        # Each recreate is gated on ITS OWN role having actually rotated - a
+        # container whose role failed to rotate is left running on its
+        # current, still-consistent env rather than recreated into a
+        # crash loop against a password Postgres doesn't have.
+        if [ "$LLDAP_ROLE_OK" = "1" ]; then recreate lldap; else note "… Skipped recreating lldap - its Postgres role didn't rotate"; fi
+        if [ "$OPEN_WEBUI_ROLE_OK" = "1" ]; then recreate open-webui; else note "… Skipped recreating open-webui - its Postgres role didn't rotate"; fi
+        if [ "$IMMICH_ROLE_OK" = "1" ]; then recreate immich-server pi-immich; else note "… Skipped recreating immich-server - its Postgres role didn't rotate"; fi
+        if [ "$NEXTCLOUD_ROLE_OK" = "1" ]; then recreate nextcloud; else note "… Skipped recreating nextcloud - its Postgres role/dbpassword didn't rotate cleanly"; fi
+        # backrest bundles all four of the roles above into one environment -
+        # only safe to refresh if every one of them actually rotated.
+        if [ "$NEXTCLOUD_ROLE_OK" = "1" ] && [ "$AUTHELIA_ROLE_OK" = "1" ] && [ "$LLDAP_ROLE_OK" = "1" ] && [ "$OPEN_WEBUI_ROLE_OK" = "1" ]; then
+            recreate backrest
+        else
+            note "… Skipped recreating backrest - not every DB role it backs up (nextcloud/authelia/lldap/open-webui) rotated cleanly; its scheduled backups keep using their current, still-consistent passwords"
+        fi
+        recreate pihole
+        recreate beszel
+        recreate homepage
+        recreate comet
+        rotate_ntfy
+
+        log "=== Live API credential updates (no recreate needed) ==="
+        rotate_qbittorrent
+        rotate_prowlarr
+        rotate_kapowarr
+        rotate_dockhand
+        rotate_beszel_superuser
+    fi
+
+    echo ""
+    echo "=== Rotation summary ==="
+    printf '%s' "$SUMMARY"
+    echo ""
+    if [ "$SKIP_POSTGRES" = "1" ]; then
+        echo "PASSWORD in .env was left UNCHANGED on purpose (--skip-postgres) - it no"
+        echo "longer matches the LLDAP admin/Authelia bind password, which is intentional."
+    else
+        echo "New PASSWORD saved in .env."
+        echo ".env backup: $BACKUP_FILE"
+    fi
+    echo "New password recorded at: $RESULT_FILE (chmod 600) - read it, then delete it:"
+    echo "  cat $RESULT_FILE && rm -f $RESULT_FILE"
+    echo ""
+    echo "Review any '✘ FAILED' lines above and fix those services manually."
+}
+
+main "$@"

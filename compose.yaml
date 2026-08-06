@@ -822,7 +822,7 @@ services:
     image: nextcloud:34.0.2-apache
     container_name: pi-nextcloud
     environment:
-      - NEXTCLOUD_ADMIN_USER=${ADMIN_USER}
+      - NEXTCLOUD_ADMIN_USER=${ADMIN_USER:-admin}
       - NEXTCLOUD_ADMIN_PASSWORD=${PASSWORD}
       - NEXTCLOUD_ADMIN_EMAIL=${EMAIL}
       - NEXTCLOUD_TRUSTED_DOMAINS=nextcloud.${HOST_NAME:-pi.lan} localhost 127.0.0.1
@@ -913,7 +913,7 @@ services:
       - HOMEPAGE_ALLOWED_HOSTS=homepage.${HOST_NAME:-pi.lan}
       # Reused by widget labels as {{HOMEPAGE_VAR_x}} for services whose widget
       # accepts the same admin credentials already used stack-wide (.env).
-      - HOMEPAGE_VAR_ADMIN_USER=${ADMIN_USER}
+      - HOMEPAGE_VAR_ADMIN_USER=${ADMIN_USER:-admin}
       - HOMEPAGE_VAR_ADMIN_PASSWORD=${PASSWORD}
       # Nextcloud's actual admin account was provisioned with $EMAIL as the
       # username (NEXTCLOUD_ADMIN_USER only applies at first install; that's

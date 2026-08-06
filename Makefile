@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset
+.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset rotate-password rotate-password-full
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -26,6 +26,8 @@ help:
 	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  headscale-reset  Reset all Headscale nodes, preauth keys, and IP allocations"
 	@echo "  check-env        Validate required .env variables"
+	@echo "  rotate-password       Rotate PASSWORD after a leak (LLDAP admin + Authelia only, no Postgres)"
+	@echo "  rotate-password-full  Same, plus every Postgres role and every other service using PASSWORD"
 	@echo "  help             This help"
 
 check-env:
@@ -166,3 +168,11 @@ headscale-reset:
 	@echo "🧹 Resetting Headscale IP allocations (restarting service)..."
 	-docker compose restart headscale
 	@echo "✅ Headscale reset complete"
+
+rotate-password:
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	sh scripts/rotate-password.sh --skip-postgres
+
+rotate-password-full:
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	sh scripts/rotate-password.sh

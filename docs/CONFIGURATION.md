@@ -243,10 +243,23 @@ To add a service:
 
 ### Changing Passwords
 
-**LLDAP admin:**
-1. Update `PASSWORD` in `.env`
-2. `make restart`
-3. LLDAP admin password resets on startup if it detects mismatch
+**LLDAP admin (the shared `PASSWORD` / SSO master credential) - after a leak:**
+- Run `make rotate-password` - rotates the LLDAP admin account (via the LDAP
+  password-modify operation, not an env var) and Authelia's matching
+  `ldap_password` secret. This is the actual credential a leaked `PASSWORD`
+  exposes, since everything logs in through Authelia SSO.
+- **Note:** updating `PASSWORD` in `.env` and restarting/recreating `lldap` on
+  its own does **not** change the admin account's password - LLDAP does not
+  reset an existing admin's password to match the env var on startup, despite
+  older guidance here. `make rotate-password` (or `scripts/rotate-password.sh`)
+  is the only correct way to do this.
+- For a full rotation across every Postgres role and every other service that
+  also uses `PASSWORD` (Nextcloud, Pi-hole, qBittorrent, Prowlarr, Kapowarr,
+  Beszel, ntfy, Dockhand), use `make rotate-password-full` instead.
+  See `scripts/rotate-password.sh`'s header comment for the exact ordering
+  constraints it handles (Nextcloud's `config.php` dbpassword, Authelia's
+  `db_password` secret vs. its `AUTHELIA_DB_PASSWORD` env var, etc.) - doing
+  these by hand out of order breaks things.
 
 **Regular user:**
 - Use Authelia portal → **Account** → **Change password**

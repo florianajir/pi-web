@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -64,7 +64,7 @@ jobs:
           set -euo pipefail
           cat > .env << 'EOF'
           HOST_NAME=test.local
-          ADMIN_USER=testuser
+          ADMIN_USER=admin
           EMAIL=test@example.com
           PASSWORD=testpassword123
           HOST_LAN_IP=192.168.1.100
