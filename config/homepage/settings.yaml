@@ -13,9 +13,3 @@ layout:
   Notifications:
     style: row
     columns: 1
-  Backup & Recovery:
-    style: row
-    columns: 1
-  Monitoring:
-    style: row
-    columns: 3
