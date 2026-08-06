@@ -18,7 +18,7 @@
         tempmax: 85
         uptime: true
         units: metric
-        network: true
+        network: eth0
 
 - datetime:
         text_size: xl

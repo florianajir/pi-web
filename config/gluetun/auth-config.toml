@@ -1,0 +1,15 @@
+# Gluetun control server authorization policy.
+# https://github.com/qdm12/gluetun-wiki/blob/main/setup/advanced/control-server.md
+#
+# Grants unauthenticated (auth = "none") read-only access to the couple of
+# routes the Homepage 'gluetun' widget needs. Nothing sensitive is exposed:
+# public IP/region and port-forwarding status. Reachable only from other
+# containers on the internal "frontend" Docker network (port 8000 is not
+# published to the host).
+[[roles]]
+name = "homepage"
+routes = [
+    "GET /v1/publicip/ip",
+    "GET /v1/openvpn/portforwarded",
+]
+auth = "none"

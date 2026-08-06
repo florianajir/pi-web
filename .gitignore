@@ -12,6 +12,10 @@
 /config/backrest/config.json
 /config/gluetun/gluetun.env
 /config/gluetun/openvpn.ovpn
+/config/homepage/secrets/*
+!/config/homepage/secrets/.gitkeep
+!/config/homepage/secrets/README.md
+/config/homepage/homepage.env
 
 ._.DS_Store
 .DS_Store

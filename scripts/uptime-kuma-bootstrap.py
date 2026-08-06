@@ -314,6 +314,66 @@ class UptimeKumaBootstrap:
         log(f"Added group '{group_name}' (id={monitor_id})")
         return monitor_id
 
+    def status_page_exists(self, slug):
+        """Check via the public (auth-free) HTTP API whether a status page slug exists."""
+        import urllib.request
+        import urllib.error
+
+        try:
+            urllib.request.urlopen(f"{self.url}/api/status-page/{slug}", timeout=10)
+            return True
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return False
+            raise
+        except Exception:
+            return False
+
+    def ensure_status_page(self, slug, title, group_name, monitor_ids):
+        """Ensure a public status page exists containing the given monitor IDs.
+
+        Used by the Homepage 'uptimekuma' widget, which has no full API and instead
+        reads a public status page by slug (no auth needed).
+        Server signature: addStatusPage(title, slug, callback), then
+        saveStatusPage(slug, config, imgDataUrl, publicGroupList, callback).
+        """
+        if not self.status_page_exists(slug):
+            r = self._call("addStatusPage", title, slug)
+            if not r.get("ok"):
+                raise Exception(r.get("msg", "Failed to add status page"))
+            log(f"Created status page '{slug}'")
+        else:
+            log(f"Status page '{slug}' already exists")
+
+        config = {
+            "slug": slug,
+            "title": title,
+            "description": None,
+            "icon": "/icon.svg",
+            "autoRefreshInterval": 300,
+            "theme": "auto",
+            "published": True,
+            "showTags": False,
+            "customCSS": "",
+            "footerText": None,
+            "showPoweredBy": False,
+            "showCertificateExpiry": False,
+            "showOnlyLastHeartbeat": False,
+            "rssTitle": None,
+            "analyticsId": None,
+            "analyticsScriptUrl": None,
+            "analyticsType": None,
+            "domainNameList": [],
+        }
+        monitor_list = [{"id": mid} for mid in monitor_ids]
+        # imgDataUrl must be a string (not null) or the server's `.startsWith()` check throws.
+        r = self._call("saveStatusPage", slug, config, "", [
+            {"name": group_name, "weight": 1, "monitorList": monitor_list},
+        ])
+        if not r.get("ok"):
+            raise Exception(r.get("msg", "Failed to save status page"))
+        log(f"Status page '{slug}' updated with {len(monitor_ids)} monitor(s)")
+
     def ensure_container_monitor(self, container_name, docker_host_id, notification_id, parent_id=None):
         """Ensure a Docker container monitor exists."""
         display_name = container_name
@@ -413,6 +473,14 @@ def main():
                 )
             except Exception as e:
                 log(f"WARNING: Failed to add monitor for {container_name}: {e}")
+
+        # Ensure a public status page exists for the Homepage 'uptimekuma' widget
+        # (auth-free slug mode). Reuses the "pi-pcloud" group monitor, whose
+        # aggregate heartbeat already reflects the whole stack's health.
+        try:
+            api.ensure_status_page("homepage", "Homepage Widget", "Services", [group_id])
+        except Exception as e:
+            log(f"WARNING: Failed to ensure Homepage status page: {e}")
 
         log("Bootstrap completed successfully")
 
