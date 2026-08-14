@@ -139,6 +139,7 @@ services:
       - ${DATA_LOCATION:-./data}/uptime-kuma:/userdata/uptime-kuma:ro
       - beszel_data:/userdata/beszel:ro
       - ${DATA_LOCATION:-./data}/lldap:/userdata/lldap:ro
+      - ${DATA_LOCATION:-./data}/vaultwarden:/userdata/vaultwarden:ro
       - ${DATA_LOCATION:-./data}/lldap/backups:/userdata/lldap/backups
       - ${DATA_LOCATION:-./data}/authelia-config:/userdata/authelia-config
       - ${DATA_LOCATION:-./data}/open-webui/backups:/userdata/open-webui/backups
@@ -1383,6 +1384,43 @@ services:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/v1/health"]
     deploy: *cpu-request-small
     mem_limit: 128m
+    oom_score_adj: *oom-score-important
+
+  vaultwarden:
+    <<: *service-defaults
+    # Lightweight, Bitwarden-compatible server with multi-architecture images.
+    image: vaultwarden/server:1.36.0
+    container_name: pi-vaultwarden
+    networks:
+      - frontend
+    expose:
+      - 80
+    environment:
+      - DOMAIN=https://vault.${HOST_NAME:-pi.lan}
+      # Keep this enabled to create the initial account. Set to false once every
+      # intended user has registered or been invited.
+      - SIGNUPS_ALLOWED=true
+      - INVITATIONS_ALLOWED=true
+      - TZ=${TIMEZONE:-Europe/Paris}
+    volumes:
+      - ${DATA_LOCATION:-./data}/vaultwarden:/data
+    labels:
+      - "homepage.group=Security"
+      - "homepage.name=Vaultwarden"
+      - "homepage.icon=bitwarden.png"
+      - "homepage.href=https://vault.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Bitwarden-compatible password manager"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      # Vaultwarden has its own accounts and browser/mobile clients, so it uses
+      # the LAN allowlist only rather than Authelia forward-auth.
+      - "traefik.http.routers.vaultwarden.rule=Host(`vault.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.vaultwarden.entrypoints=websecure"
+      - "traefik.http.routers.vaultwarden.middlewares=lan@docker"
+      - "traefik.http.routers.vaultwarden.tls=true"
+      - "traefik.http.services.vaultwarden.loadbalancer.server.port=80"
+    deploy: *cpu-request-tiny
+    mem_limit: 256m
     oom_score_adj: *oom-score-important
 
   # Authentication & SSO

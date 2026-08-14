@@ -169,6 +169,16 @@ The `authelia` forward-auth middleware is configured with `authRequestHeaders=Ac
 | qBittorrent | ✓ | ✓ | — | — | LAN-only + SSO |
 | Headplane | ✓ | ✓ | — | ✓ | LAN-only + SSO + OIDC + admin + 2FA |
 | Dockhand | ✓ | — | — | ✓ | LAN-only + OIDC + admin + 2FA |
+| Vaultwarden | ✓ | — | — | — | LAN-only + its own Bitwarden-compatible accounts |
+
+## Vaultwarden account setup
+
+Vaultwarden is served at `https://vault.<YOUR_DOMAIN>` and stores its encrypted
+vault database and attachments in `${DATA_LOCATION}/vaultwarden`. Registration
+is enabled for the initial setup; after all intended accounts exist, set
+`SIGNUPS_ALLOWED` to `false` in `compose.yaml` and restart the stack. Do not put
+Authelia forward-auth in front of it: the Bitwarden browser extension and mobile
+clients authenticate directly with Vaultwarden.
 
 ## Access Control Policies
 

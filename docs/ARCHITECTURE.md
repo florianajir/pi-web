@@ -23,6 +23,7 @@ flowchart LR
       Headplane[headplane]
       Backrest[backrest]
       Ntfy[ntfy]
+      Vaultwarden[vaultwarden]
       PiholeWeb[pihole web]
       Authelia[authelia]
       Lldap[lldap]
@@ -47,6 +48,7 @@ flowchart LR
   Traefik --> Headplane
   Traefik --> Backrest
   Traefik --> Ntfy
+  Traefik --> Vaultwarden
   Traefik --> PiholeWeb
   Traefik --> Authelia
   Traefik --> Lldap
@@ -87,6 +89,7 @@ flowchart LR
 | **Headscale** | Self-hosted Tailscale control plane | VPN clients |
 | **Headplane** | Web UI for Headscale admin | Admins via Traefik + SSO + 2FA |
 | **Ntfy** | Push notifications | Other services, webhooks |
+| **Vaultwarden** | Bitwarden-compatible password manager | Bitwarden clients via Traefik |
 | **Pi-hole** | Ad blocking, local DNS resolution | LAN & VPN clients |
 | **Unbound** | Recursive DNS resolver | Pi-hole |
 | **Backrest** | Automated backups (restic) | S3 storage, scheduled jobs |
