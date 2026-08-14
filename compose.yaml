@@ -1429,6 +1429,7 @@ services:
       - "homepage.name=LLDAP"
       - "homepage.href=https://lldap.${HOST_NAME:-pi.lan}"
       - "homepage.description=User directory management"
+      - "homepage.icon=LLDAP"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.lldap.rule=Host(`lldap.${HOST_NAME:-pi.lan}`)"

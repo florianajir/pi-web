@@ -1,8 +1,20 @@
 ---
 # For configuration options and examples, please see:
 # https://gethomepage.dev/configs/bookmarks
-
-- Developer:
-        - Github:
-                - abbr: GH
-                  href: https://github.com/florianajir/pi-pcloud
+- Favorites:
+          - Google:
+                    - abbr: GO
+                      href: https://www.google.com
+                      icon: google
+          - Protonmail:
+                    - abbr: PM
+                      href: https://mail.proton.me
+                      icon: proton
+          - Youtube:
+                    - abbr: YT
+                      href: https://www.youtube.com
+                      icon: youtube
+          - Github:
+                    - abbr: GH
+                      href: https://github.com/florianajir/pi-pcloud
+                      icon: github

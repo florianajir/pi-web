@@ -6,10 +6,64 @@
 #   openweathermap: openweathermapapikey
 #   weatherapi: weatherapiapikey
 
-title: PI Pcloud
+title: PI homepage
 description: Personal self-hosted services dashboard
 
 layout:
-  Notifications:
+  Favorites:
+    header: false
+    tab: Favorites
+    style: row
+    icon: mdi-star
+
+  Medias:
+    header: false
+    tab: Services
     style: row
     columns: 1
+    icon: mdi-movie-open
+    Storage:
+      style: row
+      columns: 1
+      icon: mdi-database
+    Download:
+      style: row
+      columns: 1
+      icon: mdi-download
+    Books:
+      style: row
+      columns: 2
+      icon: mdi-book-open-page-variant
+    Video:
+      style: row
+      columns: 2
+      icon: mdi-video
+
+  Administration:
+    header: false
+    tab: Administration
+    Notifications:
+      header: false
+      style: row
+      columns: 1
+    Backup & Recovery:
+      header: false
+      style: row
+      columns: 1
+    Monitoring:
+      style: row
+      columns: 3
+      icon: mdi-monitor-dashboard
+    Network:
+      style: row
+      columns: 4
+      icon: mdi-network
+    Authentication:
+      style: row
+      columns: 2
+      icon: mdi-account-key
+    Privacy:
+      style: row
+      columns: 2
+      icon: mdi-domino-mask
+    Dashboard:
