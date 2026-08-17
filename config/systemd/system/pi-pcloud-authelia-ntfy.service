@@ -1,0 +1,19 @@
+[Unit]
+Description=Pi-pcloud Authelia failed-login watcher (ntfy notifications)
+Requires=docker.service
+After=network-online.target docker.service pi-pcloud.service
+PartOf=pi-pcloud.service
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_PATH__
+ExecStart=/bin/sh __PROJECT_PATH__/scripts/authelia-ntfy-watch.sh
+Restart=always
+RestartSec=10
+# The watcher only reads the Authelia log stream and publishes to ntfy.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

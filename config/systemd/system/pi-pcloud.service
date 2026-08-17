@@ -2,6 +2,8 @@
 Description=Pi-pcloud
 Requires=docker.service
 After=network-online.target docker.service
+# Long-lived side services started/stopped with the stack (PartOf on their side).
+Wants=pi-pcloud-authelia-ntfy.service
 
 [Service]
 Type=oneshot

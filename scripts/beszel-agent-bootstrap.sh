@@ -17,6 +17,10 @@ HUB_URL_DOCKER="http://pi-beszel:8090"
 DEFAULT_BESZEL_NTFY_TOPIC="pi"
 DEFAULT_BESZEL_TEMP_ALERT_VALUE="70"
 DEFAULT_BESZEL_TEMP_ALERT_MIN="5"
+DEFAULT_BESZEL_CPU_ALERT_VALUE="90"
+DEFAULT_BESZEL_MEMORY_ALERT_VALUE="90"
+DEFAULT_BESZEL_DISK_ALERT_VALUE="85"
+DEFAULT_BESZEL_RESOURCE_ALERT_MIN="5"
 DEFAULT_BESZEL_NTFY_SCHEME="http"
 DEFAULT_BESZEL_OIDC_PROVIDER_NAME="oidc"
 DEFAULT_BESZEL_OIDC_PROVIDER_DISPLAY_NAME="Authelia"
@@ -377,10 +381,11 @@ $(printf '%s' "$updates_json" | extract_system_user_sync_lines)
 EOF
 }
 
-build_temperature_alert_payload() {
-    _value="$1"
-    _min="$2"
-    _overwrite="$3"
+build_alert_payload() {
+    _name="$1"
+    _value="$2"
+    _min="$3"
+    _overwrite="$4"
 
     if ! command -v python3 >/dev/null 2>&1; then
         return 1
@@ -405,8 +410,8 @@ try:
 except json.JSONDecodeError:
     sys.exit(1)
 systems = [item.get("id") for item in (data.get("items") or []) if item.get("id")]
-payload = {"name": "Temperature", "value": value, "min": min_minutes, "systems": systems, "overwrite": overwrite}
-print(json.dumps(payload, separators=(",", ":")))' "$_value" "$_min" "$_overwrite"
+payload = {"name": sys.argv[4], "value": value, "min": min_minutes, "systems": systems, "overwrite": overwrite}
+print(json.dumps(payload, separators=(",", ":")))' "$_value" "$_min" "$_overwrite" "$_name"
 }
 
 # --- Beszel API thin wrappers ---
@@ -1041,7 +1046,7 @@ configure_ntfy_webhook_and_temperature_alerts() {
         done
     fi
 
-    log "Ensuring default temperature alerts are configured"
+    log "Ensuring default resource alerts are configured"
     systems_response=$(beszel_api_get "$auth_token" "/api/collections/systems/records" \
         --data-urlencode "page=1" \
         --data-urlencode "perPage=500" \
@@ -1050,20 +1055,29 @@ configure_ntfy_webhook_and_temperature_alerts() {
 
     systems_count=$(printf '%s' "$systems_response" | count_system_records)
     if [ -z "$systems_count" ] || [ "$systems_count" -eq 0 ]; then
-        log "No systems found yet; skipping temperature alert bootstrap"
+        log "No systems found yet; skipping resource alert bootstrap"
         return 0
     fi
 
-    alert_value=$(get_env_value BESZEL_TEMP_ALERT_VALUE)
-    alert_min=$(get_env_value BESZEL_TEMP_ALERT_MIN)
     alert_overwrite=$(get_env_value BESZEL_TEMP_ALERT_OVERWRITE)
-
-    [ -n "$alert_value" ] || alert_value="$DEFAULT_BESZEL_TEMP_ALERT_VALUE"
-    [ -n "$alert_min" ] || alert_min="$DEFAULT_BESZEL_TEMP_ALERT_MIN"
     [ -n "$alert_overwrite" ] || alert_overwrite="false"
 
-    alerts_payload=$(printf '%s' "$systems_response" | build_temperature_alert_payload "$alert_value" "$alert_min" "$alert_overwrite")
+    alert_value=$(get_env_value BESZEL_TEMP_ALERT_VALUE)
+    alert_min=$(get_env_value BESZEL_TEMP_ALERT_MIN)
+    [ -n "$alert_value" ] || alert_value="$DEFAULT_BESZEL_TEMP_ALERT_VALUE"
+    [ -n "$alert_min" ] || alert_min="$DEFAULT_BESZEL_TEMP_ALERT_MIN"
+    alerts_payload=$(printf '%s' "$systems_response" | build_alert_payload "Temperature" "$alert_value" "$alert_min" "$alert_overwrite")
     beszel_api_post_json "$auth_token" "/api/beszel/user-alerts" "$alerts_payload" >/dev/null
+
+    for alert_name in CPU Memory Disk; do
+        case "$alert_name" in
+            CPU) alert_value="$DEFAULT_BESZEL_CPU_ALERT_VALUE" ;;
+            Memory) alert_value="$DEFAULT_BESZEL_MEMORY_ALERT_VALUE" ;;
+            Disk) alert_value="$DEFAULT_BESZEL_DISK_ALERT_VALUE" ;;
+        esac
+        alerts_payload=$(printf '%s' "$systems_response" | build_alert_payload "$alert_name" "$alert_value" "$DEFAULT_BESZEL_RESOURCE_ALERT_MIN" "$alert_overwrite")
+        beszel_api_post_json "$auth_token" "/api/beszel/user-alerts" "$alerts_payload" >/dev/null
+    done
 }
 
 main() {

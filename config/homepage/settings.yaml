@@ -9,6 +9,14 @@
 title: PI homepage
 description: Personal self-hosted services dashboard
 
+# No `favicon:` here on purpose. It is a valid setting (a path under /app/public),
+# but homepage only applies it after hydration, from SettingsProvider - the browser
+# has already taken its icon from the server-rendered <link>s by then. Setting it
+# made the tab flicker: pi, then the browser's generic fallback once the swapped
+# SVG failed to render. compose.yaml instead overrides the stock /favicon-*.png,
+# /homepage.ico and /apple-touch-icon.png with the pi glyph, so it is correct in
+# the very first HTML and never replaced.
+
 layout:
   Favorites:
     header: false
@@ -16,7 +24,7 @@ layout:
     style: row
     icon: mdi-star
 
-  Medias:
+  Services:
     header: false
     tab: Services
     style: row
@@ -38,7 +46,13 @@ layout:
       style: row
       columns: 2
       icon: mdi-video
-
+    Tools:
+      style: row
+      columns: 2
+      AI:
+        header: false
+      Automation:
+        header: false
   Administration:
     header: false
     tab: Administration
