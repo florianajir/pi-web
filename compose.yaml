@@ -1399,7 +1399,9 @@ services:
       - "homepage.description=Self-hosted notifications"
       - "homepage.widget.type=ntfy"
       - "homepage.widget.url=http://pi-ntfy"
-      - "homepage.widget.topic=pi"
+      # The widget reads a single topic; monitoring is the one worth a glance on
+      # the dashboard. downloads and security are phone-only topics.
+      - "homepage.widget.topic=monitoring"
       - "homepage.widget.username={{HOMEPAGE_VAR_ADMIN_USER}}"
       - "homepage.widget.password={{HOMEPAGE_VAR_ADMIN_PASSWORD}}"
       - "traefik.enable=true"

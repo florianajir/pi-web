@@ -46,10 +46,11 @@ ROOT_GROUP = "pi-pcloud"
 # several hundred MB of SQLite for graphs nobody reads past a quarter.
 KEEP_DATA_PERIOD_DAYS = 90
 
-# ntfy notification tiers. Same topic ("pi") for all of them so the Homepage ntfy
-# widget keeps showing everything and no ntfy ACL change is needed; only the
-# priority differs, which is what drives the phone's do-not-disturb behaviour.
-# "up" is the recovery priority, "down" the outage one (1=min ... 5=urgent).
+# ntfy notification tiers. All four publish to the same topic (the "monitoring"
+# topic granted to the uptime-kuma ntfy user by scripts/ntfy-pre-start.sh); only
+# the priority differs, which is what drives the phone's do-not-disturb
+# behaviour. "up" is the recovery priority, "down" the outage one
+# (1=min ... 5=urgent).
 TIERS = {
     "critical": {"name": "ntfy-critical", "up": 3, "down": 5},
     "high": {"name": "ntfy-high", "up": 2, "down": 4},
@@ -890,7 +891,10 @@ def main():
         ntfy_password = ntfy_env.get("NTFY_UPTIME_KUMA_PASSWORD", "")
 
     ntfy_username = "uptime-kuma"
-    ntfy_topic = "pi"
+    # Topic comes from ntfy.env so it stays in sync with the ACL that
+    # scripts/ntfy-pre-start.sh grants this user; the tiers differ by priority,
+    # not by topic.
+    ntfy_topic = read_env_file(ntfy_env_file).get("NTFY_MONITORING_TOPIC") or "monitoring"
     ntfy_url = "http://pi-ntfy"
     kuma_url = env("UPTIME_KUMA_URL", "http://pi-uptime-kuma:3001")
 

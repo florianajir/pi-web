@@ -6,8 +6,15 @@ set -eu
 OUTPUT_FILE="${PROJECT_DIR}/config/ntfy/ntfy.env"
 OUTPUT_DIR="$(dirname "$OUTPUT_FILE")"
 NTFY_IMAGE="${NTFY_IMAGE:-binwiederhier/ntfy:v2.17.0}"
-NTFY_AUTO_TOPIC="pi"
+# One topic per reading mode, so each can be muted, scheduled or given its own
+# do-not-disturb rule on the phone independently. Publishers only ever get
+# access to the topic they belong to (see AUTH_ACCESS_VALUE below).
+#   monitoring - service health: uptime-kuma, beszel, dockhand, backrest
+#   downloads  - grabs and completed downloads: prowlarr, qbittorrent
+#   security   - authelia failed logins and regulation bans
+NTFY_MONITORING_TOPIC="monitoring"
 NTFY_DOWNLOADS_TOPIC="downloads"
+NTFY_SECURITY_TOPIC="security"
 
 hash_password() {
     _password="$1"
@@ -138,7 +145,7 @@ main() {
     mkdir -p "$OUTPUT_DIR"
 
     AUTH_USERS_VALUE="${USER_VALUE}:${USER_HASH}:admin,backrest:${BACKREST_HASH}:user,beszel:${BESZEL_HASH}:user,dockhand:${DOCKHAND_HASH}:user,uptime-kuma:${UPTIME_KUMA_HASH}:user,prowlarr:${PROWLARR_HASH}:user,qbittorrent:${QBITTORRENT_HASH}:user,authelia:${AUTHELIA_HASH}:user"
-    AUTH_ACCESS_VALUE="backrest:${NTFY_AUTO_TOPIC}:rw,beszel:${NTFY_AUTO_TOPIC}:rw,dockhand:${NTFY_AUTO_TOPIC}:rw,uptime-kuma:${NTFY_AUTO_TOPIC}:rw,prowlarr:${NTFY_DOWNLOADS_TOPIC}:rw,qbittorrent:${NTFY_DOWNLOADS_TOPIC}:rw,authelia:${NTFY_AUTO_TOPIC}:rw"
+    AUTH_ACCESS_VALUE="backrest:${NTFY_MONITORING_TOPIC}:rw,beszel:${NTFY_MONITORING_TOPIC}:rw,dockhand:${NTFY_MONITORING_TOPIC}:rw,uptime-kuma:${NTFY_MONITORING_TOPIC}:rw,prowlarr:${NTFY_DOWNLOADS_TOPIC}:rw,qbittorrent:${NTFY_DOWNLOADS_TOPIC}:rw,authelia:${NTFY_SECURITY_TOPIC}:rw"
     AUTH_TOKENS_VALUE="uptime-kuma:${NTFY_UPTIME_KUMA_TOKEN_VALUE}:Uptime Kuma notification token,qbittorrent:${NTFY_QBITTORRENT_TOKEN_VALUE}:qBittorrent download notifications"
 
     {
@@ -152,10 +159,15 @@ main() {
         printf 'NTFY_QBITTORRENT_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_QBITTORRENT_PASSWORD_VALUE")"
         printf 'NTFY_QBITTORRENT_TOKEN=%s\n' "$NTFY_QBITTORRENT_TOKEN_VALUE"
         printf 'NTFY_AUTHELIA_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_AUTHELIA_PASSWORD_VALUE")"
-        printf 'NTFY_AUTHELIA_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_AUTO_TOPIC")"
+        printf 'NTFY_MONITORING_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_MONITORING_TOPIC")"
         printf 'NTFY_DOWNLOADS_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_DOWNLOADS_TOPIC")"
-        printf 'NTFY_BESZEL_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_AUTO_TOPIC")"
-        printf 'NTFY_DOCKHAND_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_AUTO_TOPIC")"
+        printf 'NTFY_SECURITY_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_SECURITY_TOPIC")"
+        printf 'NTFY_AUTHELIA_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_SECURITY_TOPIC")"
+        printf 'NTFY_BESZEL_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_MONITORING_TOPIC")"
+        printf 'NTFY_DOCKHAND_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_MONITORING_TOPIC")"
+        # Read by scripts/backrest-post-hook.sh inside the backrest container,
+        # which loads this file through the service's env_file.
+        printf 'BACKREST_NTFY_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_MONITORING_TOPIC")"
         printf 'NTFY_AUTH_USERS=%s\n' "$(escape_compose_env_value "$AUTH_USERS_VALUE")"
         printf 'NTFY_AUTH_ACCESS=%s\n' "$(escape_compose_env_value "$AUTH_ACCESS_VALUE")"
         printf 'NTFY_AUTH_TOKENS=%s\n' "$(escape_compose_env_value "$AUTH_TOKENS_VALUE")"
