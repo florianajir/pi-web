@@ -292,7 +292,7 @@ decides the check interval, the retry budget and the ntfy priority:
 | **Personal Data** | immich, immich-ml, nextcloud, vaultwarden, kavita, backrest | 120s | `ntfy` (prio 3) | each monitor |
 | **Media & Downloads** | qbittorrent, stremio, comet, prowlarr, kapowarr, flaresolverr, route qbittorrent | 300s | `ntfy-low` (prio 2) | the group only |
 | **Tools & Observability** | homepage, beszel, beszel-agent, dockhand | 300s | `ntfy-low` (prio 2) | the group only |
-| **Automation & AI** | n8n, n8n-runners, open-webui | 300s | `ntfy-low` (prio 2) | the group only |
+| **Automation & AI** | n8n, n8n-runners, open-webui, llama-cpp | 300s | `ntfy-low` (prio 2) | the group only |
 
 `ntfy` sits in **Core** because it delivers every other alert. A container that
 is in `compose.yaml` but in no group above is monitored under

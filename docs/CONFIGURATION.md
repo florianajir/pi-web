@@ -241,6 +241,44 @@ To add a service:
 5. Update ALLOW_IP_RANGES if needed
 6. Run `make install` or `make restart`
 
+### Local AI Model (llama.cpp + Open WebUI)
+
+Open WebUI at `https://ai.<YOUR_DOMAIN>` talks to `llama-cpp`, which serves
+**Gemma 4 E2B** (Google's QAT Q4_0 build, text + image + audio in) over an
+OpenAI-compatible API on the internal `ai` network. There is no Ollama in the
+stack: llama.cpp is the engine Ollama wraps, and running it directly is faster
+on ARM CPU and one process instead of two.
+
+Measured on a Raspberry Pi 5 (16GB, 3 threads pinned to cores 1-3):
+~10 tok/s generation, ~40 tok/s prompt processing, ~3.7GB resident.
+
+**Where the weights live.** `scripts/llama-cpp-pre-start.sh` downloads them into
+the `llama_models` Docker volume (on the NVMe root, not `DATA_LOCATION`) before
+the stack starts, because the `ai` network is internal and the container cannot
+reach HuggingFace itself. It is idempotent - it only re-downloads a file whose
+size does not match the remote one. To re-check by hand:
+
+```bash
+sh scripts/llama-cpp-pre-start.sh
+```
+
+**Changing the model.** Edit the `DOWNLOADS` list in
+`config/llama-cpp/fetch-models.sh`, then point `LLAMA_ARG_MODEL` (and
+`LLAMA_ARG_MMPROJ` / `LLAMA_ARG_SPEC_DRAFT_MODEL`, or drop them) at the new
+files in `compose.yaml`. Prefer `Q4_0` quantisations: llama.cpp repacks those
+into the ARM i8mm/dotprod kernels the Pi 5 has. Anything much past ~4B
+parameters will be too slow to chat with on CPU.
+
+**Tuning knobs** (all `environment:` entries on the `llama-cpp` service):
+
+| Variable | Default here | Notes |
+|----------|--------------|-------|
+| `LLAMA_ARG_CTX_SIZE` | `16384` | Context window. The model supports 128k; RAM and prompt-processing time do not. |
+| `LLAMA_ARG_THINK_BUDGET` | `512` | Thinking-token cap. `0` disables reasoning (fastest first token), `-1` lets it run unrestricted. |
+| `LLAMA_ARG_THREADS` | `3` | Matched to `cpuset: "1-3"`, leaving core 0 for Traefik and DNS. A 4th thread measured no faster. |
+| `LLAMA_ARG_SPEC_TYPE` | `draft-mtp` | Speculative decoding via Gemma 4's multi-token-prediction head; roughly doubles generation speed. Remove it and `LLAMA_ARG_SPEC_DRAFT_MODEL` to disable. |
+| `LLAMA_ARG_MMPROJ` | mmproj file | Vision/audio input. Removing it saves ~1GB of RAM and re-enables `--cache-reuse`. |
+
 ### Changing Passwords
 
 **LLDAP admin (the shared `PASSWORD` / SSO master credential) - after a leak:**

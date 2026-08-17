@@ -17,6 +17,7 @@ ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/ntfy-pre-start.sh
 ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/qbittorrent-pre-start.sh
 ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/prowlarr-pre-start.sh
 ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/kapowarr-pre-start.sh
+ExecStartPre=/bin/sh __PROJECT_PATH__/scripts/llama-cpp-pre-start.sh
 ExecStart=/usr/bin/docker compose up -d
 ExecStartPost=-/bin/bash __PROJECT_PATH__/scripts/headscale-init.sh
 ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/beszel-agent-bootstrap.sh
