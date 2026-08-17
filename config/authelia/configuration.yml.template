@@ -135,6 +135,7 @@ __OIDC_PRIVATE_KEY__
         - 'https://dockhand.__HOST_NAME__'
         - 'https://headscale.__HOST_NAME__'
         - 'https://ai.__HOST_NAME__'
+        - 'https://vault.__HOST_NAME__'
     clients:
       - client_id: nextcloud
         client_name: Nextcloud
@@ -280,6 +281,29 @@ __OIDC_PRIVATE_KEY__
           - code
         grant_types:
           - authorization_code
+        token_endpoint_auth_method: client_secret_basic
+        userinfo_signed_response_alg: none
+
+      - client_id: vaultwarden
+        client_name: Vaultwarden
+        client_secret: '{{ secret "/config/secrets/oidc_vaultwarden_secret_hash" }}'
+        public: false
+        authorization_policy: one_factor
+        consent_mode: implicit
+        # Vaultwarden derives this callback from its own DOMAIN setting; it is not
+        # configurable, so it must match https://vault.__HOST_NAME__ exactly.
+        redirect_uris:
+          - 'https://vault.__HOST_NAME__/identity/connect/oidc-signin'
+        scopes:
+          - openid
+          - profile
+          - email
+          - offline_access
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+          - refresh_token
         token_endpoint_auth_method: client_secret_basic
         userinfo_signed_response_alg: none
 

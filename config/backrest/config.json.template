@@ -85,6 +85,13 @@
           }
         },
         {
+          "conditions": ["CONDITION_SNAPSHOT_START"],
+          "onError": "ON_ERROR_IGNORE",
+          "actionCommand": {
+            "command": "/bin/sh /hooks/db-backup.sh vaultwarden"
+          }
+        },
+        {
           "conditions": ["CONDITION_ANY_ERROR"],
           "onError": "ON_ERROR_IGNORE",
           "actionCommand": {

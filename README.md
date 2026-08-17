@@ -20,7 +20,7 @@ If you're deciding between approaches, here's the short version:
 
 | Category | Services |
 |----------|----------|
-| **Cloud & Storage** | Nextcloud, Immich, n8n, Ntfy |
+| **Cloud & Storage** | Nextcloud, Immich, n8n, Ntfy, Vaultwarden (Bitwarden-compatible password manager) |
 | **Network & Security** | Traefik (reverse proxy), Tailscale/Headscale (VPN), Authelia (SSO), LLDAP (user directory) |
 | **DNS & Filtering** | Pi-hole (ad-blocking), Unbound (recursive DNS) |
 | **Download** | qBittorrent (torrent client), Prowlarr (indexer manager), Kapowarr (comics manager), FlareSolverr (Cloudflare solver), Gluetun (VPN kill-switch gateway) |

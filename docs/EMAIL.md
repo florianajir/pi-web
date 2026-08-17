@@ -143,6 +143,25 @@ These read SMTP settings directly from `.env` at startup — **no manual setup n
 - Alert triggers Ntfy topic
 - Ntfy sends email via `SMTP_HOST:SMTP_PORT`
 
+#### Vaultwarden
+
+**Purpose:** Emergency access (trusted contact) invites, grants and takeover
+notices; organisation and user invitations
+
+**Configuration:** Auto-configured from `.env`. Vaultwarden's own variable names
+match the shared ones, except `SMTP_SECURITY`, which is pinned to `starttls` for
+the default port 587 — switch it to `force_tls` if you move to port 465.
+
+**Example emails:**
+- "You have been invited to be an emergency contact"
+- "Emergency access has been granted"
+- "Emergency access takeover requested" (starts the waiting period)
+
+**Note:** Emergency access is useless without working SMTP — the whole flow is
+driven by these mails. Since `SSO_ONLY` is enabled, the contact must also be
+able to sign in through Authelia, so they need an LLDAP account: an invitation
+alone only creates a stub for them to claim.
+
 #### Beszel
 
 **Purpose:** Host monitoring alerts, threshold breaches, offline alerts

@@ -34,6 +34,10 @@ layout:
       style: row
       columns: 1
       icon: mdi-database
+    Security:
+      style: row
+      columns: 2
+      icon: mdi-shield-key
     Download:
       style: row
       columns: 1

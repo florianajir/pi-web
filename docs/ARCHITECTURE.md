@@ -23,6 +23,7 @@ flowchart LR
       Headplane[headplane]
       Backrest[backrest]
       Ntfy[ntfy]
+      Vaultwarden[vaultwarden]
       PiholeWeb[pihole web]
       Authelia[authelia]
       Lldap[lldap]
@@ -47,6 +48,7 @@ flowchart LR
   Traefik --> Headplane
   Traefik --> Backrest
   Traefik --> Ntfy
+  Traefik --> Vaultwarden
   Traefik --> PiholeWeb
   Traefik --> Authelia
   Traefik --> Lldap
@@ -59,6 +61,8 @@ flowchart LR
   Authelia --> Postgres
   Authelia --> Redis
   Authelia --> Lldap
+  Vaultwarden --> Postgres
+  Vaultwarden -->|"OIDC"| Authelia
   Backrest --> Nextcloud
   Backrest --> Immich
   Backrest --> Beszel
@@ -87,10 +91,11 @@ flowchart LR
 | **Headscale** | Self-hosted Tailscale control plane | VPN clients |
 | **Headplane** | Web UI for Headscale admin | Admins via Traefik + SSO + 2FA |
 | **Ntfy** | Push notifications | Other services, webhooks |
+| **Vaultwarden** | Bitwarden-compatible password manager | Bitwarden clients via Traefik, authenticating through Authelia (OIDC) |
 | **Pi-hole** | Ad blocking, local DNS resolution | LAN & VPN clients |
 | **Unbound** | Recursive DNS resolver | Pi-hole |
 | **Backrest** | Automated backups (restic) | S3 storage, scheduled jobs |
-| **PostgreSQL** | Database for Nextcloud, Immich, Authelia | App containers |
+| **PostgreSQL** | Database for Nextcloud, Immich, Authelia, Vaultwarden | App containers |
 | **Redis** | Session store, caching | App containers |
 | **Tailscale** | WireGuard VPN mesh agent | Your VPN devices |
 | **Gluetun** | VPN gateway (WireGuard/OpenVPN); owns the network namespace for qBittorrent | Internet |
