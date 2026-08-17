@@ -241,6 +241,99 @@ To add a service:
 5. Update ALLOW_IP_RANGES if needed
 6. Run `make install` or `make restart`
 
+### Local AI Model (llama.cpp + Open WebUI)
+
+Open WebUI at `https://ai.<YOUR_DOMAIN>` talks to `llama-cpp`, which serves
+**Gemma 4 E2B** (Google's QAT Q4_0 build, text + image + audio in) over an
+OpenAI-compatible API on the internal `ai` network. There is no Ollama in the
+stack: llama.cpp is the engine Ollama wraps, and running it directly is faster
+on ARM CPU and one process instead of two.
+
+Measured on a Raspberry Pi 5 (16GB, 3 threads pinned to cores 1-3):
+~10 tok/s generation, ~40 tok/s prompt processing, ~3.7GB resident. A short
+question answers in about 3 seconds end to end.
+
+**Latency comes from prompt size, not the model.** Three defaults exist purely
+because ~30 tok/s of prompt processing punishes anything verbose:
+
+- *Thinking is off* (`LLAMA_ARG_CHAT_TEMPLATE_KWARGS`). Gemma 4 otherwise spends
+  ~500 tokens reasoning before the first visible word - over a minute of empty
+  chat window for "how are you".
+- *One server slot* (`LLAMA_ARG_N_PARALLEL=1`). llama-server defaults to several
+  and runs them concurrently, so two requests each generated at ~5 tok/s instead
+  of one at ~10. Queueing is faster than sharing three threads.
+- *Open WebUI's built-in tools are off for this model*, along with title, tag,
+  follow-up and search-query generation. Built-in tools (time, memory, chats,
+  notes, knowledge, channels) inject ~5000 tokens of schemas into every message
+  sent from the browser - roughly three minutes of prompt processing before the
+  model starts. The other four are invisible extra LLM calls per message.
+  All are re-enablable in Admin Settings and in the model's own Capabilities.
+
+**Where the weights live.** `scripts/llama-cpp-pre-start.sh` downloads them into
+the `llama_models` Docker volume (on the NVMe root, not `DATA_LOCATION`) before
+the stack starts, because the `ai` network is internal and the container cannot
+reach HuggingFace itself. It is idempotent - it only re-downloads a file whose
+size does not match the remote one. To re-check by hand:
+
+```bash
+sh scripts/llama-cpp-pre-start.sh
+```
+
+**Why the connection is bootstrapped, not just configured.** `OPENAI_API_BASE_URL`
+and friends are Open WebUI *PersistentConfig* variables: they seed the database
+on first start and are ignored afterwards, so on an instance that already has
+connections the model simply never shows up in the picker.
+`scripts/open-webui-bootstrap.sh` (an `ExecStartPost` hook) appends
+`http://llama-cpp:8080/v1` to the stored connection list when it is missing,
+leaves any other connection you configured in the UI alone, and restarts
+open-webui only when it changed something. It also seeds the low-latency
+defaults above - once, guarded by a `pi-pcloud.local_ai_defaults` marker row, so
+anything you change afterwards in Admin Settings stays changed. Run it by hand
+after a database restore:
+
+```bash
+sh scripts/open-webui-bootstrap.sh
+```
+
+**French text-to-speech.** The read-aloud button goes through `piper`, built
+from `config/piper/` on top of [OHF-Voice/piper1-gpl](https://github.com/OHF-Voice/piper1-gpl).
+Upstream publishes no image and its HTTP server speaks its own protocol, so the
+image adds `config/piper/openai_api.py`, a small OpenAI-compatible facade
+(`/v1/audio/speech`, `/v1/audio/voices`, `/v1/audio/models`) - the shape Open
+WebUI's "OpenAI" TTS engine calls. Voices are baked into the image:
+
+| Voice | |
+|-------|---|
+| `fr_FR-siwis-medium` | French, female - the default |
+| `fr_FR-tom-medium` | French, male |
+| `fr_FR-upmc-medium` | French, female, different timbre |
+| `en_US-lessac-medium` | English, so English text is not read with a French phonemiser |
+
+Roughly five seconds of speech per second of CPU, ~215MB resident. Pick a voice
+per user in **Settings → Audio**; it overrides the default, and a request for a
+voice Piper does not have falls back rather than failing. To add voices, extend
+`VOICES` in `config/piper/Dockerfile` (the catalogue is
+[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices)) and rebuild
+with `docker compose build piper`. To go back to the browser's own voices, set
+the TTS engine to Web API in Admin Settings - nothing re-imposes Piper.
+
+**Changing the model.** Edit the `DOWNLOADS` list in
+`config/llama-cpp/fetch-models.sh`, then point `LLAMA_ARG_MODEL` (and
+`LLAMA_ARG_MMPROJ` / `LLAMA_ARG_SPEC_DRAFT_MODEL`, or drop them) at the new
+files in `compose.yaml`. Prefer `Q4_0` quantisations: llama.cpp repacks those
+into the ARM i8mm/dotprod kernels the Pi 5 has. Anything much past ~4B
+parameters will be too slow to chat with on CPU.
+
+**Tuning knobs** (all `environment:` entries on the `llama-cpp` service):
+
+| Variable | Default here | Notes |
+|----------|--------------|-------|
+| `LLAMA_ARG_CTX_SIZE` | `16384` | Context window. The model supports 128k; RAM and prompt-processing time do not. |
+| `LLAMA_ARG_THINK_BUDGET` | `512` | Thinking-token cap. `0` disables reasoning (fastest first token), `-1` lets it run unrestricted. |
+| `LLAMA_ARG_THREADS` | `3` | Matched to `cpuset: "1-3"`, leaving core 0 for Traefik and DNS. A 4th thread measured no faster. |
+| `LLAMA_ARG_SPEC_TYPE` | `draft-mtp` | Speculative decoding via Gemma 4's multi-token-prediction head; roughly doubles generation speed. Remove it and `LLAMA_ARG_SPEC_DRAFT_MODEL` to disable. |
+| `LLAMA_ARG_MMPROJ` | mmproj file | Vision/audio input. Removing it saves ~1GB of RAM and re-enables `--cache-reuse`. |
+
 ### Changing Passwords
 
 **LLDAP admin (the shared `PASSWORD` / SSO master credential) - after a leak:**

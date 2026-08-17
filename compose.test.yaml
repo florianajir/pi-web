@@ -47,6 +47,29 @@ services:
     # not resolve on GitHub Actions runners.
     profiles: [ci-excluded]
 
+  llama-cpp:
+    # Needs the 4.4GB of Gemma 4 weights that scripts/llama-cpp-pre-start.sh
+    # seeds into the llama_models volume, which CI does not run.
+    profiles: [ci-excluded]
+
+  piper:
+    # Builds an image that downloads ~180MB of voice models; nothing else in the
+    # stack depends on it being up.
+    profiles: [ci-excluded]
+
+  # --- open-webui: run without the excluded inference backend ---
+  open-webui:
+    # depends_on must be reset, not merged: compose would otherwise pull
+    # llama-cpp back in despite its profile.
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+    # Merged into the list from compose.yaml, so nothing else is lost. Without
+    # it open-webui blocks on an unreachable http://llama-cpp:8080/v1 whenever
+    # it builds a model list.
+    environment:
+      - ENABLE_OPENAI_API=false
+
   # --- nextcloud: replace host bind mounts with named volumes for CI ---
   # In CI the host directories (./data/nextcloud-config, ./data/nextcloud) do not
   # pre-exist, so Docker creates them as root:root.  Nextcloud runs as www-data

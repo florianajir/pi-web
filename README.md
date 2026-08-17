@@ -24,6 +24,7 @@ If you're deciding between approaches, here's the short version:
 | **Network & Security** | Traefik (reverse proxy), Tailscale/Headscale (VPN), Authelia (SSO), LLDAP (user directory) |
 | **DNS & Filtering** | Pi-hole (ad-blocking), Unbound (recursive DNS) |
 | **Download** | qBittorrent (torrent client), Prowlarr (indexer manager), Kapowarr (comics manager), FlareSolverr (Cloudflare solver), Gluetun (VPN kill-switch gateway) |
+| **AI** | Open WebUI (chat interface), llama.cpp (local Gemma 4 E2B inference, CPU-only), Piper (French text-to-speech) |
 | **Monitoring & Backup** | Beszel (monitoring), Backrest (restic backups), Dockhand (container management) |
 | **Infrastructure** | PostgreSQL, Redis, ddns-updater |
 
