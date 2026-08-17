@@ -14,7 +14,7 @@ AGENT_ENV_FILE="$AGENT_ENV_DIR/agent.env"
 MAX_RETRIES=90
 RETRY_INTERVAL=2
 HUB_URL_DOCKER="http://pi-beszel:8090"
-DEFAULT_BESZEL_NTFY_TOPIC="pi"
+DEFAULT_BESZEL_NTFY_TOPIC="monitoring"
 DEFAULT_BESZEL_TEMP_ALERT_VALUE="70"
 DEFAULT_BESZEL_TEMP_ALERT_MIN="5"
 DEFAULT_BESZEL_CPU_ALERT_VALUE="90"
@@ -194,7 +194,10 @@ for item in items:
     settings = item.get("settings") or {}
     webhooks = settings.get("webhooks") or []
 
-    # remove legacy/duplicate ntfy beszel webhooks targeting the same host/topic
+    # Drop every ntfy webhook this script owns (same host, beszel user) whatever
+    # its topic, so the configured topic stays authoritative: matching on the
+    # topic too would leave the previous one behind on a topic change, and beszel
+    # would keep publishing to a topic its ntfy ACL no longer grants.
     normalized = []
     for webhook in webhooks:
         parsed = urlparse(webhook)
@@ -202,7 +205,6 @@ for item in items:
             parsed.scheme == "ntfy"
             and (parsed.hostname or "") == (target.hostname or "")
             and (parsed.username or "") == "beszel"
-            and (parsed.path or "") == (target.path or "")
         )
         if not is_same_beszel_ntfy_target:
             normalized.append(webhook)

@@ -39,7 +39,7 @@ publish() {
     _message="$4"
     _password="$(read_env_value_from_file "$NTFY_ENV_FILE" NTFY_AUTHELIA_PASSWORD)"
     _topic="$(read_env_value_from_file "$NTFY_ENV_FILE" NTFY_AUTHELIA_TOPIC)"
-    [ -n "$_topic" ] || _topic="pi"
+    [ -n "$_topic" ] || _topic="security"
 
     if [ -z "$_password" ]; then
         log "WARNING: NTFY_AUTHELIA_PASSWORD missing from $NTFY_ENV_FILE; skipping notification"

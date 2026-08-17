@@ -12,7 +12,7 @@ DOCKHAND_CONTAINER="${DOCKHAND_CONTAINER:-pi-dockhand}"
 DOCKHAND_URL_DOCKER="${DOCKHAND_URL_DOCKER:-http://pi-dockhand:3000}"
 NTFY_ENV_FILE="${PROJECT_DIR}/config/ntfy/ntfy.env"
 DOCKHAND_NOTIFICATION_NAME="Dockhand ntfy"
-DOCKHAND_NTFY_DEFAULT_TOPIC="pi"
+DOCKHAND_NTFY_DEFAULT_TOPIC="monitoring"
 DOCKHAND_NTFY_EVENT_TYPES_JSON='["container_oom","container_unhealthy"]'
 
 ensure_authelia_dockhand_materials() {
