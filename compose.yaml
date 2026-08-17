@@ -1050,6 +1050,7 @@ services:
     depends_on:
       gluetun:
         condition: service_healthy
+        restart: true
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"

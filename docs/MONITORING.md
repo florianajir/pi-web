@@ -73,6 +73,15 @@ The bootstrap script (`scripts/beszel-agent-bootstrap.sh`) runs on first start a
 2. **Webhook** — Posts to Ntfy for push notifications
 3. **In-app** — Visible on Beszel dashboard
 
+### Default Ntfy alerts
+
+- **Uptime Kuma** notifies after three failed container checks and when the
+  service recovers. It also checks the wildcard TLS certificate daily.
+- **Dockhand** notifies only on container OOM and unhealthy healthchecks.
+- **Backrest** notifies only when a backup fails.
+- **Beszel** sends temperature (70°C), CPU (90%), memory (90%), and disk (85%)
+  alerts to ntfy after five minutes over the threshold.
+
 ### Configuration
 
 **Backup schedule:**
@@ -190,14 +199,8 @@ These are the exact event types configured for Dockhand alerts:
 
 | Event type | Meaning |
 |-----------|---------|
-| `container_started` | A container was started |
-| `container_stopped` | A container was stopped |
-| `container_restarted` | A container was restarted |
-| `container_exited` | A container exited (including kill/die events) |
 | `container_oom` | A container hit an out-of-memory condition |
 | `container_unhealthy` | Container healthcheck switched to unhealthy |
-| `container_healthy` | Container healthcheck switched back to healthy |
-| `image_pulled` | A container image was pulled |
 
 ### Quick checks
 

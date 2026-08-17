@@ -8,6 +8,7 @@ Uses direct Socket.IO calls for Uptime Kuma 2.x compatibility.
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import threading
@@ -55,6 +56,26 @@ def get_container_names_from_compose(project_dir):
             if match:
                 containers.append(match.group(1))
     return containers
+
+
+def get_host_name_from_traefik():
+    """Read the ntfy router host from Docker labels when systemd has no HOST_NAME."""
+    try:
+        result = subprocess.run(
+            [
+                "docker", "inspect", "pi-ntfy",
+                "--format", "{{index .Config.Labels \\\"traefik.http.routers.ntfy.rule\\\"}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+    match = re.search(r"Host\\(`ntfy\\.([^`]+)`\\)", result.stdout)
+    return match.group(1) if match else ""
 
 
 class UptimeKumaBootstrap:
@@ -260,8 +281,8 @@ class UptimeKumaBootstrap:
         log(f"Added notification '{config.get('name')}' (id={r.get('id')})")
         return r.get("id")
 
-    def ensure_ntfy_notification(self, ntfy_url, topic, ntfy_username, ntfy_password):
-        """Ensure ntfy notification exists with username/password auth. Returns its ID."""
+    def find_ntfy_notification(self, ntfy_url):
+        """Return the existing ntfy notification ID for the configured server."""
         for notif in self.notifications:
             config = notif.get("config", {})
             if isinstance(config, str):
@@ -272,6 +293,14 @@ class UptimeKumaBootstrap:
             if config.get("type") == "ntfy" and config.get("ntfyserverurl") == ntfy_url:
                 log(f"ntfy notification exists (id={notif['id']}, name={notif.get('name', config.get('name'))})")
                 return notif["id"]
+
+        return None
+
+    def ensure_ntfy_notification(self, ntfy_url, topic, ntfy_username, ntfy_password):
+        """Ensure ntfy notification exists with username/password auth. Returns its ID."""
+        notification_id = self.find_ntfy_notification(ntfy_url)
+        if notification_id:
+            return notification_id
 
         return self.add_notification({
             "name": "ntfy",
@@ -402,32 +431,65 @@ class UptimeKumaBootstrap:
         log(f"Added monitor '{display_name}' (id={r.get('monitorID')})")
         return r.get("monitorID")
 
+    def ensure_tls_monitor(self, host_name, notification_id, parent_id=None):
+        """Ensure the wildcard certificate is checked daily via a public HTTPS route."""
+        display_name = "TLS certificate"
+        if display_name in self.monitors:
+            return self.monitors[display_name].get("id")
+
+        monitor_data = {
+            "type": "http",
+            "name": display_name,
+            "url": f"https://ntfy.{host_name}",
+            "interval": 86400,
+            "retryInterval": 3600,
+            "maxretries": 1,
+            "accepted_statuscodes": ["200-299"],
+            "expiryNotification": True,
+            "notificationIDList": {str(notification_id): True} if notification_id else {},
+            "conditions": [],
+        }
+        if parent_id is not None:
+            monitor_data["parent"] = parent_id
+
+        r = self.add_monitor(monitor_data)
+        log(f"Added monitor '{display_name}' (id={r.get('monitorID')})")
+        return r.get("monitorID")
+
 
 def main():
     project_dir = env("PROJECT_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     env_file = os.path.join(project_dir, ".env")
     ntfy_env_file = os.path.join(project_dir, "config", "ntfy", "ntfy.env")
+    existing_only = env("UPTIME_KUMA_EXISTING_ONLY").lower() in ("1", "true", "yes", "on")
 
     log("=== Uptime Kuma Bootstrap ===")
 
-    if not os.path.isfile(env_file):
-        log(f"ERROR: .env not found at {env_file}")
-        sys.exit(1)
+    if existing_only:
+        # The running stack has built-in Kuma auth disabled. This mode is used to
+        # add monitors without reading any credentials from configuration files.
+        username = ""
+        password = ""
+        ntfy_password = ""
+    else:
+        if not os.path.isfile(env_file):
+            log(f"ERROR: .env not found at {env_file}")
+            sys.exit(1)
 
-    env_values = read_env_file(env_file)
-    ntfy_env = read_env_file(ntfy_env_file)
+        env_values = read_env_file(env_file)
+        ntfy_env = read_env_file(ntfy_env_file)
 
-    username = env_values.get("ADMIN_USER", "")
-    password = ntfy_env.get("UPTIME_KUMA_ADMIN_PASSWORD", "")
-    if not username:
-        log("ERROR: ADMIN_USER must be set in .env")
-        sys.exit(1)
-    if not password:
-        log("ERROR: UPTIME_KUMA_ADMIN_PASSWORD not found in ntfy.env; run ntfy-pre-start.sh first")
-        sys.exit(1)
+        username = env_values.get("ADMIN_USER", "")
+        password = ntfy_env.get("UPTIME_KUMA_ADMIN_PASSWORD", "")
+        if not username:
+            log("ERROR: ADMIN_USER must be set in .env")
+            sys.exit(1)
+        if not password:
+            log("ERROR: UPTIME_KUMA_ADMIN_PASSWORD not found in ntfy.env; run ntfy-pre-start.sh first")
+            sys.exit(1)
+        ntfy_password = ntfy_env.get("NTFY_UPTIME_KUMA_PASSWORD", "")
 
     ntfy_username = "uptime-kuma"
-    ntfy_password = ntfy_env.get("NTFY_UPTIME_KUMA_PASSWORD", "")
     ntfy_topic = "pi"
     kuma_url = env("UPTIME_KUMA_URL", "http://pi-uptime-kuma:3001")
 
@@ -439,7 +501,8 @@ def main():
         api.setup_or_login(username, password)
 
         # Disable built-in auth (Authelia handles it via reverse proxy)
-        api.disable_auth(password)
+        if password:
+            api.disable_auth(password)
 
         # Ensure Docker host
         docker_host_id = api.ensure_docker_host()
@@ -452,7 +515,11 @@ def main():
                 ntfy_url, ntfy_topic, ntfy_username, ntfy_password,
             )
         else:
-            log("WARNING: NTFY_UPTIME_KUMA_PASSWORD not found; skipping ntfy notification setup")
+            notification_id = api.find_ntfy_notification(ntfy_url)
+            if notification_id:
+                log("Using existing ntfy notification")
+            else:
+                log("WARNING: NTFY_UPTIME_KUMA_PASSWORD not found; skipping ntfy notification setup")
 
         # Ensure "pi-pcloud" group monitor
         group_id = api.ensure_group_monitor("pi-pcloud", notification_id)
@@ -473,6 +540,16 @@ def main():
                 )
             except Exception as e:
                 log(f"WARNING: Failed to add monitor for {container_name}: {e}")
+
+        # Check the wildcard certificate independently of container health.
+        host_name = env("HOST_NAME") or get_host_name_from_traefik()
+        if host_name:
+            try:
+                api.ensure_tls_monitor(host_name, notification_id, parent_id=group_id)
+            except Exception as e:
+                log(f"WARNING: Failed to add TLS certificate monitor: {e}")
+        else:
+            log("WARNING: HOST_NAME is not set; skipping TLS certificate monitor")
 
         # Ensure a public status page exists for the Homepage 'uptimekuma' widget
         # (auth-free slug mode). Reuses the "pi-pcloud" group monitor, whose

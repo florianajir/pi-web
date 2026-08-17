@@ -85,13 +85,6 @@
           }
         },
         {
-          "conditions": ["CONDITION_SNAPSHOT_SUCCESS"],
-          "onError": "ON_ERROR_IGNORE",
-          "actionCommand": {
-            "command": "/bin/sh /hooks/backrest-post-hook.sh info {{ .ShellEscape .Summary }}"
-          }
-        },
-        {
           "conditions": ["CONDITION_ANY_ERROR"],
           "onError": "ON_ERROR_IGNORE",
           "actionCommand": {

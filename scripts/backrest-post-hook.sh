@@ -19,9 +19,8 @@ set_ntfy_metadata() {
       NTFY_TAGS="${BACKREST_NTFY_ERROR_TAGS:-backup_failed}"
       ;;
     info)
-      NTFY_TITLE="${BACKREST_NTFY_INFO_TITLE:-Backrest backup success}"
-      NTFY_PRIORITY="${BACKREST_NTFY_INFO_PRIORITY:-default}"
-      NTFY_TAGS="${BACKREST_NTFY_INFO_TAGS:-backup_finished}"
+      log "backup succeeded; notification disabled by default"
+      exit 0
       ;;
     *)
       log "invalid event kind '${BACKREST_EVENT_KIND}'. Valid values: info, errors"
