@@ -16,7 +16,7 @@ layout:
     style: row
     icon: mdi-star
 
-  Medias:
+  Services:
     header: false
     tab: Services
     style: row
@@ -38,7 +38,13 @@ layout:
       style: row
       columns: 2
       icon: mdi-video
-
+    Tools:
+      style: row
+      columns: 2
+      AI:
+        header: false
+      Automation:
+        header: false
   Administration:
     header: false
     tab: Administration
