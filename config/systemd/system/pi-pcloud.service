@@ -29,6 +29,7 @@ ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/prowlarr-bootstrap.sh
 ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/kapowarr-bootstrap.sh
 ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/uptime-kuma-bootstrap.sh
 ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/kavita-oidc-bootstrap.sh
+ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/open-webui-bootstrap.sh
 ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/homepage-widgets-bootstrap.sh
 ExecStop=/usr/bin/docker compose down --remove-orphans
 RemainAfterExit=true

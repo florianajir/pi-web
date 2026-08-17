@@ -262,6 +262,20 @@ size does not match the remote one. To re-check by hand:
 sh scripts/llama-cpp-pre-start.sh
 ```
 
+**Why the connection is bootstrapped, not just configured.** `OPENAI_API_BASE_URL`
+and friends are Open WebUI *PersistentConfig* variables: they seed the database
+on first start and are ignored afterwards, so on an instance that already has
+connections the model simply never shows up in the picker.
+`scripts/open-webui-bootstrap.sh` (an `ExecStartPost` hook) appends
+`http://llama-cpp:8080/v1` to the stored connection list when it is missing,
+leaves any other connection you configured in the UI alone, and restarts
+open-webui only when it changed something. Run it by hand after a database
+restore:
+
+```bash
+sh scripts/open-webui-bootstrap.sh
+```
+
 **Changing the model.** Edit the `DOWNLOADS` list in
 `config/llama-cpp/fetch-models.sh`, then point `LLAMA_ARG_MODEL` (and
 `LLAMA_ARG_MMPROJ` / `LLAMA_ARG_SPEC_DRAFT_MODEL`, or drop them) at the new
