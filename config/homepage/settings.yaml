@@ -76,6 +76,10 @@ layout:
       style: row
       columns: 2
       icon: mdi-account-key
+    Security:
+      style: row
+      columns: 2
+      icon: mdi-shield-key
     Privacy:
       style: row
       columns: 2

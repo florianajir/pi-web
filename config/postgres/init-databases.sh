@@ -121,6 +121,28 @@ GRANT ALL ON SCHEMA public TO "open-webui";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "open-webui";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "open-webui";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO "open-webui";
+-- Create Vaultwarden database and user
+DO \$\$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vaultwarden') THEN
+		CREATE USER vaultwarden WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
+	ELSE
+		ALTER USER vaultwarden WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
+	END IF;
+END
+\$\$;
+SELECT 'CREATE DATABASE vaultwarden'
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'vaultwarden')
+\gexec
+GRANT ALL PRIVILEGES ON DATABASE vaultwarden TO vaultwarden;
+ALTER DATABASE vaultwarden OWNER TO vaultwarden;
+
+-- Set proper permissions for Vaultwarden user on Vaultwarden DB
+\connect vaultwarden
+GRANT ALL ON SCHEMA public TO vaultwarden;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO vaultwarden;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO vaultwarden;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO vaultwarden;
 EOF
 
 # Execute the SQL file

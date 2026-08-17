@@ -169,16 +169,37 @@ The `authelia` forward-auth middleware is configured with `authRequestHeaders=Ac
 | qBittorrent | ✓ | ✓ | — | — | LAN-only + SSO |
 | Headplane | ✓ | ✓ | — | ✓ | LAN-only + SSO + OIDC + admin + 2FA |
 | Dockhand | ✓ | — | — | ✓ | LAN-only + OIDC + admin + 2FA |
-| Vaultwarden | ✓ | — | — | — | LAN-only + its own Bitwarden-compatible accounts |
+| Vaultwarden | ✓ | — | — | ✓ | LAN-only + OIDC + master password |
 
 ## Vaultwarden account setup
 
-Vaultwarden is served at `https://vault.<YOUR_DOMAIN>` and stores its encrypted
-vault database and attachments in `${DATA_LOCATION}/vaultwarden`. Registration
-is enabled for the initial setup; after all intended accounts exist, set
-`SIGNUPS_ALLOWED` to `false` in `compose.yaml` and restart the stack. Do not put
-Authelia forward-auth in front of it: the Bitwarden browser extension and mobile
-clients authenticate directly with Vaultwarden.
+Vaultwarden is served at `https://vault.<YOUR_DOMAIN>`. Its data lives in the
+shared PostgreSQL instance (database and role `vaultwarden`, created by
+`config/postgres/init-databases.sh`), so it is dumped by
+`scripts/db-backup.sh vaultwarden` from a Backrest snapshot hook like every other
+database here. Only attachments, sends and the RSA signing key stay on disk in
+`${DATA_LOCATION}/vaultwarden`. It reaches PostgreSQL over its own internal
+`vault` network, which deliberately does not include LLDAP.
+
+**Accounts.** `SIGNUPS_ALLOWED` is `false`: the router sits behind the LAN
+allowlist only, so open registration would let anyone on the LAN or the tailnet
+create a vault. `INVITATIONS_ALLOWED` stays `true`, and invitations work with
+signups closed — invite users rather than reopening registration.
+
+**SSO.** Authentication is federated to Authelia over OIDC (client `vaultwarden`,
+callback `https://vault.<YOUR_DOMAIN>/identity/connect/oidc-signin`, which
+Vaultwarden derives from `DOMAIN` and is not configurable). Two caveats:
+
+- A **master password is still required.** It is the vault's encryption key and
+  never reaches the identity provider, so OIDC centralises login and user
+  management but does not remove the second secret.
+- `SSO_ONLY` is `false`, so email + master password still works as a fallback
+  when Authelia, LLDAP or PostgreSQL is down. Set it to `true` to force every
+  login through Authelia.
+
+Do **not** stack Authelia forward-auth (`authelia@docker`) on this router: the
+Bitwarden browser extension and mobile clients cannot complete Authelia's
+interactive portal. OIDC is a different mechanism, which they do support.
 
 ## Access Control Policies
 

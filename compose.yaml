@@ -121,6 +121,11 @@ services:
       - OPEN_WEBUI_DB_PASSWORD=${PASSWORD}
       - OPEN_WEBUI_SQL_BACKUP_DIR=/userdata/open-webui/backups
       - OPEN_WEBUI_SQL_BACKUP_KEEP=7
+      - VAULTWARDEN_DB_NAME=vaultwarden
+      - VAULTWARDEN_DB_USER=vaultwarden
+      - VAULTWARDEN_DB_PASSWORD=${PASSWORD}
+      - VAULTWARDEN_SQL_BACKUP_DIR=/userdata/vaultwarden/backups
+      - VAULTWARDEN_SQL_BACKUP_KEEP=7
       - RESTIC_PACK_SIZE=32
       - GOMEMLIMIT=1200MiB
     env_file:
@@ -140,6 +145,8 @@ services:
       - beszel_data:/userdata/beszel:ro
       - ${DATA_LOCATION:-./data}/lldap:/userdata/lldap:ro
       - ${DATA_LOCATION:-./data}/vaultwarden:/userdata/vaultwarden:ro
+      # Writable so the db-backup.sh hook can drop its pg_dump here, like lldap's.
+      - ${DATA_LOCATION:-./data}/vaultwarden/backups:/userdata/vaultwarden/backups
       - ${DATA_LOCATION:-./data}/lldap/backups:/userdata/lldap/backups
       - ${DATA_LOCATION:-./data}/authelia-config:/userdata/authelia-config
       - ${DATA_LOCATION:-./data}/open-webui/backups:/userdata/open-webui/backups
@@ -1416,27 +1423,64 @@ services:
     container_name: pi-vaultwarden
     networks:
       - frontend
+      - vault
     expose:
       - 80
+    # So the SSO_AUTHORITY discovery call resolves auth.${HOST_NAME} to Traefik
+    # from inside the frontend network (same as nextcloud and kavita).
+    extra_hosts:
+      - "auth.${HOST_NAME:-pi.lan}:172.30.11.250"
+    # Vaultwarden only reads SSO_CLIENT_SECRET from the environment - it has no
+    # *_FILE variant - so the plaintext Authelia secret is exported from its
+    # mounted file before handing over to the image's own /start.sh. Same trick
+    # as open-webui above.
+    entrypoint: ["sh", "-c", "export SSO_CLIENT_SECRET=$(cat /run/secrets/oidc_vaultwarden_secret) && exec /start.sh"]
     environment:
       - DOMAIN=https://vault.${HOST_NAME:-pi.lan}
-      # Keep this enabled to create the initial account. Set to false once every
-      # intended user has registered or been invited.
-      - SIGNUPS_ALLOWED=true
+      - DATABASE_URL=postgresql://vaultwarden:${PASSWORD}@postgres/vaultwarden
+      # Closed by default: this router is only behind the LAN allowlist, so open
+      # registration would let anyone on the LAN or tailnet create a vault.
+      # Invitations still work with signups closed - invite from /admin or by
+      # organisation, rather than flipping this back on.
+      - SIGNUPS_ALLOWED=false
       - INVITATIONS_ALLOWED=true
+      # Authelia SSO. Note this does NOT remove the master password: that key
+      # encrypts the vault itself and never reaches the identity provider. What
+      # it buys is login and user management centralised on LLDAP/Authelia.
+      - SSO_ENABLED=true
+      - SSO_AUTHORITY=https://auth.${HOST_NAME:-pi.lan}
+      - SSO_CLIENT_ID=vaultwarden
+      - SSO_SCOPES=profile email offline_access
+      # Left permissive on purpose: email+master-password login stays available
+      # so the vault is still reachable when Authelia, LLDAP or postgres is down.
+      # Set to true to force every login through Authelia.
+      - SSO_ONLY=false
       - TZ=${TIMEZONE:-Europe/Paris}
     volumes:
       - ${DATA_LOCATION:-./data}/vaultwarden:/data
+      - ${DATA_LOCATION:-./data}/authelia-config/secrets/oidc_vaultwarden_secret.txt:/run/secrets/oidc_vaultwarden_secret:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # The image ships /healthcheck.sh, which curls /alive and already handles
+      # ROCKET_PORT and DOMAIN base paths; only the timings are aligned with the
+      # other services here.
+      <<: *healthcheck-light
+      test: ["CMD", "/healthcheck.sh"]
     labels:
       - "homepage.group=Security"
       - "homepage.name=Vaultwarden"
-      - "homepage.icon=bitwarden.png"
+      - "homepage.icon=vaultwarden.png"
       - "homepage.href=https://vault.${HOST_NAME:-pi.lan}"
       - "homepage.description=Bitwarden-compatible password manager"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      # Vaultwarden has its own accounts and browser/mobile clients, so it uses
-      # the LAN allowlist only rather than Authelia forward-auth.
+      # LAN allowlist only, deliberately no authelia@docker: forward-auth would
+      # break the Bitwarden browser extension and mobile clients, which cannot
+      # complete Authelia's interactive portal. Authentication is federated to
+      # Authelia through OIDC instead (see SSO_* above) - a different mechanism
+      # that those clients do support.
       - "traefik.http.routers.vaultwarden.rule=Host(`vault.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.vaultwarden.entrypoints=websecure"
       - "traefik.http.routers.vaultwarden.middlewares=lan@docker"
@@ -1629,6 +1673,7 @@ services:
       - nextcloud
       - auth
       - ai
+      - vault
     healthcheck:
       <<: *healthcheck-fast
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
@@ -1735,4 +1780,11 @@ networks:
   ai:
     driver: bridge
     name: ai
+    internal: true
+  # Vaultwarden <-> postgres only. A dedicated segment rather than reusing "auth"
+  # so the vault has no path to lldap, matching the one-network-per-database-
+  # consumer split already used for immich, nextcloud and ai.
+  vault:
+    driver: bridge
+    name: vault
     internal: true
