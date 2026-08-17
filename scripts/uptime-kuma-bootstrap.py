@@ -324,6 +324,15 @@ class UptimeKumaBootstrap:
             raise Exception(r.get("msg", "Failed to add monitor"))
         return r
 
+    def edit_monitor(self, monitor_data):
+        """Edit an existing monitor. Requires the full object, including its id.
+        Server signature: editMonitor(monitor, callback)
+        """
+        r = self._call("editMonitor", monitor_data)
+        if not r.get("ok"):
+            raise Exception(r.get("msg", "Failed to edit monitor"))
+        return r
+
     def ensure_group_monitor(self, group_name, notification_id):
         """Ensure a group monitor exists. Returns its ID."""
         if group_name in self.monitors:
@@ -432,15 +441,41 @@ class UptimeKumaBootstrap:
         return r.get("monitorID")
 
     def ensure_tls_monitor(self, host_name, notification_id, parent_id=None):
-        """Ensure the wildcard certificate is checked daily via a public HTTPS route."""
+        """Ensure the wildcard certificate is checked daily via a public HTTPS route.
+
+        The URL has to be a route that is NOT behind the lan@docker allowlist.
+        Kuma resolves the public hostname to the WAN address, so the request comes
+        back through the router with a source IP outside ALLOW_IP_RANGES; on a
+        LAN-restricted route Traefik answers 403 and the monitor can never be up.
+        auth is deliberately public (external SSO needs it) and serves the same
+        wildcard certificate, so it is the one host that works here.
+        """
         display_name = "TLS certificate"
-        if display_name in self.monitors:
-            return self.monitors[display_name].get("id")
+        # Must be set: an HTTP monitor left with timeout 0 aborts its own request via
+        # AbortSignal and is permanently down. Docker-type monitors ignore the field,
+        # which is why only this monitor ever needed it.
+        desired = {
+            "url": f"https://auth.{host_name}",
+            "timeout": 48,
+        }
+
+        existing = self.monitors.get(display_name)
+        if existing:
+            drifted = {k: v for k, v in desired.items() if existing.get(k) != v}
+            if not drifted:
+                return existing.get("id")
+            # Converge instead of skipping, so existing installs get repaired: earlier
+            # versions pointed this monitor at LAN-restricted ntfy and never set a
+            # timeout, either of which alone keeps it down.
+            updated = dict(existing)
+            updated.update(desired)
+            self.edit_monitor(updated)
+            log(f"Updated monitor '{display_name}': {', '.join(f'{k}={v}' for k, v in drifted.items())}")
+            return existing.get("id")
 
         monitor_data = {
             "type": "http",
             "name": display_name,
-            "url": f"https://ntfy.{host_name}",
             "interval": 86400,
             "retryInterval": 3600,
             "maxretries": 1,
@@ -448,6 +483,7 @@ class UptimeKumaBootstrap:
             "expiryNotification": True,
             "notificationIDList": {str(notification_id): True} if notification_id else {},
             "conditions": [],
+            **desired,
         }
         if parent_id is not None:
             monitor_data["parent"] = parent_id
