@@ -52,6 +52,11 @@ services:
     # seeds into the llama_models volume, which CI does not run.
     profiles: [ci-excluded]
 
+  piper:
+    # Builds an image that downloads ~180MB of voice models; nothing else in the
+    # stack depends on it being up.
+    profiles: [ci-excluded]
+
   # --- open-webui: run without the excluded inference backend ---
   open-webui:
     # depends_on must be reset, not merged: compose would otherwise pull

@@ -295,6 +295,28 @@ after a database restore:
 sh scripts/open-webui-bootstrap.sh
 ```
 
+**French text-to-speech.** The read-aloud button goes through `piper`, built
+from `config/piper/` on top of [OHF-Voice/piper1-gpl](https://github.com/OHF-Voice/piper1-gpl).
+Upstream publishes no image and its HTTP server speaks its own protocol, so the
+image adds `config/piper/openai_api.py`, a small OpenAI-compatible facade
+(`/v1/audio/speech`, `/v1/audio/voices`, `/v1/audio/models`) - the shape Open
+WebUI's "OpenAI" TTS engine calls. Voices are baked into the image:
+
+| Voice | |
+|-------|---|
+| `fr_FR-siwis-medium` | French, female - the default |
+| `fr_FR-tom-medium` | French, male |
+| `fr_FR-upmc-medium` | French, female, different timbre |
+| `en_US-lessac-medium` | English, so English text is not read with a French phonemiser |
+
+Roughly five seconds of speech per second of CPU, ~215MB resident. Pick a voice
+per user in **Settings → Audio**; it overrides the default, and a request for a
+voice Piper does not have falls back rather than failing. To add voices, extend
+`VOICES` in `config/piper/Dockerfile` (the catalogue is
+[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices)) and rebuild
+with `docker compose build piper`. To go back to the browser's own voices, set
+the TTS engine to Web API in Admin Settings - nothing re-imposes Piper.
+
 **Changing the model.** Edit the `DOWNLOADS` list in
 `config/llama-cpp/fetch-models.sh`, then point `LLAMA_ARG_MODEL` (and
 `LLAMA_ARG_MMPROJ` / `LLAMA_ARG_SPEC_DRAFT_MODEL`, or drop them) at the new

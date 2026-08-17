@@ -28,6 +28,13 @@ LLAMA_MODEL="gemma-4-e2b-it"
 DEFAULTS_MARKER="pi-pcloud.local_ai_defaults"
 # Bump when the defaults below change, to seed the new ones once.
 DEFAULTS_VERSION='"2"'
+# The text-to-speech settings carry their own marker, so bumping one group's
+# version never re-imposes the other's.
+TTS_MARKER="pi-pcloud.local_tts_defaults"
+TTS_VERSION='"1"'
+# Piper's OpenAI-compatible facade (config/piper), on the same ai network.
+TTS_BASE_URL="http://piper:8000/v1"
+TTS_VOICE="fr_FR-siwis-medium"
 
 compose() {
     (cd "$PROJECT_DIR" && docker compose "$@")
@@ -93,13 +100,31 @@ END
 SQL
 }
 
-# 't' once this version of the defaults has been seeded.
-defaults_applied() {
+# 't' once the given version of a settings group has been seeded.
+marker_present() {
     psql_owui -tAc \
         "SELECT EXISTS (
-             SELECT 1 FROM config
-             WHERE key = '$DEFAULTS_MARKER' AND value::text = '$DEFAULTS_VERSION'
+             SELECT 1 FROM config WHERE key = '$1' AND value::text = '$2'
          );" 2>/dev/null | tr -d ' \r\n'
+}
+
+# Point Open WebUI's read-aloud button at the local Piper container. Seeded, not
+# enforced: the engine has to be set somewhere for the feature to exist at all,
+# but this runs once, so switching back to the browser voice - or to another
+# voice - in Admin Settings sticks. Per-user voice choices in Settings > Audio
+# override the default below anyway, and Piper falls back to it when asked for a
+# voice it does not have.
+apply_tts_defaults() {
+    psql_owui -q <<SQL
+INSERT INTO config (key, value, updated_at) VALUES
+    ('audio.tts.engine',              '"openai"'::json,         extract(epoch from now())::bigint),
+    ('audio.tts.openai.api_base_url', '"$TTS_BASE_URL"'::json,  extract(epoch from now())::bigint),
+    ('audio.tts.model',               '"$TTS_VOICE"'::json,     extract(epoch from now())::bigint),
+    ('audio.tts.voice',               '"$TTS_VOICE"'::json,     extract(epoch from now())::bigint),
+    ('$TTS_MARKER',                   '$TTS_VERSION'::json,     extract(epoch from now())::bigint)
+ON CONFLICT (key) DO UPDATE
+    SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+SQL
 }
 
 # Open WebUI fires an extra, invisible LLM call per message for each of these:
@@ -180,12 +205,21 @@ main() {
             ;;
     esac
 
-    if [ "$(defaults_applied)" = "f" ]; then
+    if [ "$(marker_present "$DEFAULTS_MARKER" "$DEFAULTS_VERSION")" = "f" ]; then
         log "Seeding low-latency defaults (title/tags/follow-up generation off)"
         if apply_defaults; then
             changed=1
         else
             log "WARNING: failed to seed Open WebUI defaults"
+        fi
+    fi
+
+    if [ "$(marker_present "$TTS_MARKER" "$TTS_VERSION")" = "f" ]; then
+        log "Pointing text-to-speech at Piper ($TTS_VOICE)"
+        if apply_tts_defaults; then
+            changed=1
+        else
+            log "WARNING: failed to seed Open WebUI text-to-speech settings"
         fi
     fi
 

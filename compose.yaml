@@ -1700,6 +1700,39 @@ services:
     mem_limit: 6g
     oom_score_adj: *oom-score-deprioritize
 
+  # Text-to-speech for open-webui's read-aloud button, with real French voices.
+  #
+  # Built here because upstream (OHF-Voice/piper1-gpl) publishes no image, and
+  # its own HTTP server speaks its own protocol rather than the OpenAI shape
+  # open-webui calls - see config/piper/openai_api.py for that translation.
+  # Piper is tiny next to the LLM: ~215MB resident, and it synthesises about
+  # five seconds of speech per second of CPU on this Pi.
+  piper:
+    <<: *service-defaults
+    build:
+      context: ./config/piper
+      dockerfile: Dockerfile
+    image: pi-piper:local
+    container_name: pi-piper
+    networks:
+      - ai
+    expose:
+      - 8000
+    environment:
+      # Used when a request asks for a voice that does not exist here - which
+      # includes every OpenAI voice name open-webui defaults to (alloy, echo).
+      - PIPER_DEFAULT_VOICE=fr_FR-siwis-medium
+    healthcheck:
+      <<: *healthcheck-relaxed
+      # python:3.12-slim ships no curl or wget, but python is the point of it.
+      test: ["CMD", "python3", "-c", "import urllib.request as r; r.urlopen('http://localhost:8000/health').read()"]
+      start_period: 30s
+    deploy: *cpu-request-small
+    # Same three cores as llama-cpp, leaving core 0 to traefik and DNS.
+    cpuset: "1-3"
+    mem_limit: 512m
+    oom_score_adj: *oom-score-deprioritize
+
   open-webui:
     <<: *service-defaults
     image: ghcr.io/open-webui/open-webui:v0.11.0

@@ -148,7 +148,13 @@ GROUPS = [
         "retry": 120,
         "maxretries": 2,
         "resend": 0,
-        "containers": ["pi-n8n", "pi-n8n-runners", "pi-open-webui", "pi-llama-cpp"],
+        "containers": [
+            "pi-n8n",
+            "pi-n8n-runners",
+            "pi-open-webui",
+            "pi-llama-cpp",
+            "pi-piper",
+        ],
     },
     {
         "name": "External Chain",
