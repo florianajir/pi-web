@@ -1194,8 +1194,9 @@ services:
       - "traefik.http.services.comet.loadbalancer.server.port=8000"
     healthcheck:
       <<: *healthcheck-default
-      # Alpine (busybox) base — wget is available; curl is not.
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8000/health"]
+      # The image ships neither wget nor curl (it moved off its Alpine base and
+      # now carries only the application venv), so probe with that interpreter.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
       # First boot blocks ~2-3 min downloading anime mappings before the API serves.
       start_period: 180s
     deploy: *cpu-request-small
