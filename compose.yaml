@@ -1451,10 +1451,25 @@ services:
       - SSO_AUTHORITY=https://auth.${HOST_NAME:-pi.lan}
       - SSO_CLIENT_ID=vaultwarden
       - SSO_SCOPES=profile email offline_access
-      # Left permissive on purpose: email+master-password login stays available
-      # so the vault is still reachable when Authelia, LLDAP or postgres is down.
-      # Set to true to force every login through Authelia.
-      - SSO_ONLY=false
+      # Every login must go through Authelia: email+master-password auth is off.
+      # Consequence to keep in mind - anyone who needs to sign in, including an
+      # emergency-access contact, must exist in LLDAP. An invitation only creates
+      # a stub account; it is claimed by signing in through Authelia.
+      - SSO_ONLY=true
+      # Emergency access ("trusted contact") is on by default; set explicitly
+      # because it is a deliberate feature here, and it needs working SMTP below
+      # to deliver its invite, grant and takeover-notification mails.
+      - EMERGENCY_ACCESS_ALLOWED=true
+      # Shared SMTP relay from .env, same source as lldap and ntfy. Vaultwarden's
+      # own variable names happen to match the shared ones, except SMTP_SECURITY:
+      # starttls suits the default port 587; use force_tls on 465.
+      - SMTP_HOST=${SMTP_HOST:-localhost}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_SECURITY=starttls
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${EMAIL:-noreply@localhost}
+      - SMTP_FROM_NAME=Vaultwarden
       - TZ=${TIMEZONE:-Europe/Paris}
     volumes:
       - ${DATA_LOCATION:-./data}/vaultwarden:/data

@@ -183,23 +183,36 @@ database here. Only attachments, sends and the RSA signing key stay on disk in
 
 **Accounts.** `SIGNUPS_ALLOWED` is `false`: the router sits behind the LAN
 allowlist only, so open registration would let anyone on the LAN or the tailnet
-create a vault. `INVITATIONS_ALLOWED` stays `true`, and invitations work with
-signups closed — invite users rather than reopening registration.
+create a vault. `INVITATIONS_ALLOWED` stays `true`.
 
 **SSO.** Authentication is federated to Authelia over OIDC (client `vaultwarden`,
 callback `https://vault.<YOUR_DOMAIN>/identity/connect/oidc-signin`, which
-Vaultwarden derives from `DOMAIN` and is not configurable). Two caveats:
+Vaultwarden derives from `DOMAIN` and is not configurable). Two things follow:
 
 - A **master password is still required.** It is the vault's encryption key and
   never reaches the identity provider, so OIDC centralises login and user
   management but does not remove the second secret.
-- `SSO_ONLY` is `false`, so email + master password still works as a fallback
-  when Authelia, LLDAP or PostgreSQL is down. Set it to `true` to force every
-  login through Authelia.
+- `SSO_ONLY` is `true`, so email + master password is refused outright
+  (`SSO sign-in is required`). **Every account must be able to sign in through
+  Authelia, which means existing in LLDAP.** An invitation only creates a stub
+  account; it is claimed by signing in via Authelia. There is deliberately no
+  local fallback: if Authelia, LLDAP or PostgreSQL is down, nobody can log in.
+  Keep an offline export if that matters to you.
 
 Do **not** stack Authelia forward-auth (`authelia@docker`) on this router: the
 Bitwarden browser extension and mobile clients cannot complete Authelia's
 interactive portal. OIDC is a different mechanism, which they do support.
+
+**Emergency access (trusted contact).** `EMERGENCY_ACCESS_ALLOWED` is `true`, and
+the flow is entirely email-driven — invite, grant, and the takeover notice that
+starts the waiting period — so it depends on the shared SMTP relay being
+configured (see [EMAIL.md](EMAIL.md)). Because `SSO_ONLY` is on, a trusted
+contact also needs an LLDAP account to claim their invitation and complete a
+takeover. Someone outside your directory cannot serve as an emergency contact
+without either being added to LLDAP or `SSO_ONLY` being turned off.
+
+Note the `/admin` panel is disabled: no `ADMIN_TOKEN` is set. Manage users
+through LLDAP and organisation invitations rather than the admin UI.
 
 ## Access Control Policies
 
