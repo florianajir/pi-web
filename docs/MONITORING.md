@@ -75,8 +75,10 @@ The bootstrap script (`scripts/beszel-agent-bootstrap.sh`) runs on first start a
 
 ### Default Ntfy alerts
 
-- **Uptime Kuma** notifies after three failed container checks and when the
-  service recovers. It also checks the wildcard TLS certificate daily.
+- **Uptime Kuma** notifies with a priority that depends on the monitor's group,
+  from urgent (core infrastructure) down to low (media, tooling). It also checks
+  the public request path, DNS resolution, the VPN egress and the wildcard TLS
+  certificate. See [Uptime Kuma Monitoring](#uptime-kuma-monitoring).
 - **Dockhand** notifies only on container OOM and unhealthy healthchecks.
 - **Backrest** notifies only when a backup fails.
 - **Beszel** sends temperature (70°C), CPU (90%), memory (90%), and disk (85%)
@@ -246,14 +248,119 @@ sh scripts/ntfy-pre-start.sh && docker compose up -d ntfy
 
 ## Uptime Kuma Monitoring
 
-Optional service for website/API uptime monitoring. Works with status pages, webhooks, and notifications.
-
 **Access:** `https://uptime.<HOST_NAME>` (LAN-only + SSO)
 
-**Setup:**
-1. Log in with SSO
-2. Create monitors for services you want to track
-3. Configure notifications (SMTP, Slack, Discord, etc.)
+Everything below is created and kept in sync by `scripts/uptime-kuma-bootstrap.sh`,
+which runs on stack start and can be re-run at any time. It converges existing
+monitors instead of only creating missing ones, so changing the topology in
+`scripts/uptime-kuma-bootstrap.py` and re-running is the supported way to reshape
+the instance. Monitors paused by hand in the UI stay paused.
+
+### Monitor groups
+
+Monitors are grouped by blast radius rather than by theme, because the group
+decides the check interval, the retry budget and the ntfy priority:
+
+| Group | Contents | Interval | Alert tier | Alerts from |
+|-------|----------|----------|------------|-------------|
+| **Core** | traefik, authelia, lldap, postgres, redis, unbound, pihole, ddns-updater, ntfy, DNS resolution | 60s | `ntfy-critical` (prio 5) | each monitor |
+| **Remote Access** | headscale, headplane, tailscale, gluetun, VPN public IP | 60s | `ntfy-high` (prio 4) | each monitor |
+| **External Chain** | route checks, TLS certificate | 120s | `ntfy-high` (prio 4) | each monitor |
+| **Personal Data** | immich, immich-ml, nextcloud, vaultwarden, kavita, backrest | 120s | `ntfy` (prio 3) | each monitor |
+| **Media & Downloads** | qbittorrent, stremio, comet, prowlarr, kapowarr, flaresolverr, route qbittorrent | 300s | `ntfy-low` (prio 2) | the group only |
+| **Tools & Observability** | homepage, beszel, beszel-agent, dockhand | 300s | `ntfy-low` (prio 2) | the group only |
+| **Automation & AI** | n8n, n8n-runners, open-webui | 300s | `ntfy-low` (prio 2) | the group only |
+
+`ntfy` sits in **Core** because it delivers every other alert. A container that
+is in `compose.yaml` but in no group above is monitored under
+**Tools & Observability**.
+
+**Where the notification is attached** matters as much as the priority. A Kuma
+group is a worst-of-children aggregate whose down message lists the failing
+children. Groups marked *the group only* have silent children, so a gluetun
+outage sends one `Child monitors down: qbittorrent, prowlarr, ...` push instead
+of six. Groups marked *each monitor* alert individually, for the tiers where the
+exact failing component matters.
+
+The four ntfy notifications all publish to the **same `pi` topic** and differ
+only by priority, so the Homepage ntfy widget still sees everything and no ntfy
+ACL change is needed. Priority is what drives do-not-disturb on the phone.
+
+Ongoing outages are repeated after ~30 minutes (`resendInterval`) for the three
+alerting tiers; the low tier never repeats.
+
+### What is actually checked
+
+Docker monitors only prove a container is running. These monitors cover what
+they cannot see:
+
+| Monitor | Type | What it catches |
+|---------|------|-----------------|
+| `route <sub>` (auth, immich, nextcloud, vault, kavita, ntfy, homepage, qbittorrent) | HTTP | Traefik router dropped (404), middleware or backend broken (5xx) - the container can be perfectly healthy |
+| `dns resolution` | DNS | Pi-hole up, forwarding to Unbound, and Unbound still reaching the internet |
+| `vpn public ip` | JSON query | gluetun running *and* egress actually going through the tunnel |
+| `TLS certificate` | HTTP | Wildcard certificate expiry (daily) |
+
+Route checks are sent to the **Traefik container with a `Host` header**, not to
+the public URL: Kuma resolves the public name to the WAN address, so the request
+would hairpin through the router and hit the `lan@docker` allowlist with an
+outside source IP (403). Talking to the container keeps the source inside the
+frontend subnet while still exercising the real router rules. TLS verification
+is off for those (the certificate is issued for the public name), which is why
+certificate expiry has its own monitor.
+
+Authelia-protected routers answer `302` towards the SSO portal, which counts as
+healthy: those checks validate the routing chain, not the protected app itself -
+the app's docker monitor covers that.
+
+### Homepage widget
+
+The `uptimekuma` widget reads the public **`homepage` status page** and only
+reports how many of its monitors are up. The page lists the seven group
+monitors, so the widget reads `7 up` / `6 up 1 down` and tells you which side of
+the stack broke, instead of the single aggregate it showed before.
+
+### Retention
+
+`keepDataPeriodDays` is set to **90**. Pruning runs daily at 03:14 and also drops
+non-important heartbeats older than 24h (long-term history lives in the
+`stat_minutely` / `stat_hourly` / `stat_daily` tables, not in `heartbeat`).
+SQLite does not return freed pages to the filesystem (`auto_vacuum` is off), so
+the file plateaus rather than shrinking; to reclaim space once, use
+**Settings → Monitor History → Shrink Database** (a full `VACUUM`).
+
+**If `data/uptime-kuma/kuma.db` keeps growing, the prune is failing silently.**
+The job catches its own exceptions, so the only trace is
+`data/uptime-kuma/error.log`. A corrupt page anywhere in `heartbeat` makes every
+nightly run abort with `SQLITE_CORRUPT`, and the database then grows without
+bound:
+
+```bash
+docker exec pi-uptime-kuma grep -c SQLITE_CORRUPT /app/data/error.log
+docker exec pi-uptime-kuma sqlite3 /app/data/kuma.db "PRAGMA integrity_check(5);"
+```
+
+Never `VACUUM` a database that fails `integrity_check` - it rewrites the whole
+file and can fail halfway. Recover it instead, from a copy, with a **recent**
+sqlite (the 3.40 shipped in the Kuma image aborts `.recover` with
+`SQL logic error`; `alpine:latest` carries a working one):
+
+```bash
+docker stop pi-uptime-kuma          # clean shutdown, then copy kuma.db aside
+docker run --rm -v /path/to/backup:/bk alpine:latest sh -c \
+  'apk add --no-cache sqlite && cd /bk && \
+   sqlite3 kuma.db ".recover" | sqlite3 kuma-recovered.db && \
+   sqlite3 kuma-recovered.db "PRAGMA integrity_check;"'
+```
+
+Then prune + `VACUUM` the recovered copy and swap it in (`chown 1000:1000`, and
+delete the stale `kuma.db-wal` / `kuma.db-shm` alongside the old file).
+
+### Known blind spot
+
+Uptime Kuma cannot alert on its own host being down. A whole-Pi outage (power,
+kernel, disk) is invisible to it; an external heartbeat service would be needed
+to cover that.
 
 ## Dockhand Notifications (Ntfy)
 

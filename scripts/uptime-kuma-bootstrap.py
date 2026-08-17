@@ -1,6 +1,28 @@
 #!/usr/bin/env python3
 """Bootstrap Uptime Kuma 2.x: setup admin, disable built-in auth (Authelia handles it),
-configure ntfy notification, docker host, and container monitors.
+configure the ntfy notification tiers, docker host, and the monitor topology.
+
+Monitors are organised in seven groups under the "pi-pcloud" root, split by blast
+radius rather than by theme, because in Kuma the alerting granularity is per
+monitor: the group a monitor lives in decides its check interval, its retry
+budget and which ntfy priority it wakes you up with.
+
+Each group also declares where the notification is attached:
+
+  notify="children"  every monitor alerts on its own (precise message, used for
+                     the tiers where you want to know exactly what broke)
+  notify="group"     only the group monitor alerts, children stay silent. A Kuma
+                     group is a worst-of-children aggregate whose down message
+                     lists the failing children, so a gluetun outage sends one
+                     "Child monitors down: qbittorrent, prowlarr, ..." instead of
+                     six separate pushes.
+
+Beside the per-container docker monitors (which only prove the container runs),
+the topology adds end-to-end checks that exercise the actual request path:
+HTTP monitors sent to Traefik with a Host header, a DNS resolution check through
+Pi-hole, and the gluetun public IP. Those catch the failure modes a docker check
+is blind to - a dropped Traefik route answers 404 while the container is happily
+running.
 
 Uses direct Socket.IO calls for Uptime Kuma 2.x compatibility.
 """
@@ -8,6 +30,7 @@ Uses direct Socket.IO calls for Uptime Kuma 2.x compatibility.
 import json
 import os
 import re
+import socket as pysocket
 import subprocess
 import sys
 import time
@@ -16,6 +39,148 @@ import threading
 import socketio
 
 LOG_PREFIX = "[uptime-kuma-bootstrap]"
+
+ROOT_GROUP = "pi-pcloud"
+
+# Heartbeats are kept on the USB drive; a year of 60s beats for ~40 monitors is
+# several hundred MB of SQLite for graphs nobody reads past a quarter.
+KEEP_DATA_PERIOD_DAYS = 90
+
+# ntfy notification tiers. Same topic ("pi") for all of them so the Homepage ntfy
+# widget keeps showing everything and no ntfy ACL change is needed; only the
+# priority differs, which is what drives the phone's do-not-disturb behaviour.
+# "up" is the recovery priority, "down" the outage one (1=min ... 5=urgent).
+TIERS = {
+    "critical": {"name": "ntfy-critical", "up": 3, "down": 5},
+    "high": {"name": "ntfy-high", "up": 2, "down": 4},
+    "default": {"name": "ntfy", "up": 2, "down": 3},
+    "low": {"name": "ntfy-low", "up": 1, "down": 2},
+}
+
+# resend counts are expressed in checks, not minutes: resend * interval is the
+# delay before Kuma repeats an ongoing outage (0 = never repeat).
+GROUPS = [
+    {
+        "name": "Core",
+        "tier": "critical",
+        "notify": "children",
+        "interval": 60,
+        "retry": 30,
+        "maxretries": 3,
+        "resend": 30,  # 30 min
+        # ntfy sits here and not in Tools on purpose: it is the delivery channel
+        # for every other alert, so its own outage is a critical event.
+        "containers": [
+            "pi-traefik",
+            "pi-authelia",
+            "pi-lldap",
+            "pi-postgres",
+            "pi-redis",
+            "pi-unbound",
+            "pi-pihole",
+            "pi-ddns-updater",
+            "pi-ntfy",
+        ],
+    },
+    {
+        "name": "Remote Access",
+        "tier": "high",
+        "notify": "children",
+        "interval": 60,
+        "retry": 60,
+        "maxretries": 3,
+        "resend": 30,  # 30 min
+        "containers": ["pi-headscale", "pi-headplane", "pi-tailscale", "pi-gluetun"],
+    },
+    {
+        "name": "Personal Data",
+        "tier": "default",
+        "notify": "children",
+        "interval": 120,
+        "retry": 60,
+        "maxretries": 3,
+        "resend": 15,  # 30 min
+        "containers": [
+            "pi-immich",
+            "pi-immich-machine-learning",
+            "pi-nextcloud",
+            "pi-vaultwarden",
+            "pi-kavita",
+            "pi-backrest",
+        ],
+    },
+    {
+        "name": "Media & Downloads",
+        "tier": "low",
+        "notify": "group",
+        "interval": 300,
+        "retry": 120,
+        "maxretries": 2,
+        "resend": 0,
+        "containers": [
+            "pi-qbittorrent",
+            "pi-stremio",
+            "pi-comet",
+            "pi-prowlarr",
+            "pi-kapowarr",
+            "pi-flaresolverr",
+        ],
+    },
+    {
+        "name": "Tools & Observability",
+        "tier": "low",
+        "notify": "group",
+        "interval": 300,
+        "retry": 120,
+        "maxretries": 2,
+        "resend": 0,
+        "containers": ["pi-homepage", "pi-beszel", "pi-beszel-agent", "pi-dockhand"],
+        # Any container found in compose.yaml but absent from every list above
+        # lands here, so a newly added service is still monitored (quietly).
+        "fallback": True,
+    },
+    {
+        "name": "Automation & AI",
+        "tier": "low",
+        "notify": "group",
+        "interval": 300,
+        "retry": 120,
+        "maxretries": 2,
+        "resend": 0,
+        "containers": ["pi-n8n", "pi-n8n-runners", "pi-open-webui"],
+    },
+    {
+        "name": "External Chain",
+        "tier": "high",
+        "notify": "children",
+        "interval": 120,
+        "retry": 60,
+        "maxretries": 3,
+        "resend": 15,  # 30 min
+        "containers": [],
+    },
+]
+
+# Subdomain -> group for the end-to-end route checks. These go through Traefik
+# with a Host header, so they cover routing + TLS termination + (where enabled)
+# the Authelia forward-auth hop, none of which a docker monitor can see.
+ROUTES = [
+    ("auth", "External Chain"),
+    ("immich", "External Chain"),
+    ("nextcloud", "External Chain"),
+    ("vault", "External Chain"),
+    ("kavita", "External Chain"),
+    ("ntfy", "External Chain"),
+    ("homepage", "External Chain"),
+    # The gluetun-served routers are the ones that silently vanish when gluetun
+    # goes unhealthy; keep their check in the media group so it stays low noise.
+    ("qbittorrent", "Media & Downloads"),
+]
+
+# Traefik answers 302/307 on the Authelia-protected routers (redirect to the SSO
+# portal) and on apps that redirect to their own login page, so those count as
+# healthy. A dropped router answers 404 and a broken backend 5xx: both are down.
+ROUTE_STATUSCODES = ["200-299", "301", "302", "307", "308"]
 
 
 def log(msg):
@@ -76,6 +241,25 @@ def get_host_name_from_traefik():
 
     match = re.search(r"Host\\(`ntfy\\.([^`]+)`\\)", result.stdout)
     return match.group(1) if match else ""
+
+
+def resolve_container_ip(name):
+    """Resolve a container name to its IP on the network this script runs in.
+
+    Kuma's DNS monitor hands the resolver straight to Node's dns.setServers(),
+    which only accepts IP addresses - a container name throws. The address is
+    re-resolved and converged on every run, so a docker-assigned IP that changes
+    when the stack is recreated repairs itself at the next bootstrap.
+    """
+    try:
+        return pysocket.gethostbyname(name)
+    except OSError:
+        return ""
+
+
+def monitor_display_name(container_name):
+    """pi-nextcloud -> nextcloud (the naming convention already in the instance)."""
+    return container_name[3:] if container_name.startswith("pi-") else container_name
 
 
 class UptimeKumaBootstrap:
@@ -237,15 +421,56 @@ class UptimeKumaBootstrap:
         self.notifications = []
         self.monitors = {}
 
-    def disable_auth(self, password):
-        """Disable built-in auth (Authelia handles authentication).
-        Server signature: setSettings(data, currentPassword, callback)
-        """
-        r = self._call("setSettings", {"disableAuth": True}, password)
+    def get_settings(self):
+        """Return the general settings dict."""
+        r = self._call("getSettings")
         if isinstance(r, dict) and r.get("ok"):
-            log("Disabled built-in auth (Authelia handles it)")
-        else:
-            log(f"setSettings response: {r} (may already be disabled)")
+            return r.get("data", {}) or {}
+        log(f"WARNING: getSettings failed: {r}")
+        return {}
+
+    def apply_settings(self, patch, password):
+        """Merge `patch` into the general settings and save them.
+
+        setSettings must always be handed the *whole* settings object: the
+        server assigns `server.entryPage = data.entryPage` unconditionally, and
+        it logs every connected client out when `disableAuth` is missing while
+        auth is currently disabled. Sending only the changed keys would silently
+        break the entry page and kick browser sessions.
+        """
+        current = self.get_settings()
+        drift = {k: v for k, v in patch.items() if current.get(k) != v}
+        if not drift:
+            return False
+
+        data = dict(current)
+        data.update(patch)
+        r = self._call("setSettings", data, password or "")
+        if isinstance(r, dict) and r.get("ok"):
+            log(f"Settings updated: {', '.join(f'{k}={v}' for k, v in drift.items())}")
+            return True
+        log(f"WARNING: setSettings failed: {r}")
+        return False
+
+    def auth_already_disabled(self):
+        """True when the server auto-logged us in, which only happens with auth off.
+
+        The `disableAuth` row is stored with an empty settings type, so it never
+        comes back from getSettings("general") and cannot be compared there; the
+        autoLogin event is the reliable signal.
+        """
+        return self._auto_logged_in.is_set()
+
+    def disable_auth(self, password):
+        """Disable built-in auth (Authelia handles authentication)."""
+        if self.auth_already_disabled():
+            log("Built-in auth already disabled")
+            return
+        self.apply_settings({"disableAuth": True}, password)
+
+    def set_retention(self, days, password):
+        """Cap heartbeat retention so the SQLite file stays small on the USB drive."""
+        self.apply_settings({"keepDataPeriodDays": days}, password)
 
     def add_docker_host(self, name, docker_type="socket", docker_daemon="/var/run/docker.sock"):
         """Add a Docker host.
@@ -271,49 +496,73 @@ class UptimeKumaBootstrap:
 
         return self.add_docker_host("Local Docker")
 
-    def add_notification(self, config):
-        """Add a notification.
-        Server signature: addNotification(notification, notificationID, callback)
-        """
-        r = self._call("addNotification", config, None)
-        if not r.get("ok"):
-            raise Exception(r.get("msg", "Failed to add notification"))
-        log(f"Added notification '{config.get('name')}' (id={r.get('id')})")
-        return r.get("id")
+    @staticmethod
+    def _notification_config(notif):
+        config = notif.get("config", {})
+        if isinstance(config, str):
+            try:
+                config = json.loads(config)
+            except Exception:
+                config = {}
+        return config
 
-    def find_ntfy_notification(self, ntfy_url):
-        """Return the existing ntfy notification ID for the configured server."""
+    def find_notification(self, name, ntfy_url):
+        """Return an existing ntfy notification by name, for the configured server."""
         for notif in self.notifications:
-            config = notif.get("config", {})
-            if isinstance(config, str):
-                try:
-                    config = json.loads(config)
-                except Exception:
-                    config = {}
-            if config.get("type") == "ntfy" and config.get("ntfyserverurl") == ntfy_url:
-                log(f"ntfy notification exists (id={notif['id']}, name={notif.get('name', config.get('name'))})")
-                return notif["id"]
-
+            config = self._notification_config(notif)
+            if config.get("type") != "ntfy" or config.get("ntfyserverurl") != ntfy_url:
+                continue
+            if notif.get("name") == name or config.get("name") == name:
+                return notif
         return None
 
-    def ensure_ntfy_notification(self, ntfy_url, topic, ntfy_username, ntfy_password):
-        """Ensure ntfy notification exists with username/password auth. Returns its ID."""
-        notification_id = self.find_ntfy_notification(ntfy_url)
-        if notification_id:
-            return notification_id
+    def ensure_ntfy_tier(self, tier, ntfy_url, topic, ntfy_username, ntfy_password):
+        """Ensure the ntfy notification for one alert tier exists with the right priorities.
 
-        return self.add_notification({
-            "name": "ntfy",
+        Server signature: addNotification(notification, notificationID, callback);
+        passing an existing ID updates it in place.
+        """
+        name = tier["name"]
+        existing = self.find_notification(name, ntfy_url)
+        existing_config = self._notification_config(existing) if existing else {}
+
+        config = {
+            "name": name,
             "type": "ntfy",
-            "isDefault": True,
-            "applyExisting": True,
+            # Never default and never "apply existing": the whole point of the
+            # tiers is a hand-picked per-monitor mapping, and applyExisting would
+            # bind this notification to every monitor in the instance.
+            "isDefault": False,
+            "applyExisting": False,
             "ntfyserverurl": ntfy_url,
             "ntfytopic": topic,
             "ntfyAuthenticationMethod": "usernamePassword",
             "ntfyusername": ntfy_username,
-            "ntfypassword": ntfy_password,
-            "ntfyPriority": 3,
-        })
+            "ntfypassword": ntfy_password or existing_config.get("ntfypassword", ""),
+            "ntfyPriority": tier["up"],
+            "ntfyPriorityDown": tier["down"],
+            "ntfyUseTemplate": False,
+        }
+
+        if existing:
+            drifted = {
+                k: v for k, v in config.items()
+                if k not in ("applyExisting",) and existing_config.get(k) != v
+            }
+            if not drifted:
+                return existing["id"]
+            r = self._call("addNotification", config, existing["id"])
+            if not r.get("ok"):
+                raise Exception(r.get("msg", "Failed to update notification"))
+            log(f"Updated notification '{name}' (id={existing['id']}): "
+                f"{', '.join(k for k in drifted if 'password' not in k.lower())}")
+            return existing["id"]
+
+        r = self._call("addNotification", config, None)
+        if not r.get("ok"):
+            raise Exception(r.get("msg", "Failed to add notification"))
+        log(f"Added notification '{name}' (id={r.get('id')})")
+        return r.get("id")
 
     def add_monitor(self, monitor_data):
         """Add a monitor.
@@ -333,24 +582,200 @@ class UptimeKumaBootstrap:
             raise Exception(r.get("msg", "Failed to edit monitor"))
         return r
 
-    def ensure_group_monitor(self, group_name, notification_id):
-        """Ensure a group monitor exists. Returns its ID."""
-        if group_name in self.monitors:
-            return self.monitors[group_name].get("id")
+    @staticmethod
+    def _comparable(value):
+        """Normalise a field so server-side and desired representations compare equal."""
+        if isinstance(value, dict):
+            # notificationIDList: {"4": true} vs {4: True}
+            return {str(k) for k, v in value.items() if v}
+        if isinstance(value, list):
+            return [str(v) for v in value]
+        return value
 
-        r = self.add_monitor({
+    def ensure_monitor(self, name, desired, defaults=None):
+        """Create the monitor if it is missing, otherwise converge the desired fields.
+
+        Converging (rather than skipping known names) is what lets this script
+        re-shape an instance that was already bootstrapped: reparenting the flat
+        list into groups, retuning intervals, or moving a monitor to another
+        alert tier all happen through here. `active` is deliberately never part
+        of `desired`, and editMonitor does not touch it either, so monitors the
+        user paused by hand stay paused.
+        """
+        existing = self.monitors.get(name)
+        if existing:
+            drifted = {
+                k: v for k, v in desired.items()
+                if self._comparable(existing.get(k)) != self._comparable(v)
+            }
+            if not drifted:
+                return existing.get("id")
+            updated = dict(existing)
+            updated.update(desired)
+            self.edit_monitor(updated)
+            log(f"Updated monitor '{name}': {', '.join(sorted(drifted))}")
+            return existing.get("id")
+
+        payload = dict(defaults or {})
+        payload.update(desired)
+        payload["name"] = name
+        r = self.add_monitor(payload)
+        monitor_id = r.get("monitorID")
+        log(f"Added monitor '{name}' (id={monitor_id})")
+        return monitor_id
+
+    def ensure_group_monitor(self, name, parent_id, notification_id, resend=0):
+        """Ensure a group monitor exists, with the right parent and alert binding.
+
+        Group monitors are checked often and with no retry of their own: their
+        children have already burned their retry budget before flipping to DOWN,
+        and a child in retry reports PENDING, which keeps the group out of the
+        DOWN state until the failure is confirmed.
+        """
+        desired = {
             "type": "group",
-            "name": group_name,
+            "parent": parent_id,
             "interval": 60,
-            "retryInterval": 30,
-            "maxretries": 3,
-            "accepted_statuscodes": ["200-299"],
+            "retryInterval": 60,
+            "maxretries": 0,
+            "resendInterval": resend,
             "notificationIDList": {str(notification_id): True} if notification_id else {},
+        }
+        return self.ensure_monitor(name, desired, defaults={
+            "accepted_statuscodes": ["200-299"],
             "conditions": [],
         })
-        monitor_id = r.get("monitorID")
-        log(f"Added group '{group_name}' (id={monitor_id})")
-        return monitor_id
+
+    def ensure_container_monitor(self, container_name, docker_host_id, parent_id, group, notification_id):
+        """Ensure a Docker container monitor exists with its group's timing and tier."""
+        desired = {
+            "type": "docker",
+            "parent": parent_id,
+            "docker_container": container_name,
+            "docker_host": docker_host_id,
+            "interval": group["interval"],
+            "retryInterval": group["retry"],
+            "maxretries": group["maxretries"],
+            "resendInterval": group["resend"],
+            "notificationIDList": {str(notification_id): True} if notification_id else {},
+        }
+        return self.ensure_monitor(monitor_display_name(container_name), desired, defaults={
+            "accepted_statuscodes": ["200-299"],
+            "conditions": [],
+        })
+
+    def ensure_route_monitor(self, subdomain, host_name, parent_id, group, notification_id):
+        """Ensure an end-to-end HTTP check that goes through Traefik for one router.
+
+        The request is sent to the Traefik container with a `Host` header instead
+        of to the public URL: Kuma resolves `<sub>.<host_name>` to the WAN address,
+        so the request would hairpin through the router and reach Traefik with a
+        source IP outside ALLOW_IP_RANGES, which the lan@docker middleware answers
+        with 403. Talking to the container directly keeps the source inside the
+        frontend subnet (already covered by ALLOW_IP_RANGES) while still exercising
+        the real router rules, the middlewares and the backend service.
+
+        TLS verification is off because the certificate is issued for the public
+        name, not for `pi-traefik`; certificate expiry has its own daily monitor.
+        """
+        desired = {
+            "type": "http",
+            "parent": parent_id,
+            "url": "https://pi-traefik/",
+            "method": "GET",
+            "headers": json.dumps({"Host": f"{subdomain}.{host_name}"}),
+            "ignoreTls": True,
+            "maxredirects": 0,
+            "accepted_statuscodes": ROUTE_STATUSCODES,
+            # An HTTP monitor left at timeout 0 aborts its own request through
+            # AbortSignal and is permanently down.
+            "timeout": 30,
+            "expiryNotification": False,
+            "interval": group["interval"],
+            "retryInterval": group["retry"],
+            "maxretries": group["maxretries"],
+            "resendInterval": group["resend"],
+            "notificationIDList": {str(notification_id): True} if notification_id else {},
+        }
+        return self.ensure_monitor(f"route {subdomain}", desired, defaults={"conditions": []})
+
+    def ensure_tls_monitor(self, host_name, parent_id, group, notification_id):
+        """Ensure the wildcard certificate is checked daily via a public HTTPS route.
+
+        The URL has to be a route that is NOT behind the lan@docker allowlist.
+        Kuma resolves the public hostname to the WAN address, so the request comes
+        back through the router with a source IP outside ALLOW_IP_RANGES; on a
+        LAN-restricted route Traefik answers 403 and the monitor can never be up.
+        auth is deliberately public (external SSO needs it) and serves the same
+        wildcard certificate, so it is the one host that works here.
+        """
+        desired = {
+            "type": "http",
+            "parent": parent_id,
+            "url": f"https://auth.{host_name}",
+            "timeout": 48,
+            "interval": 86400,
+            "retryInterval": 3600,
+            "maxretries": 1,
+            "resendInterval": 0,
+            "expiryNotification": True,
+            "notificationIDList": {str(notification_id): True} if notification_id else {},
+        }
+        return self.ensure_monitor("TLS certificate", desired, defaults={
+            "accepted_statuscodes": ["200-299"],
+            "conditions": [],
+        })
+
+    def ensure_dns_monitor(self, resolver_ip, parent_id, group, notification_id):
+        """Ensure name resolution itself is checked, not just the DNS containers.
+
+        Querying an external name through Pi-hole exercises the whole chain in one
+        check: Pi-hole is up, it forwards to Unbound, and Unbound can still reach
+        the root servers. A container-level check on either sees none of that.
+        """
+        desired = {
+            "type": "dns",
+            "parent": parent_id,
+            "hostname": "github.com",
+            "dns_resolve_server": resolver_ip,
+            "dns_resolve_type": "A",
+            "port": 53,
+            "interval": group["interval"],
+            "retryInterval": group["retry"],
+            "maxretries": group["maxretries"],
+            "resendInterval": group["resend"],
+            "notificationIDList": {str(notification_id): True} if notification_id else {},
+        }
+        return self.ensure_monitor("dns resolution", desired, defaults={
+            "accepted_statuscodes": ["200-299"],
+            "conditions": [],
+        })
+
+    def ensure_vpn_monitor(self, parent_id, group, notification_id):
+        """Ensure the VPN tunnel is actually carrying traffic.
+
+        gluetun's control server answers with the public IP seen from inside the
+        tunnel; an empty value means the container is running but egress is not
+        going through the VPN. The unauthenticated read on this route is already
+        granted to the Homepage widget (config/gluetun/auth-config.toml).
+        """
+        desired = {
+            "type": "json-query",
+            "parent": parent_id,
+            "url": "http://pi-gluetun:8000/v1/publicip/ip",
+            "method": "GET",
+            "jsonPath": "public_ip",
+            "jsonPathOperator": "contains",
+            "expectedValue": ".",
+            "timeout": 30,
+            "accepted_statuscodes": ["200-299"],
+            "interval": group["interval"],
+            "retryInterval": group["retry"],
+            "maxretries": group["maxretries"],
+            "resendInterval": group["resend"],
+            "notificationIDList": {str(notification_id): True} if notification_id else {},
+        }
+        return self.ensure_monitor("vpn public ip", desired, defaults={"conditions": []})
 
     def status_page_exists(self, slug):
         """Check via the public (auth-free) HTTP API whether a status page slug exists."""
@@ -371,7 +796,10 @@ class UptimeKumaBootstrap:
         """Ensure a public status page exists containing the given monitor IDs.
 
         Used by the Homepage 'uptimekuma' widget, which has no full API and instead
-        reads a public status page by slug (no auth needed).
+        reads a public status page by slug (no auth needed). The widget only counts
+        up/down monitors on the page, so listing the seven group monitors - rather
+        than a single root - is what turns it from a binary indicator into
+        "6 up / 1 down" telling you which side of the stack is broken.
         Server signature: addStatusPage(title, slug, callback), then
         saveStatusPage(slug, config, imgDataUrl, publicGroupList, callback).
         """
@@ -412,85 +840,21 @@ class UptimeKumaBootstrap:
             raise Exception(r.get("msg", "Failed to save status page"))
         log(f"Status page '{slug}' updated with {len(monitor_ids)} monitor(s)")
 
-    def ensure_container_monitor(self, container_name, docker_host_id, notification_id, parent_id=None):
-        """Ensure a Docker container monitor exists."""
-        display_name = container_name
-        if display_name.startswith("pi-"):
-            display_name = display_name[3:]
 
-        if display_name in self.monitors:
-            return self.monitors[display_name].get("id")
+def build_container_map():
+    """container name -> group definition, for every explicitly mapped container."""
+    mapping = {}
+    for group in GROUPS:
+        for container in group["containers"]:
+            mapping[container] = group
+    return mapping
 
-        monitor_data = {
-            "type": "docker",
-            "name": display_name,
-            "docker_container": container_name,
-            "docker_host": docker_host_id,
-            "interval": 60,
-            "retryInterval": 30,
-            "maxretries": 3,
-            "accepted_statuscodes": ["200-299"],
-            "notificationIDList": {str(notification_id): True} if notification_id else {},
-            "conditions": [],
-        }
-        if parent_id is not None:
-            monitor_data["parent"] = parent_id
 
-        r = self.add_monitor(monitor_data)
-        log(f"Added monitor '{display_name}' (id={r.get('monitorID')})")
-        return r.get("monitorID")
-
-    def ensure_tls_monitor(self, host_name, notification_id, parent_id=None):
-        """Ensure the wildcard certificate is checked daily via a public HTTPS route.
-
-        The URL has to be a route that is NOT behind the lan@docker allowlist.
-        Kuma resolves the public hostname to the WAN address, so the request comes
-        back through the router with a source IP outside ALLOW_IP_RANGES; on a
-        LAN-restricted route Traefik answers 403 and the monitor can never be up.
-        auth is deliberately public (external SSO needs it) and serves the same
-        wildcard certificate, so it is the one host that works here.
-        """
-        display_name = "TLS certificate"
-        # Must be set: an HTTP monitor left with timeout 0 aborts its own request via
-        # AbortSignal and is permanently down. Docker-type monitors ignore the field,
-        # which is why only this monitor ever needed it.
-        desired = {
-            "url": f"https://auth.{host_name}",
-            "timeout": 48,
-        }
-
-        existing = self.monitors.get(display_name)
-        if existing:
-            drifted = {k: v for k, v in desired.items() if existing.get(k) != v}
-            if not drifted:
-                return existing.get("id")
-            # Converge instead of skipping, so existing installs get repaired: earlier
-            # versions pointed this monitor at LAN-restricted ntfy and never set a
-            # timeout, either of which alone keeps it down.
-            updated = dict(existing)
-            updated.update(desired)
-            self.edit_monitor(updated)
-            log(f"Updated monitor '{display_name}': {', '.join(f'{k}={v}' for k, v in drifted.items())}")
-            return existing.get("id")
-
-        monitor_data = {
-            "type": "http",
-            "name": display_name,
-            "interval": 86400,
-            "retryInterval": 3600,
-            "maxretries": 1,
-            "accepted_statuscodes": ["200-299"],
-            "expiryNotification": True,
-            "notificationIDList": {str(notification_id): True} if notification_id else {},
-            "conditions": [],
-            **desired,
-        }
-        if parent_id is not None:
-            monitor_data["parent"] = parent_id
-
-        r = self.add_monitor(monitor_data)
-        log(f"Added monitor '{display_name}' (id={r.get('monitorID')})")
-        return r.get("monitorID")
+def fallback_group():
+    for group in GROUPS:
+        if group.get("fallback"):
+            return group
+    return GROUPS[-1]
 
 
 def main():
@@ -527,6 +891,7 @@ def main():
 
     ntfy_username = "uptime-kuma"
     ntfy_topic = "pi"
+    ntfy_url = "http://pi-ntfy"
     kuma_url = env("UPTIME_KUMA_URL", "http://pi-uptime-kuma:3001")
 
     api = UptimeKumaBootstrap(kuma_url)
@@ -540,27 +905,40 @@ def main():
         if password:
             api.disable_auth(password)
 
+        api.set_retention(KEEP_DATA_PERIOD_DAYS, password)
+
         # Ensure Docker host
         docker_host_id = api.ensure_docker_host()
 
-        # Ensure ntfy notification (username/password auth)
-        notification_id = None
-        ntfy_url = "http://pi-ntfy"
-        if ntfy_password:
-            notification_id = api.ensure_ntfy_notification(
-                ntfy_url, ntfy_topic, ntfy_username, ntfy_password,
+        # Ensure one ntfy notification per alert tier. Without the password the
+        # tiers cannot be created from scratch, but existing ones are reused.
+        tier_ids = {}
+        for key, tier in TIERS.items():
+            try:
+                tier_ids[key] = api.ensure_ntfy_tier(
+                    tier, ntfy_url, ntfy_topic, ntfy_username, ntfy_password,
+                )
+            except Exception as e:
+                log(f"WARNING: Failed to ensure notification '{tier['name']}': {e}")
+                existing = api.find_notification(tier["name"], ntfy_url)
+                tier_ids[key] = existing["id"] if existing else None
+
+        # Root group. It carries no notification of its own: every child group
+        # already alerts, and a nested group would otherwise fire a third,
+        # redundant push for the same outage.
+        root_id = api.ensure_group_monitor(ROOT_GROUP, None, None)
+
+        # One group monitor per blast-radius tier
+        group_ids = {}
+        for group in GROUPS:
+            notification_id = tier_ids.get(group["tier"]) if group["notify"] == "group" else None
+            group_ids[group["name"]] = api.ensure_group_monitor(
+                group["name"], root_id, notification_id, resend=group["resend"],
             )
-        else:
-            notification_id = api.find_ntfy_notification(ntfy_url)
-            if notification_id:
-                log("Using existing ntfy notification")
-            else:
-                log("WARNING: NTFY_UPTIME_KUMA_PASSWORD not found; skipping ntfy notification setup")
 
-        # Ensure "pi-pcloud" group monitor
-        group_id = api.ensure_group_monitor("pi-pcloud", notification_id)
-
-        # Get container names from compose.yaml
+        # Container monitors, each in its group and on its group's alert tier
+        container_map = build_container_map()
+        default_group = fallback_group()
         container_names = get_container_names_from_compose(project_dir)
         if not container_names:
             log("WARNING: No container names found in compose.yaml")
@@ -570,28 +948,68 @@ def main():
         for container_name in container_names:
             if container_name == "pi-uptime-kuma":
                 continue
+            group = container_map.get(container_name)
+            if group is None:
+                group = default_group
+                log(f"NOTE: {container_name} is not mapped to a group, "
+                    f"falling back to '{group['name']}'")
+            notification_id = tier_ids.get(group["tier"]) if group["notify"] == "children" else None
             try:
                 api.ensure_container_monitor(
-                    container_name, docker_host_id, notification_id, parent_id=group_id,
+                    container_name, docker_host_id, group_ids[group["name"]], group, notification_id,
                 )
             except Exception as e:
-                log(f"WARNING: Failed to add monitor for {container_name}: {e}")
+                log(f"WARNING: Failed to ensure monitor for {container_name}: {e}")
 
-        # Check the wildcard certificate independently of container health.
+        groups_by_name = {group["name"]: group for group in GROUPS}
+
+        def tier_for(group):
+            return tier_ids.get(group["tier"]) if group["notify"] == "children" else None
+
+        # End-to-end checks: what a docker monitor cannot see
         host_name = env("HOST_NAME") or get_host_name_from_traefik()
         if host_name:
-            try:
-                api.ensure_tls_monitor(host_name, notification_id, parent_id=group_id)
-            except Exception as e:
-                log(f"WARNING: Failed to add TLS certificate monitor: {e}")
-        else:
-            log("WARNING: HOST_NAME is not set; skipping TLS certificate monitor")
+            for subdomain, group_name in ROUTES:
+                group = groups_by_name[group_name]
+                try:
+                    api.ensure_route_monitor(
+                        subdomain, host_name, group_ids[group_name], group, tier_for(group),
+                    )
+                except Exception as e:
+                    log(f"WARNING: Failed to ensure route monitor for {subdomain}: {e}")
 
-        # Ensure a public status page exists for the Homepage 'uptimekuma' widget
-        # (auth-free slug mode). Reuses the "pi-pcloud" group monitor, whose
-        # aggregate heartbeat already reflects the whole stack's health.
+            group = groups_by_name["External Chain"]
+            try:
+                api.ensure_tls_monitor(
+                    host_name, group_ids["External Chain"], group, tier_for(group),
+                )
+            except Exception as e:
+                log(f"WARNING: Failed to ensure TLS certificate monitor: {e}")
+        else:
+            log("WARNING: HOST_NAME is not set; skipping route and TLS certificate monitors")
+
+        resolver_ip = resolve_container_ip("pi-pihole")
+        if resolver_ip:
+            group = groups_by_name["Core"]
+            try:
+                api.ensure_dns_monitor(resolver_ip, group_ids["Core"], group, tier_for(group))
+            except Exception as e:
+                log(f"WARNING: Failed to ensure DNS monitor: {e}")
+        else:
+            log("WARNING: pi-pihole did not resolve; skipping the DNS resolution monitor")
+
+        group = groups_by_name["Remote Access"]
         try:
-            api.ensure_status_page("homepage", "Homepage Widget", "Services", [group_id])
+            api.ensure_vpn_monitor(group_ids["Remote Access"], group, tier_for(group))
+        except Exception as e:
+            log(f"WARNING: Failed to ensure VPN monitor: {e}")
+
+        # Public status page consumed by the Homepage 'uptimekuma' widget
+        try:
+            api.ensure_status_page(
+                "homepage", "Homepage Widget", "Services",
+                [group_ids[group["name"]] for group in GROUPS],
+            )
         except Exception as e:
             log(f"WARNING: Failed to ensure Homepage status page: {e}")
 
