@@ -938,6 +938,28 @@ services:
       - "nextcloud.${HOST_NAME:-pi.lan}:172.30.11.250"
     volumes:
       - ./config/homepage:/app/config
+      # Serves config/homepage/icons/ at /icons/, so `homepage.icon` labels can
+      # reference local images. Nothing in /app/config is reachable over HTTP -
+      # /api/config/<file> is hardcoded to custom.css and custom.js only - so
+      # /app/public is the only way to hand homepage its own image files.
+      - ./config/homepage/icons:/app/public/icons:ro
+      # The pi favicon, overriding homepage's stock icons. Done this way rather
+      # than with `favicon:` in settings.yaml because that setting is only applied
+      # after hydration, which left the tab flickering from pi to the browser's
+      # generic fallback (see the note in settings.yaml). These files are what the
+      # server-rendered HTML points at, so the glyph is right from the first byte
+      # and nothing replaces it. /favicon.ico is not referenced by that HTML but
+      # browsers request it as a last resort, so it is covered too.
+      # Regenerate all of them with scripts/homepage-favicon.sh after editing
+      # config/homepage/icons/pi.svg.
+      - ./config/homepage/icons/favicon.ico:/app/public/favicon.ico:ro
+      - ./config/homepage/icons/favicon-16x16.png:/app/public/favicon-16x16.png:ro
+      - ./config/homepage/icons/favicon-32x32.png:/app/public/favicon-32x32.png:ro
+      - ./config/homepage/icons/homepage.ico:/app/public/homepage.ico:ro
+      - ./config/homepage/icons/apple-touch-icon.png:/app/public/apple-touch-icon.png:ro
+      - ./config/homepage/icons/safari-pinned-tab.svg:/app/public/safari-pinned-tab.svg:ro
+      - ./config/homepage/icons/android-chrome-192x192.png:/app/public/android-chrome-192x192.png:ro
+      - ./config/homepage/icons/android-chrome-512x512.png:/app/public/android-chrome-512x512.png:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /sys:/sys:ro
     tmpfs:
@@ -1430,7 +1452,7 @@ services:
       - "homepage.name=LLDAP"
       - "homepage.href=https://lldap.${HOST_NAME:-pi.lan}"
       - "homepage.description=User directory management"
-      - "homepage.icon=LLDAP"
+      - "homepage.icon=lldap.png"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.lldap.rule=Host(`lldap.${HOST_NAME:-pi.lan}`)"
@@ -1538,6 +1560,7 @@ services:
       - "homepage.name=Open WebUI"
       - "homepage.href=https://ai.${HOST_NAME:-pi.lan}"
       - "homepage.description=Local AI chat"
+      - "homepage.icon=open-webui.png"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.open-webui.rule=Host(`ai.${HOST_NAME:-pi.lan}`)"
