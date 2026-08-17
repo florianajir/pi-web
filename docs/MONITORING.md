@@ -81,6 +81,8 @@ The bootstrap script (`scripts/beszel-agent-bootstrap.sh`) runs on first start a
 - **Backrest** notifies only when a backup fails.
 - **Beszel** sends temperature (70°C), CPU (90%), memory (90%), and disk (85%)
   alerts to ntfy after five minutes over the threshold.
+- **Authelia** notifies on every failed login attempt and on regulation bans
+  (see below).
 
 ### Configuration
 
@@ -168,6 +170,79 @@ beszel-agent:
 - Verify `config/ntfy/ntfy.env` has correct Ntfy topic
 - Check Authelia OIDC credentials for Beszel
 - Test manually: `curl -d "test alert" https://ntfy.<HOST_NAME>/your-topic`
+
+## Authelia failed-login alerts
+
+Authelia has no webhook or event notifier — its `notifier` is SMTP-only and used
+for user-facing mails (password reset, identity verification). Failed logins only
+surface in its log stream, so `scripts/authelia-ntfy-watch.sh` follows
+`docker logs -f --tail 0 pi-authelia` and publishes matching lines to ntfy.
+
+### Architecture
+
+```mermaid
+flowchart LR
+    Authelia["pi-authelia\n(container log)"] -->|docker logs -f| Watcher["authelia-ntfy-watch.sh\n(pi-pcloud-authelia-ntfy.service)"]
+    Watcher -->|"HTTP publish\n(ntfy user 'authelia')"| Ntfy["pi-ntfy\ntopic: pi"]
+```
+
+The watcher runs on the host as a systemd unit (no extra container), is started
+and stopped with the stack (`Wants=` on `pi-pcloud.service`, `PartOf=` on its
+side) and has `Restart=always`. `--tail 0` means a restart follows only new
+lines, so old attempts are never replayed as fresh alerts.
+
+### Notifications
+
+| Event | Log message matched | Title | Priority | Tags |
+|-------|---------------------|-------|----------|------|
+| Wrong password / failed 2FA | `Unsuccessful <method> authentication attempt by user '<user>'` | Authelia: failed login | default | `warning` |
+| Regulation ban | same, with `and they are banned until <time>` | Authelia: user banned | high | `lock,rotating_light` |
+| Attempt on a nonexistent username | `Error occurred getting details for user with username input '<user>' …` | Authelia: unknown user login attempt | default | `warning,detective` |
+
+Each message carries the username, client IP (`remote_ip`, which is the real
+client IP since Traefik forwards it), the auth method, the endpoint hit and the
+Authelia timestamp. Bans additionally carry the expiry — bans follow the
+`regulation` block in `config/authelia/configuration.yml.template` (3 retries
+within 2 minutes → 5 minute ban).
+
+Authelia logs the "Unsuccessful …" line with an empty username when the account
+does not exist, so those alerts come from the paired "username input" line
+instead — the alert always names the attempted username.
+
+### Noise control
+
+Identical `(event kind, user, IP)` events are collapsed inside a 60 second
+window, so a browser retry loop or a slow brute-force yields one alert plus the
+ban alert rather than a stream. Suppressed events are logged to the journal, not
+to ntfy. Override with `AUTHELIA_NTFY_DEDUPE_WINDOW` (seconds) in the unit:
+
+```bash
+sudo systemctl edit pi-pcloud-authelia-ntfy.service   # [Service] Environment=AUTHELIA_NTFY_DEDUPE_WINDOW=300
+```
+
+### Credentials
+
+`scripts/ntfy-pre-start.sh` provisions an `authelia` ntfy user with `rw` on the
+`pi` topic and stores its generated password in `config/ntfy/ntfy.env`
+(`NTFY_AUTHELIA_PASSWORD`, `NTFY_AUTHELIA_TOPIC`). The watcher reads that file at
+publish time — so `make rotate-password` is picked up without restarting it — and
+passes the credentials to curl on stdin, never on the command line, so they never
+appear in the host process table. ntfy is reached over the docker network by
+container IP (resolved per publish), not through Traefik.
+
+### Troubleshooting
+
+```bash
+sudo systemctl status pi-pcloud-authelia-ntfy.service
+sudo journalctl -u pi-pcloud-authelia-ntfy.service -f
+```
+
+A `WARNING: NTFY_AUTHELIA_PASSWORD missing` line means `ntfy-pre-start.sh` has
+not run since the feature was added — run it and recreate ntfy:
+
+```bash
+sh scripts/ntfy-pre-start.sh && docker compose up -d ntfy
+```
 
 ## Uptime Kuma Monitoring
 

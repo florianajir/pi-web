@@ -6,6 +6,7 @@ MAKEFLAGS += --no-print-directory
 
 PROJECT_PATH := $(shell pwd)
 UNIT         := pi-pcloud.service
+WATCH_UNIT   := pi-pcloud-authelia-ntfy.service
 COMPOSE      := docker compose
 
 ifeq (headscale-register,$(firstword $(MAKECMDGOALS)))
@@ -66,10 +67,12 @@ install: check-env
 	fi
 	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/pi-pcloud.service > /tmp/$(UNIT)
 	sudo cp /tmp/$(UNIT) /etc/systemd/system/
+	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/$(WATCH_UNIT) > /tmp/$(WATCH_UNIT)
+	sudo cp /tmp/$(WATCH_UNIT) /etc/systemd/system/
 	sudo cp config/systemd/system/nextcloud-cron.service /etc/systemd/system/
 	sudo cp config/systemd/system/nextcloud-cron.timer /etc/systemd/system/
 	sudo systemctl daemon-reload
-	sudo systemctl enable $(UNIT) nextcloud-cron.timer
+	sudo systemctl enable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer
 	@echo "✅ Systemd units installed"
 	@if [ "$(SKIP_START)" = "1" ]; then \
 		echo "⏭️  SKIP_START=1 set; not starting stack"; \
@@ -97,6 +100,7 @@ uninstall:
 	@read -p "Are you sure? Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
 	@echo ""
 	@echo "🛑 Stopping services..."
+	-sudo systemctl stop $(WATCH_UNIT) 2>/dev/null || true
 	-sudo systemctl stop $(UNIT) 2>/dev/null || true
 	@echo "🐳 Removing containers and volumes..."
 	-$(COMPOSE) down -v --remove-orphans 2>/dev/null || true
@@ -114,8 +118,9 @@ uninstall:
 	@echo "🌐 Removing local DNS overrides from /etc/hosts..."
 	-sudo sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts
 	@echo "🧹 Removing systemd units..."
-	-sudo systemctl disable $(UNIT) nextcloud-cron.timer 2>/dev/null || true
+	-sudo systemctl disable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer 2>/dev/null || true
 	-sudo rm -f /etc/systemd/system/$(UNIT)
+	-sudo rm -f /etc/systemd/system/$(WATCH_UNIT)
 	-sudo rm -f /etc/systemd/system/nextcloud-cron.service
 	-sudo rm -f /etc/systemd/system/nextcloud-cron.timer
 	-sudo systemctl daemon-reload
@@ -145,6 +150,7 @@ update:
 status:
 	@echo "📊 Status"
 	sudo systemctl status $(UNIT) --no-pager -l
+	-sudo systemctl status $(WATCH_UNIT) --no-pager -l
 
 logs:
 	@echo "📝 Logs (Ctrl+C to exit)"
