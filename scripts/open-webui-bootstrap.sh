@@ -20,6 +20,14 @@ set -eu
 
 # Service name and port from compose.yaml; both containers sit on the ai network.
 LLAMA_URL="http://llama-cpp:8080/v1"
+# Model alias llama-cpp serves (LLAMA_ARG_ALIAS in compose.yaml).
+LLAMA_MODEL="gemma-4-e2b-it"
+# Marker row recording that the defaults below were seeded, so they are applied
+# once and never re-imposed - anything changed afterwards in Admin Settings
+# stays changed.
+DEFAULTS_MARKER="pi-pcloud.local_ai_defaults"
+# Bump when the defaults below change, to seed the new ones once.
+DEFAULTS_VERSION='"2"'
 
 compose() {
     (cd "$PROJECT_DIR" && docker compose "$@")
@@ -85,19 +93,86 @@ END
 SQL
 }
 
+# 't' once this version of the defaults has been seeded.
+defaults_applied() {
+    psql_owui -tAc \
+        "SELECT EXISTS (
+             SELECT 1 FROM config
+             WHERE key = '$DEFAULTS_MARKER' AND value::text = '$DEFAULTS_VERSION'
+         );" 2>/dev/null | tr -d ' \r\n'
+}
+
+# Open WebUI fires an extra, invisible LLM call per message for each of these:
+# a chat title, chat tags, follow-up suggestions, a search query rewrite. Against
+# a cloud API that is free; against a Pi generating ~10 tok/s it multiplies the
+# wait for the answer the user is actually looking at, several times over, all
+# competing for the same three CPU threads. Off by default here.
+apply_defaults() {
+    psql_owui -q <<SQL
+INSERT INTO config (key, value, updated_at) VALUES
+    ('task.title.enable',                'false'::json,          extract(epoch from now())::bigint),
+    ('task.tags.enable',                 'false'::json,          extract(epoch from now())::bigint),
+    ('task.follow_up.enable',            'false'::json,          extract(epoch from now())::bigint),
+    ('task.query.search.enable',         'false'::json,          extract(epoch from now())::bigint),
+    ('task.query.retrieval.enable',      'false'::json,          extract(epoch from now())::bigint),
+    ('task.autocomplete.enable',         'false'::json,          extract(epoch from now())::bigint),
+    ('memories.background_review.enable','false'::json,          extract(epoch from now())::bigint),
+    ('task.model.default',               '"$LLAMA_MODEL"'::json, extract(epoch from now())::bigint),
+    ('$DEFAULTS_MARKER',                 '$DEFAULTS_VERSION'::json, extract(epoch from now())::bigint)
+ON CONFLICT (key) DO UPDATE
+    SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+SQL
+
+    # Built-in tools (time, memory, chats, notes, knowledge, channels) are on by
+    # default for every model, and their schemas are injected into the prompt of
+    # every message sent from the browser - about 5000 tokens, which is ~3
+    # minutes of prompt processing on this CPU before the model starts writing.
+    # A workspace entry for the model is the only place that default can be
+    # turned off, so create one. Attaching tools to a chat explicitly still
+    # works.
+    psql_owui -q <<SQL
+INSERT INTO model (id, user_id, base_model_id, name, meta, params, created_at, updated_at, is_active)
+SELECT
+    '$LLAMA_MODEL',
+    (SELECT id FROM "user" WHERE role = 'admin' ORDER BY created_at LIMIT 1),
+    NULL,
+    '$LLAMA_MODEL',
+    '{"capabilities": {"builtin_tools": false}}',
+    '{}',
+    extract(epoch from now())::bigint,
+    extract(epoch from now())::bigint,
+    true
+WHERE EXISTS (SELECT 1 FROM "user" WHERE role = 'admin')
+ON CONFLICT (id) DO UPDATE SET
+    meta = jsonb_set(
+        coalesce(model.meta::jsonb, '{}'::jsonb),
+        '{capabilities,builtin_tools}',
+        'false'::jsonb,
+        true
+    )::text,
+    updated_at = extract(epoch from now())::bigint;
+SQL
+}
+
 main() {
+    changed=0
+
     if ! container_is_running "pi-postgres"; then
-        log "postgres is not running; skipping Open WebUI connection bootstrap"
+        log "postgres is not running; skipping Open WebUI bootstrap"
         return 0
     fi
 
     wait_for_health_warning "pi-open-webui" 60 2 || true
 
     case "$(connection_present)" in
-        t)
-            return 0
-            ;;
+        t) ;;
         f)
+            log "Registering $LLAMA_URL as an Open WebUI connection"
+            if add_connection; then
+                changed=1
+            else
+                log "WARNING: failed to register the llama-cpp connection"
+            fi
             ;;
         *)
             log "WARNING: could not read Open WebUI config table; skipping"
@@ -105,13 +180,18 @@ main() {
             ;;
     esac
 
-    log "Registering $LLAMA_URL as an Open WebUI connection"
-    if ! add_connection; then
-        log "WARNING: failed to register the llama-cpp connection"
-        return 0
+    if [ "$(defaults_applied)" = "f" ]; then
+        log "Seeding low-latency defaults (title/tags/follow-up generation off)"
+        if apply_defaults; then
+            changed=1
+        else
+            log "WARNING: failed to seed Open WebUI defaults"
+        fi
     fi
 
-    log "Restarting open-webui to pick up the new connection"
+    [ "$changed" = "1" ] || return 0
+
+    log "Restarting open-webui to pick up the new configuration"
     compose restart open-webui >/dev/null 2>&1 || log "WARNING: could not restart open-webui"
     wait_for_health_warning "pi-open-webui" 90 2 || true
 }

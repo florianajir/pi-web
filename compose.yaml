@@ -1668,10 +1668,20 @@ services:
       # default, but --cache-reuse cannot be added on top - llama-server
       # disables it whenever a multimodal projector is loaded.
       #
-      # Gemma 4 thinks before answering. Unbounded that is minutes of a chat
-      # window sitting empty at 10 tok/s, so cap it: 0 disables thinking
-      # entirely, -1 restores the model default.
-      - LLAMA_ARG_THINK_BUDGET=512
+      # Thinking off. Gemma 4 reasons before answering, which on a 10 tok/s CPU
+      # meant ~500 tokens - a minute of an empty chat window - before the first
+      # word of the answer to "how are you"; with it off the same question
+      # answers in 25 tokens. This is the switch the chat template actually
+      # reads. Note --reasoning-budget 0 is NOT equivalent: it closes the
+      # thinking channel without telling the model, which then writes its
+      # reasoning into the visible answer instead. Delete this line to restore
+      # thinking, or send "chat_template_kwargs" per request to override it.
+      - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking":false}'
+      # One slot, so concurrent requests queue instead of splitting the three
+      # threads between them. llama-server otherwise defaults to several slots
+      # and runs them at once: two requests in parallel each generated at
+      # ~5 tok/s here rather than one at ~10, so everything felt twice as slow.
+      - LLAMA_ARG_N_PARALLEL=1
       # llama.cpp ships its own chat UI; open-webui is the one that is routed,
       # so keep the surface down to the API.
       - LLAMA_ARG_UI=false

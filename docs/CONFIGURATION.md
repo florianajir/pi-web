@@ -250,7 +250,24 @@ stack: llama.cpp is the engine Ollama wraps, and running it directly is faster
 on ARM CPU and one process instead of two.
 
 Measured on a Raspberry Pi 5 (16GB, 3 threads pinned to cores 1-3):
-~10 tok/s generation, ~40 tok/s prompt processing, ~3.7GB resident.
+~10 tok/s generation, ~40 tok/s prompt processing, ~3.7GB resident. A short
+question answers in about 3 seconds end to end.
+
+**Latency comes from prompt size, not the model.** Three defaults exist purely
+because ~30 tok/s of prompt processing punishes anything verbose:
+
+- *Thinking is off* (`LLAMA_ARG_CHAT_TEMPLATE_KWARGS`). Gemma 4 otherwise spends
+  ~500 tokens reasoning before the first visible word - over a minute of empty
+  chat window for "how are you".
+- *One server slot* (`LLAMA_ARG_N_PARALLEL=1`). llama-server defaults to several
+  and runs them concurrently, so two requests each generated at ~5 tok/s instead
+  of one at ~10. Queueing is faster than sharing three threads.
+- *Open WebUI's built-in tools are off for this model*, along with title, tag,
+  follow-up and search-query generation. Built-in tools (time, memory, chats,
+  notes, knowledge, channels) inject ~5000 tokens of schemas into every message
+  sent from the browser - roughly three minutes of prompt processing before the
+  model starts. The other four are invisible extra LLM calls per message.
+  All are re-enablable in Admin Settings and in the model's own Capabilities.
 
 **Where the weights live.** `scripts/llama-cpp-pre-start.sh` downloads them into
 the `llama_models` Docker volume (on the NVMe root, not `DATA_LOCATION`) before
@@ -269,8 +286,10 @@ connections the model simply never shows up in the picker.
 `scripts/open-webui-bootstrap.sh` (an `ExecStartPost` hook) appends
 `http://llama-cpp:8080/v1` to the stored connection list when it is missing,
 leaves any other connection you configured in the UI alone, and restarts
-open-webui only when it changed something. Run it by hand after a database
-restore:
+open-webui only when it changed something. It also seeds the low-latency
+defaults above - once, guarded by a `pi-pcloud.local_ai_defaults` marker row, so
+anything you change afterwards in Admin Settings stays changed. Run it by hand
+after a database restore:
 
 ```bash
 sh scripts/open-webui-bootstrap.sh
