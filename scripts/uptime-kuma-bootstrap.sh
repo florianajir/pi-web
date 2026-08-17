@@ -45,6 +45,12 @@ main() {
     # Pull image if needed (will be cached after first run)
     docker image inspect "$PYTHON_IMAGE" >/dev/null 2>&1 || docker pull "$PYTHON_IMAGE"
 
+    # Passed explicitly: the script's fallback shells out to `docker inspect`, which
+    # cannot work inside this container (no docker CLI, no socket mounted), so
+    # without this the TLS certificate monitor is silently skipped.
+    HOST_NAME="${HOST_NAME:-$(get_env_value HOST_NAME)}"
+    [ -n "$HOST_NAME" ] || log "WARNING: HOST_NAME not resolved; TLS certificate monitor will be skipped"
+
     # Run bootstrap Python script inside a temporary container on the frontend
     # network so it can reach pi-uptime-kuma:3001 and pi-ntfy by container name.
     docker run --rm \
@@ -56,6 +62,7 @@ main() {
         -v "$PROJECT_DIR/config/ntfy/ntfy.env:/project/config/ntfy/ntfy.env:ro" \
         -e PROJECT_DIR=/project \
         -e UPTIME_KUMA_URL=http://pi-uptime-kuma:3001 \
+        -e HOST_NAME="$HOST_NAME" \
         "$PYTHON_IMAGE" \
         sh -c 'pip install --quiet --disable-pip-version-check "python-socketio[client]" && python /bootstrap.py'
 }
