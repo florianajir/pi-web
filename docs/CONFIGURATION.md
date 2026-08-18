@@ -339,6 +339,92 @@ voice per user in **Settings → Audio**; it overrides the default. To add voice
 with `docker compose build piper`. To go back to the browser's own voices, set
 the TTS engine to Web API in Admin Settings - nothing re-imposes Piper.
 
+**Speech-to-text.** The microphone button goes through `parakeet`, built
+from `config/parakeet/` on top of NVIDIA's
+[Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), run
+as ONNX via [onnx-asr](https://github.com/istupakov/onnx-asr). As with Piper,
+upstream publishes no image - and onnx-asr has no HTTP server at all - so the
+image adds `config/parakeet/openai_api.py`, an OpenAI-compatible facade serving
+`POST /v1/audio/transcriptions`, the shape Open WebUI's "OpenAI" STT engine
+calls. The weights are baked into the image, so the container needs no network.
+
+It is wired on both paths, and needs nothing done by hand on either. A fresh
+install is configured by the `AUDIO_STT_*` variables on the open-webui service:
+those are PersistentConfig, read into the database on an instance's very first
+start, so `make install` comes up dictating with no second step. An instance
+whose database already exists ignores them by design, and there
+`scripts/open-webui-bootstrap.sh` writes the same values once (marker
+`pi-pcloud.local_stt_defaults`). The image itself is built by the `docker compose
+up -d` the systemd unit already runs, so the first boot after a checkout builds
+it and starts it like any other service. The setting is global rather than
+per-account, and the microphone is on for every role by default
+(`chat.stt` in `user.permissions`), so it works for every user the moment they
+sign in - no admin approval, no per-user configuration.
+
+Open WebUI ships its own faster-whisper, and that is what this replaces. It runs
+*inside* the open-webui container, which is capped at 1g and already sits near
+730MB, so the only model that fits is the default `base` - and `base` is the
+reason dictated French comes back wrong. Measured on 113 seconds of read French
+([FLEURS](https://huggingface.co/datasets/google/fleurs) `fr_fr`) across this
+Pi's three AI cores:
+
+| Engine | WER | Speed | Resident |
+|--------|-----|-------|----------|
+| faster-whisper `base` (Open WebUI's default) | 20.2% | 0.95x realtime | ~630MB |
+| faster-whisper `small` | 12.5% | 1.25x realtime | ~1.0GB |
+| faster-whisper `medium` | 4.9% | 3.99x realtime | ~2.7GB |
+| **Parakeet TDT v3, int8 (in use)** | **8.7%** | **0.17x realtime** | **~1.2GB** |
+| Parakeet TDT v3, fp32 | 4.5% | 0.30x realtime | ~2.3GB |
+
+Whisper decodes autoregressively - a token at a time, so accuracy is bought with
+wall-clock. Parakeet is a TDT model whose decoder is a small joint network
+stepped once per frame, which is why it reaches whisper-`medium` accuracy at a
+twentieth of the cost. In practice a dictated sentence comes back in well under
+a second, and it punctuates and capitalises.
+
+**It has no language setting at all**, and that is the other half of the fix.
+Parakeet was trained on 25 European languages and picks one acoustically, so
+dictating in English tomorrow needs no switch flipped - where whisper
+*auto-detects*, and its failure mode on a short French clip is to decide the
+audio is English and transliterate it. Open WebUI still sends a `language`
+field; the facade accepts and ignores it. The measurements here were taken on
+French because that is what gets dictated on this box, not because anything
+restricts it to French.
+
+For **more accuracy at twice the memory**, rebuild in fp32 - 4.5% WER, still
+three times faster than realtime, but ~2.3GB resident and a ~2.5GB model in the
+image:
+
+```bash
+docker compose build --build-arg PARAKEET_QUANTIZATION= parakeet
+```
+
+and set `PARAKEET_QUANTIZATION=` (empty) on the service in `compose.yaml`, so
+the weights loaded are the weights baked in. Raise `mem_limit` to `3584m` too.
+
+Long uploads are transcribed in 20-second windows. That is not only about
+memory - a single 120-second pass took the container past 2GB and got it killed -
+but about a cliff in the ONNX export, which stops transcribing part of a long
+call. Against 57 seconds of continuous French with a 163-word reference:
+
+| Window | Words returned | WER |
+|--------|----------------|-----|
+| 10s | 157 | 20.2% |
+| **20s** | **162** | **15.3%** |
+| 30s | 160 | 16.6% |
+| 60s | 75 | 73.0% |
+
+At 60 seconds half the audio simply goes missing, so the window has to stay well
+under it. Boundaries are then nudged onto the quietest nearby frame rather than
+falling wherever 20 seconds lands, because a window that opens mid-word is the
+one that comes back in the wrong language - on a deliberately badly-cut sample
+that alone took the transcript from 33.7% WER to 19.5%. Dictation reaches none of
+this: it is one window. Tune with `PARAKEET_CHUNK_SECONDS` if you feed it long
+recordings.
+
+To go back to Open WebUI's built-in whisper, set the STT engine to Whisper
+(Local) in **Admin Settings → Audio** - nothing re-imposes Parakeet.
+
 **Changing the model.** Edit the `DOWNLOADS` list in
 `config/llama-cpp/fetch-models.sh`, then point `LLAMA_ARG_MODEL` (and
 `LLAMA_ARG_MMPROJ` / `LLAMA_ARG_SPEC_DRAFT_MODEL`, or drop them) at the new
