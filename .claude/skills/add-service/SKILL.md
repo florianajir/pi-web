@@ -1,0 +1,108 @@
+---
+name: add-service
+description: Add a new service to the pi-pcloud docker compose stack, wiring the standard integrations (Traefik, Authelia OIDC, Postgres, Redis, ntfy, Uptime Kuma, Backrest, Homepage, systemd bootstrap). Use whenever a new container is added to compose.yaml, or when auditing an existing service for missing integrations.
+---
+
+# Adding a service to the stack
+
+Copy the closest existing service in `compose.yaml` as a template, then work through
+every integration below and skip only the ones that genuinely do not apply. Say
+explicitly which ones you skipped and why.
+
+## 1. Compose basics
+
+- `<<: *service-defaults` (journald logging + `restart: unless-stopped`)
+- pinned image tag (digest for anything security-sensitive), `container_name: pi-<service>`
+- `expose`, not `ports` — everything reaches the LAN through Traefik
+- healthcheck built on an `x-healthcheck-*` anchor; check which tools the image
+  actually ships first (curl/wget/bash/nc/python3 vary widely, and `CMD-SHELL`
+  runs `/bin/sh`, so `/dev/tcp` needs `["CMD", "bash", "-c", ...]`)
+- `deploy: *cpu-request-*`, `mem_limit`, `oom_score_adj` — the Pi has limited RAM
+- state under `${DATA_LOCATION:-./data}/<service>`
+- `depends_on` with `condition: service_healthy` only against services that
+  really do declare a healthcheck
+
+## 2. Traefik
+
+Join `frontend` and add:
+
+```yaml
+- "traefik.enable=true"
+- "traefik.docker.network=frontend"
+- "traefik.http.routers.<svc>.rule=Host(`<sub>.${HOST_NAME:-pi.lan}`)"
+- "traefik.http.routers.<svc>.entrypoints=websecure"
+- "traefik.http.routers.<svc>.middlewares=lan@docker,authelia@docker"
+- "traefik.http.routers.<svc>.tls=true"
+- "traefik.http.services.<svc>.loadbalancer.server.port=<port>"
+```
+
+Services with their own account system (Immich, Kavita) use `lan@docker` alone —
+do not stack forward-auth on top.
+
+## 3. OIDC (Authelia)
+
+If the service speaks OIDC/OAuth, wire it: see the "Adding OIDC (Authelia SSO) to a
+service" section in `AGENTS.md`. If it does not, keep `authelia@docker` forward-auth
+as the access control.
+
+## 4. Postgres
+
+Prefer the shared `postgres` over a per-service database container: add the database
+to `config/postgres/init-databases.sh` (idempotent `SELECT 'CREATE DATABASE ...'`
+pattern), join the matching internal network, and depend on `postgres` being healthy.
+
+## 5. Redis
+
+Reuse the shared `redis` (valkey) for cache/sessions instead of a new container.
+Point the service at host `redis` and make sure both containers share an internal
+network — add it to `redis`'s `networks` list if none matches.
+
+## 6. ntfy
+
+For services that can push notifications:
+
+```yaml
+networks: [..., ntfy]
+env_file:
+  - path: ./config/ntfy/ntfy.env
+    required: false
+extra_hosts:
+  - "ntfy.${HOST_NAME:-pi.lan}:172.30.11.1"
+```
+
+Send to the topic matching the alert class (monitoring / downloads / security).
+
+## 7. Uptime Kuma
+
+Add the container name to the right group in `GROUPS` in
+`scripts/uptime-kuma-bootstrap.py`; the group decides the alert tier and interval.
+
+## 8. Backrest
+
+If the service holds state worth keeping, mount its data read-only into backrest as
+`/userdata/<service>` in `compose.yaml`. Databases are dumped instead, via a
+`db-backup.sh` hook in `config/backrest/config.json.template`. Add large regenerable
+data (thumbnails, transcodes, model caches) to the plan `excludes`.
+
+## 9. Homepage
+
+Add `homepage.group` / `name` / `icon` / `href` / `description` labels, plus a
+`homepage.widget.*` block when a widget exists for the service — API keys are wired
+by `scripts/homepage-widgets-bootstrap.sh`.
+
+## 10. First-run setup
+
+Do it in `scripts/<service>-bootstrap.sh` (or `-pre-start.sh`), sourcing
+`scripts/lib.sh`, idempotent and safe on a fresh install, wired as
+`ExecStartPre`/`ExecStartPost` in `config/systemd/system/pi-pcloud.service`.
+No extra container just to run a script, and no new `.env` keys — reuse
+`ADMIN_USER` / `PASSWORD` and the per-service config files.
+
+## 11. Docs
+
+Update `README.md` and the relevant file in `docs/` when the service is user-visible.
+
+## 12. Verify
+
+`docker compose config -q`, then bring the service up and check it actually reaches
+healthy and answers through Traefik before declaring it done.
