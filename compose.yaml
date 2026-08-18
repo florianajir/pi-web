@@ -1632,7 +1632,7 @@ services:
   # instead of two, and speaks the OpenAI API open-webui already talks.
   llama-cpp:
     <<: *service-defaults
-    image: ghcr.io/ggml-org/llama.cpp:server-b10454
+    image: ghcr.io/ggml-org/llama.cpp:server-b10481
     container_name: pi-llama-cpp
     networks:
       - ai
