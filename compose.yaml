@@ -1757,6 +1757,72 @@ services:
     # measured). The headroom is what stops a long upload from being an OOM:
     # before openai_api.py windowed them, a 120s pass went past 2GB.
     mem_limit: 2560m
+
+  # Serves the host's status to the local model as an OpenAPI tool; see
+  # config/system-tools/app.py. / is mounted at /hostfs because statvfs cannot
+  # measure a filesystem this process cannot see.
+  system-tools:
+    <<: *service-defaults
+    build:
+      context: ./config/system-tools
+      dockerfile: Dockerfile
+    image: pi-system-tools:local
+    container_name: pi-system-tools
+    networks:
+      - ai
+      # `devices` reads headscale's node API, which only listens on frontend.
+      # Egress only: nothing here accepts a URL, so the reachable surface widens
+      # but the steerable one does not. Putting headscale on `ai` instead would
+      # hand it a leg into the network where open-webui runs admin-supplied Python.
+      - frontend
+    expose:
+      - 8000
+    environment:
+      # Without this the container is UTC and `uptime` is four hours off.
+      - TZ=${TIMEZONE:-Europe/Paris}
+      # Derived from the directory name, so it cannot be guessed in-container.
+      - COMPOSE_PROJECT=${COMPOSE_PROJECT_NAME:-pi-web}
+      # Backrest's own log, because the repos are remote and restic would want
+      # their password. Read off the bind mount below rather than through
+      # /hostfs: DATA_LOCATION is relative to the project directory by default,
+      # and a relative path means nothing against the host root.
+      - BACKREST_OPLOG=/run/backrest/oplog.sqlite
+      - HEADSCALE_URL=http://pi-headscale:8080
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      # rslave, or unplugging /mnt/usbdrive fails while this container runs.
+      - type: bind
+        source: /
+        target: /hostfs
+        read_only: true
+        bind:
+          propagation: rslave
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Backrest's data directory, holding the oplog `backups` reads. A directory
+      # rather than the file itself: the oplog does not exist before backrest's
+      # first run, and Docker would materialise a directory in its place.
+      - ${DATA_LOCATION:-./data}/backrest/data:/run/backrest:ro
+      # The key homepage's headscale widget already uses, rather than a second one
+      # to rotate. Headscale API keys expire, so both break together.
+      # scripts/headscale-pre-start.sh keeps the path a file; without it Docker
+      # would create a directory here on a fresh install, and the bootstrap that
+      # fills the key in could then never write it.
+      - ./config/homepage/secrets/headscale_api_key:/run/secrets/headscale_api_key:ro
+    healthcheck:
+      <<: *healthcheck-relaxed
+      # python:3.12-slim ships no curl or wget.
+      test: ["CMD", "python3", "-c", "import urllib.request as r; r.urlopen('http://localhost:8000/health').read()"]
+      start_period: 20s
+    labels:
+      - "homepage.group=AI"
+      - "homepage.name=System Tools"
+      - "homepage.description=Server status for the local LLM"
+      - "homepage.icon=mdi-tools"
+    # No cpuset: a call only runs while llama-cpp waits for its result.
+    deploy: *cpu-request-tiny
+    mem_limit: 192m
     oom_score_adj: *oom-score-deprioritize
 
   open-webui:
@@ -1776,6 +1842,9 @@ services:
       - ENABLE_LOGIN_FORM=false
       - CORS_ALLOW_ORIGIN=https://ai.${HOST_NAME:-pi.lan}
       - ENABLE_OAUTH_SIGNUP=true
+      # Authelia already gates ai.${HOST_NAME:-pi.lan}, so Open WebUI's own
+      # "pending" default would just park every SSO login until an admin looks.
+      - DEFAULT_USER_ROLE=user
       - OAUTH_CLIENT_ID=open-webui
       - OPENID_PROVIDER_URL=https://auth.${HOST_NAME:-pi.lan}/.well-known/openid-configuration
       - OAUTH_PROVIDER_NAME=Authelia
@@ -1816,6 +1885,12 @@ services:
       postgres:
         condition: service_healthy
       llama-cpp:
+        condition: service_started
+      # service_started, not service_healthy: system-tools is on the relaxed
+      # healthcheck (120s interval, no start_interval), so Docker's first probe
+      # lands at t=120s and the chat UI would wait for it on every boot - for a
+      # tool server that is only ever called mid-conversation.
+      system-tools:
         condition: service_started
     healthcheck:
       <<: *healthcheck-relaxed
