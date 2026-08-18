@@ -295,7 +295,27 @@ after a database restore:
 sh scripts/open-webui-bootstrap.sh
 ```
 
-**French text-to-speech.** The read-aloud button goes through `piper`, built
+**Language.** One `.env` variable, `DEFAULT_LANGUAGE`, sets the language of
+everything in the stack that has to choose one, as a BCP 47 tag. It defaults to
+`en-US`; this is the only place to change it:
+
+| It drives | How |
+|-----------|-----|
+| Open WebUI's interface | `DEFAULT_LOCALE`, for users who have not picked a language themselves |
+| Which Piper voice reads answers aloud | matched against the voices baked into the image |
+
+`fr-FR` and `en-US` are the two tags with voices shipped. Anything else still
+works - the interface has its own translations, and Piper picks the closest
+voice it has (`fr-BE` finds `fr_FR-siwis-medium`; `de-DE` warns in the log and
+uses English until you add a German voice to `VOICES` in
+`config/piper/Dockerfile`). To name a voice outright instead of matching the
+language, set `PIPER_DEFAULT_VOICE` on the service.
+
+Changing it later is one variable and a restart: the seeding markers carry the
+language, so `pi-pcloud.local_tts_defaults` moves from `2-en-US` to `2-fr-FR` and
+re-seeds once. A voice you then pick in Admin Settings stays picked.
+
+**Text-to-speech.** The read-aloud button goes through `piper`, built
 from `config/piper/` on top of [OHF-Voice/piper1-gpl](https://github.com/OHF-Voice/piper1-gpl).
 Upstream publishes no image and its HTTP server speaks its own protocol, so the
 image adds `config/piper/openai_api.py`, a small OpenAI-compatible facade
@@ -309,9 +329,11 @@ WebUI's "OpenAI" TTS engine calls. Voices are baked into the image:
 | `fr_FR-upmc-medium` | French, female, different timbre |
 | `en_US-lessac-medium` | English, so English text is not read with a French phonemiser |
 
-Roughly five seconds of speech per second of CPU, ~215MB resident. Pick a voice
-per user in **Settings → Audio**; it overrides the default, and a request for a
-voice Piper does not have falls back rather than failing. To add voices, extend
+Roughly five seconds of speech per second of CPU, ~215MB resident. The default
+voice is not named on the service - it is matched against `DEFAULT_LANGUAGE`
+above, because open-webui asks for OpenAI's own voice names (`alloy`, `echo`),
+none of which exist here, so the fallback *is* the voice in practice. Pick a
+voice per user in **Settings → Audio**; it overrides the default. To add voices, extend
 `VOICES` in `config/piper/Dockerfile` (the catalogue is
 [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices)) and rebuild
 with `docker compose build piper`. To go back to the browser's own voices, set

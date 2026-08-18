@@ -18,6 +18,14 @@ set -eu
 
 . "$(dirname "$0")/lib.sh"
 
+# The stack-wide language, as a BCP 47 tag - the same .env variable compose
+# passes to piper and open-webui. Read from the file rather than the environment
+# because this script writes to the database directly, and so never sees the
+# variables compose expands. Everything below that has to pick a language picks
+# this one.
+DEFAULT_LANGUAGE="$(get_env_value DEFAULT_LANGUAGE)"
+[ -n "$DEFAULT_LANGUAGE" ] || DEFAULT_LANGUAGE="en-US"
+
 # Service name and port from compose.yaml; both containers sit on the ai network.
 LLAMA_URL="http://llama-cpp:8080/v1"
 # Model alias llama-cpp serves (LLAMA_ARG_ALIAS in compose.yaml).
@@ -31,10 +39,25 @@ DEFAULTS_VERSION='"2"'
 # The text-to-speech settings carry their own marker, so bumping one group's
 # version never re-imposes the other's.
 TTS_MARKER="pi-pcloud.local_tts_defaults"
-TTS_VERSION='"1"'
+# The language is part of the version, so changing DEFAULT_LANGUAGE re-seeds the
+# voice once and re-running with the same language keeps doing nothing.
+TTS_VERSION="\"2-$DEFAULT_LANGUAGE\""
 # Piper's OpenAI-compatible facade (config/piper), on the same ai network.
 TTS_BASE_URL="http://piper:8000/v1"
-TTS_VOICE="fr_FR-siwis-medium"
+case "$DEFAULT_LANGUAGE" in
+    fr*) TTS_VOICE="fr_FR-siwis-medium" ;;
+    # Anything else gets the English voice, which is also what piper falls back
+    # to on its own when no voice matches the language - its baked-in list sorts
+    # en_US before fr_FR. Seeding the same name keeps Admin Settings > Audio
+    # showing the voice that will actually answer, rather than a name that is
+    # silently substituted on every request.
+    *)   TTS_VOICE="en_US-lessac-medium" ;;
+esac
+# The interface language. DEFAULT_LOCALE is PersistentConfig like the rest, so
+# compose only reaches an instance that has never started; here the database
+# still holds Open WebUI's own empty default, which means "follow the browser".
+LOCALE_MARKER="pi-pcloud.default_locale"
+LOCALE_VERSION="\"1-$DEFAULT_LANGUAGE\""
 
 compose() {
     (cd "$PROJECT_DIR" && docker compose "$@")
@@ -127,6 +150,20 @@ ON CONFLICT (key) DO UPDATE
 SQL
 }
 
+# Set the interface language for anyone who has not picked one in their own
+# settings. Seeded once per language, like the two above: choosing another
+# language in Settings > Interface sticks, and so does an admin setting the
+# default back to blank to follow each visitor's browser instead.
+apply_locale_default() {
+    psql_owui -q <<SQL
+INSERT INTO config (key, value, updated_at) VALUES
+    ('ui.default_locale', '"$DEFAULT_LANGUAGE"'::json, extract(epoch from now())::bigint),
+    ('$LOCALE_MARKER',    '$LOCALE_VERSION'::json,     extract(epoch from now())::bigint)
+ON CONFLICT (key) DO UPDATE
+    SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+SQL
+}
+
 # Open WebUI fires an extra, invisible LLM call per message for each of these:
 # a chat title, chat tags, follow-up suggestions, a search query rewrite. Against
 # a cloud API that is free; against a Pi generating ~10 tok/s it multiplies the
@@ -211,6 +248,15 @@ main() {
             changed=1
         else
             log "WARNING: failed to seed Open WebUI defaults"
+        fi
+    fi
+
+    if [ "$(marker_present "$LOCALE_MARKER" "$LOCALE_VERSION")" = "f" ]; then
+        log "Setting the default interface language to $DEFAULT_LANGUAGE"
+        if apply_locale_default; then
+            changed=1
+        else
+            log "WARNING: failed to seed the Open WebUI default language"
         fi
     fi
 
