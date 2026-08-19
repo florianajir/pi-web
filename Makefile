@@ -8,6 +8,9 @@ PROJECT_PATH := $(shell pwd)
 UNIT         := pi-pcloud.service
 WATCH_UNIT   := pi-pcloud-authelia-ntfy.service
 COMPOSE      := docker compose
+# Empty when make already runs as root: root-only images often ship without a
+# sudo binary at all (install.sh applies the same rule to its own commands).
+SUDO         := $(if $(filter 0,$(shell id -u)),,sudo)
 
 ifeq (headscale-register,$(firstword $(MAKECMDGOALS)))
 HEADSCALE_KEY := $(word 2,$(MAKECMDGOALS))
@@ -32,13 +35,22 @@ help:
 	@echo "  rotate-password-full  Same, plus every Postgres role and every other service using PASSWORD"
 	@echo "  help             This help"
 
+# The case pattern mirrors install.sh's value_is_safe: Docker Compose's .env
+# parser interpolates $$VAR, escapes on trailing backslash, truncates unquoted
+# values at whitespace-then-# and strips surrounding quotes, while the
+# bootstrap scripts read .env verbatim with grep/cut — such values would hand
+# the services and the scripts two different strings.
 check-env:
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
 	@echo "🔍 Checking required .env variables..."; \
 	missing=0; \
 	for var in $(REQUIRED_ENV_VARS); do \
 		val=$$(grep -E "^$$var=" .env 2>/dev/null | tail -n1 | cut -d= -f2-); \
-		if [ -z "$$val" ]; then echo "  ❌ $$var is not set or empty"; missing=1; fi; \
+		if [ -z "$$val" ]; then echo "  ❌ $$var is not set or empty"; missing=1; \
+		else case "$$val" in \
+			*'$$'* | *'\'* | *[[:space:]]'#'* | \"* | *\" | \'* | *\') \
+				echo "  ❌ $$var would be mangled by Docker Compose's .env parser: no '$$', '\', ' #', or leading/trailing quotes"; missing=1 ;; \
+		esac; fi; \
 	done; \
 	if [ $$missing -eq 1 ]; then exit 1; fi
 	@echo "✔ Required .env variables OK"
@@ -54,32 +66,32 @@ preflight: check-env
 install: check-env
 	@echo "📦 Installing..."
 	@echo "🧰 Applying host sysctl settings..."
-	sudo cp config/sysctl.d/pi-pcloud.conf /etc/sysctl.d/99-pi-pcloud.conf
-	sudo sysctl --system >/dev/null
+	$(SUDO) cp config/sysctl.d/pi-pcloud.conf /etc/sysctl.d/99-pi-pcloud.conf
+	$(SUDO) sysctl --system >/dev/null
 	@echo "🌐 Adding local DNS overrides to /etc/hosts..."
 	@HOST_NAME_VAL=$$(grep -E '^HOST_NAME=' .env | tail -n1 | cut -d= -f2-); \
 	HOST_LAN_IP_VAL=$$(grep -E '^HOST_LAN_IP=' .env | tail -n1 | cut -d= -f2-); \
 	if [ -n "$$HOST_NAME_VAL" ] && [ -n "$$HOST_LAN_IP_VAL" ]; then \
-		sudo sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts; \
-		printf "# pi-pcloud local overrides\n$$HOST_LAN_IP_VAL\theadscale.$$HOST_NAME_VAL\n# end pi-pcloud local overrides\n" | sudo tee -a /etc/hosts >/dev/null; \
+		$(SUDO) sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts; \
+		printf "# pi-pcloud local overrides\n$$HOST_LAN_IP_VAL\theadscale.$$HOST_NAME_VAL\n# end pi-pcloud local overrides\n" | $(SUDO) tee -a /etc/hosts >/dev/null; \
 		echo "  ✔ headscale.$$HOST_NAME_VAL -> $$HOST_LAN_IP_VAL"; \
 	else \
 		echo "  ⚠ HOST_NAME or HOST_LAN_IP not set, skipping"; \
 	fi
 	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/pi-pcloud.service > /tmp/$(UNIT)
-	sudo cp /tmp/$(UNIT) /etc/systemd/system/
+	$(SUDO) cp /tmp/$(UNIT) /etc/systemd/system/
 	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/$(WATCH_UNIT) > /tmp/$(WATCH_UNIT)
-	sudo cp /tmp/$(WATCH_UNIT) /etc/systemd/system/
-	sudo cp config/systemd/system/nextcloud-cron.service /etc/systemd/system/
-	sudo cp config/systemd/system/nextcloud-cron.timer /etc/systemd/system/
-	sudo systemctl daemon-reload
-	sudo systemctl enable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer
+	$(SUDO) cp /tmp/$(WATCH_UNIT) /etc/systemd/system/
+	$(SUDO) cp config/systemd/system/nextcloud-cron.service /etc/systemd/system/
+	$(SUDO) cp config/systemd/system/nextcloud-cron.timer /etc/systemd/system/
+	$(SUDO) systemctl daemon-reload
+	$(SUDO) systemctl enable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer
 	@echo "✅ Systemd units installed"
 	@if [ "$(SKIP_START)" = "1" ]; then \
 		echo "⏭️  SKIP_START=1 set; not starting stack"; \
 	else \
 		echo "🚀 Starting stack..."; \
-		sudo systemctl start $(UNIT); \
+		$(SUDO) systemctl start $(UNIT); \
 		$(MAKE) start; \
 	fi
 	@echo "✅ Installation complete"
@@ -101,12 +113,12 @@ uninstall:
 	@read -p "Are you sure? Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
 	@echo ""
 	@echo "🛑 Stopping services..."
-	-sudo systemctl stop $(WATCH_UNIT) 2>/dev/null || true
-	-sudo systemctl stop $(UNIT) 2>/dev/null || true
+	-$(SUDO) systemctl stop $(WATCH_UNIT) 2>/dev/null || true
+	-$(SUDO) systemctl stop $(UNIT) 2>/dev/null || true
 	@echo "🐳 Removing containers and volumes..."
 	-$(COMPOSE) down -v --remove-orphans 2>/dev/null || true
 	@echo "🧹 Removing bind-mount data directories..."
-	-sudo rm -rf ./data/nextcloud ./data/postgres ./data/n8n ./data/immich ./data/lldap ./data/authelia-config
+	-$(SUDO) rm -rf ./data/nextcloud ./data/postgres ./data/n8n ./data/immich ./data/lldap ./data/authelia-config
 	@echo "🧹 Removing generated config files..."
 	-rm -f ./config/headplane/config.yaml
 	-rm -f ./config/headscale/config.yaml
@@ -114,30 +126,30 @@ uninstall:
 	-rm -f ./config/ntfy/ntfy.env
 	-rm -f ./config/beszel-agent/agent.env
 	@echo "🧰 Removing host sysctl settings..."
-	-sudo rm -f /etc/sysctl.d/99-pi-pcloud.conf
-	-sudo sysctl --system >/dev/null
+	-$(SUDO) rm -f /etc/sysctl.d/99-pi-pcloud.conf
+	-$(SUDO) sysctl --system >/dev/null
 	@echo "🌐 Removing local DNS overrides from /etc/hosts..."
-	-sudo sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts
+	-$(SUDO) sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts
 	@echo "🧹 Removing systemd units..."
-	-sudo systemctl disable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer 2>/dev/null || true
-	-sudo rm -f /etc/systemd/system/$(UNIT)
-	-sudo rm -f /etc/systemd/system/$(WATCH_UNIT)
-	-sudo rm -f /etc/systemd/system/nextcloud-cron.service
-	-sudo rm -f /etc/systemd/system/nextcloud-cron.timer
-	-sudo systemctl daemon-reload
+	-$(SUDO) systemctl disable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer 2>/dev/null || true
+	-$(SUDO) rm -f /etc/systemd/system/$(UNIT)
+	-$(SUDO) rm -f /etc/systemd/system/$(WATCH_UNIT)
+	-$(SUDO) rm -f /etc/systemd/system/nextcloud-cron.service
+	-$(SUDO) rm -f /etc/systemd/system/nextcloud-cron.timer
+	-$(SUDO) systemctl daemon-reload
 	@echo "✅ Uninstall complete"
 	@echo ""
 	@echo "ℹ️  Note: .env file preserved. Remove manually if needed."
 
 start:
 	@echo "🚀 Starting pi-pcloud stack..."
-	sudo systemctl start $(UNIT)
+	$(SUDO) systemctl start $(UNIT)
 	@echo "✅ Stack started"
 
 stop:
 	@echo "🛑 Stopping pi-pcloud stack..."
 	$(COMPOSE) down --remove-orphans
-	sudo systemctl stop $(UNIT) 2>/dev/null || true
+	$(SUDO) systemctl stop $(UNIT) 2>/dev/null || true
 	@echo "✅ Stack stopped"
 
 restart: stop start
@@ -150,8 +162,8 @@ update:
 
 status:
 	@echo "📊 Status"
-	sudo systemctl status $(UNIT) --no-pager -l
-	-sudo systemctl status $(WATCH_UNIT) --no-pager -l
+	$(SUDO) systemctl status $(UNIT) --no-pager -l
+	-$(SUDO) systemctl status $(WATCH_UNIT) --no-pager -l
 
 logs:
 	@echo "📝 Logs (Ctrl+C to exit)"

@@ -20,6 +20,11 @@
 set -eu
 
 REPO_URL="${PI_PCLOUD_REPO:-https://github.com/florianajir/pi-pcloud.git}"
+# Privilege prefix for the handful of root-only commands below; check_privileges
+# empties it when the installer already runs as root, since a root-only image
+# often ships without a sudo binary at all. The Makefile applies the same rule
+# to its own recipes, so `make install` works in that environment too.
+SUDO="sudo"
 
 log() { printf '[pi-pcloud] %s\n' "$*" >&2; }
 die() {
@@ -55,15 +60,22 @@ confirm() {
     esac
 }
 
-# Docker Compose interpolates `$VAR` inside .env values (a password containing
-# `$` reaches the services truncated) and a trailing backslash escapes the
-# newline, so both are refused at the prompt instead of being silently mangled
-# downstream. Compose's `$$` escape is not usable here: every bootstrap script
-# reads .env with grep/cut and would see the literal doubled character.
+# Docker Compose's .env parser mangles more than `$VAR` interpolation: a
+# trailing backslash escapes the newline, an unquoted value is truncated at
+# whitespace-then-`#` (inline comment) and surrounding quotes are stripped —
+# while the bootstrap scripts read .env verbatim with grep/cut, so any of
+# these would hand the services and the scripts two different values. All are
+# refused at the prompt instead of being silently mangled downstream.
+# Compose's `$$` escape is not usable here for the same verbatim-reader
+# reason. Newlines can only arrive via pre-exported values (read -r cannot
+# produce one); LF is a literal newline because $(...) strips trailing ones.
+LF='
+'
+VALUE_RULES="must not contain '\$', '\\', a newline or ' #', and must not start or end with a quote (Docker Compose's .env parser mangles these)"
 # shellcheck disable=SC1003 # '\' is a literal backslash pattern, not an escaped quote
 value_is_safe() {
     case "$1" in
-        *'$'* | *'\'*) return 1 ;;
+        *'$'* | *'\'* | *[[:space:]]'#'* | \"* | *\" | \'* | *\' | *"$LF"*) return 1 ;;
         *) return 0 ;;
     esac
 }
@@ -78,7 +90,7 @@ ask() {
 
     eval "current=\${$var:-}"
     if [ -n "$current" ]; then
-        value_is_safe "$current" || die "$var must not contain '\$' or '\\' (Docker Compose interpolates .env values)"
+        value_is_safe "$current" || die "$var $VALUE_RULES"
         return 0
     fi
 
@@ -108,7 +120,7 @@ ask() {
         if [ -z "$value" ]; then
             log "$var cannot be empty"
         elif ! value_is_safe "$value"; then
-            log "$var must not contain '\$' or '\\' (Docker Compose interpolates .env values)"
+            log "$var $VALUE_RULES"
         else
             break
         fi
@@ -124,11 +136,12 @@ ensure_base_tools() {
     [ -n "$missing" ] || return 0
 
     if have apt-get && interactive && confirm "Missing tools:$missing — install them with apt-get?"; then
-        if ! sudo apt-get update -qq; then
+        # shellcheck disable=SC2086
+        if ! $SUDO apt-get update -qq; then
             die "apt-get update failed — check your mirrors, install$missing manually and re-run"
         fi
         # shellcheck disable=SC2086
-        if ! sudo apt-get install -y $missing; then
+        if ! $SUDO apt-get install -y $missing; then
             die "apt-get could not install$missing — install them manually and re-run"
         fi
     else
@@ -146,7 +159,10 @@ install_docker() {
     rm -f "$DOCKER_SCRIPT"
     DOCKER_SCRIPT=""
     have docker || die "the get.docker.com script did not install Docker"
-    sudo usermod -aG docker "$(id -un)"
+    # Skipped as root: the group grant would be a no-op (the daemon socket is
+    # already reachable) and sudo may not exist to carry it out.
+    # shellcheck disable=SC2086
+    [ -z "$SUDO" ] || $SUDO usermod -aG docker "$(id -un)"
 }
 
 ensure_docker() {
@@ -168,7 +184,8 @@ ensure_docker() {
 
     [ -z "$daemon_ok" ] || return 0
     if ! docker info >/dev/null 2>&1; then
-        if sudo docker info >/dev/null 2>&1; then
+        # shellcheck disable=SC2086
+        if [ -n "$SUDO" ] && $SUDO docker info >/dev/null 2>&1; then
             die "Docker only answers via sudo: run 'sudo usermod -aG docker $(id -un)', log out and back in, then re-run this installer"
         fi
         die "Docker daemon is not reachable: check 'systemctl status docker'"
@@ -204,8 +221,10 @@ clone_or_update() {
                 ;;
             *) die "$INSTALL_DIR is a git repository but not a pi-pcloud clone; set PI_PCLOUD_DIR to another path" ;;
         esac
-    elif [ -e "$INSTALL_DIR" ]; then
-        die "$INSTALL_DIR exists and is not a pi-pcloud clone; set PI_PCLOUD_DIR to another path"
+    # An empty pre-created directory (permissions or mount setup) is fine:
+    # git clone accepts it as a destination.
+    elif [ -e "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
+        die "$INSTALL_DIR exists and is neither empty nor a pi-pcloud clone; set PI_PCLOUD_DIR to another path"
     else
         log "Cloning $REPO_URL into $INSTALL_DIR..."
         git clone "$REPO_URL" "$INSTALL_DIR"
@@ -438,6 +457,10 @@ configure_env() {
         log "Keeping existing $ENV_FILE"
         return 0
     fi
+    # Set only after the early return above: the EXIT trap removes
+    # "$ENV_STAGE"*, and the keep-existing-.env path must not delete a
+    # user's own .env.tmp file.
+    ENV_STAGE="$ENV_FILE.tmp"
     rm -f "$ENV_STAGE" "$ENV_STAGE.new"
 
     local required_vars="" var="" value=""
@@ -479,6 +502,7 @@ configure_env() {
 check_privileges() {
     if [ "$(id -u)" -eq 0 ]; then
         log "WARNING: running as root; prefer a regular account (sudo is requested only where needed)"
+        SUDO=""
         return 0
     fi
     have sudo || die "sudo is required: 'make install' applies sysctl, /etc/hosts and systemd changes"
@@ -495,7 +519,6 @@ main() {
     resolve_install_dir
     clone_or_update
     ENV_FILE="$INSTALL_DIR/.env"
-    ENV_STAGE="$ENV_FILE.tmp"
     configure_env
 
     cd "$INSTALL_DIR"
