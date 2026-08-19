@@ -36,6 +36,21 @@ LLAMA_MODEL="gemma-4-e2b-it"
 DEFAULTS_MARKER="pi-pcloud.local_ai_defaults"
 # Bump when the defaults below change, to seed the new ones once.
 DEFAULTS_VERSION='"2"'
+# The workspace row for the model carries its own marker: writing it needs an
+# admin account to own it, which a fresh install does not have until the first
+# SSO login, while the config keys above apply from the first boot. One marker
+# across both would record the half that could not run yet as done.
+MODEL_MARKER="pi-pcloud.local_ai_model_defaults"
+MODEL_VERSION='"1"'
+# Before llama.cpp, the local model came from Ollama and carried its naming
+# convention; the switch renamed it to LLAMA_MODEL above and left the old
+# workspace row behind. Inert - get_all_models drops a base-model override whose
+# base is not served by any backend - but it shows up in the model table and in
+# every backup after it. Removed once, and again after a database restore brings
+# it back, which a one-off DELETE would not cover.
+STALE_MODEL_MARKER="pi-pcloud.ollama_model_cleanup"
+STALE_MODEL_VERSION='"1"'
+STALE_MODEL_ID="gemma4:e2b"
 # The text-to-speech settings carry their own marker, so bumping one group's
 # version never re-imposes the other's.
 TTS_MARKER="pi-pcloud.local_tts_defaults"
@@ -68,6 +83,77 @@ STT_MODEL="parakeet-tdt-0.6b-v3"
 # still holds Open WebUI's own empty default, which means "follow the browser".
 LOCALE_MARKER="pi-pcloud.default_locale"
 LOCALE_VERSION="\"1-$DEFAULT_LANGUAGE\""
+# Open access to anyone Authelia lets in, rather than Open WebUI's approval queue.
+ACCESS_MARKER="pi-pcloud.open_access"
+ACCESS_VERSION='"2"'
+# The system-status tool server (config/system-tools), on the ai network.
+TOOLS_MARKER="pi-pcloud.system_tools"
+TOOLS_VERSION='"1"'
+TOOLS_URL="http://system-tools:8000"
+# Stable id: the tool is attached to a model as "server:<id>", so it must not
+# change between runs or the reference on the model breaks.
+TOOLS_ID="pi-system"
+# The splash-screen suggestions.
+SUGGESTIONS_MARKER="pi-pcloud.prompt_suggestions"
+# The language is part of the version, like the TTS marker above: changing
+# DEFAULT_LANGUAGE swaps the tiles once, re-running does nothing.
+SUGGESTIONS_VERSION="\"4-$DEFAULT_LANGUAGE\""
+# `memory` is left out because `overview` already reports RAM. Quoted heredocs,
+# so neither the apostrophes nor the double quotes need escaping. One function
+# per language rather than one case with heredocs inside it, which sh parses but
+# nobody enjoys reading.
+suggestions_fr() { cat <<'JSON'
+[
+  {"title": ["Combien d'espace disque", "reste-t-il ?"],
+   "content": "Combien d'espace disque reste-t-il sur le serveur ?"},
+  {"title": ["Est-ce que tout tourne", "correctement ?"],
+   "content": "Est-ce que tous les services du serveur tournent correctement ?"},
+  {"title": ["Donne-moi l'état", "du serveur"],
+   "content": "Donne-moi un état général du serveur."},
+  {"title": ["Le Pi chauffe-t-il ?", "température et charge"],
+   "content": "Quelle est la température du CPU et la charge en ce moment ?"},
+  {"title": ["Depuis quand", "le serveur tourne-t-il ?"],
+   "content": "Depuis combien de temps le serveur tourne-t-il ?"},
+  {"title": ["Qui est en ligne", "sur le tailnet ?"],
+   "content": "Quels appareils sont actuellement en ligne sur le tailnet ?"},
+  {"title": ["La sauvegarde de cette nuit", "est-elle passée ?"],
+   "content": "Est-ce que la sauvegarde de cette nuit est passée ?"},
+  {"title": ["Quelque chose a-t-il", "redémarré récemment ?"],
+   "content": "Est-ce que quelque chose a redémarré récemment ?"},
+  {"title": ["Montre-moi les erreurs", "des services en panne"],
+   "content": "Montre-moi les erreurs des services en panne."}
+]
+JSON
+}
+
+suggestions_en() { cat <<'JSON'
+[
+  {"title": ["How much disk space", "is left?"],
+   "content": "How much disk space is left on the server?"},
+  {"title": ["Is everything", "running correctly?"],
+   "content": "Are all the services on the server running correctly?"},
+  {"title": ["Give me an overview", "of the server"],
+   "content": "Give me a general overview of the server."},
+  {"title": ["Is the Pi hot?", "temperature and load"],
+   "content": "What is the CPU temperature and the load right now?"},
+  {"title": ["How long has the server", "been up?"],
+   "content": "How long has the server been running?"},
+  {"title": ["Who is online", "on the tailnet?"],
+   "content": "Which devices are currently online on the tailnet?"},
+  {"title": ["Did last night's", "backup succeed?"],
+   "content": "Did last night's backup succeed?"},
+  {"title": ["Has anything", "restarted recently?"],
+   "content": "Has anything restarted recently?"},
+  {"title": ["Show me the errors", "from failing services"],
+   "content": "Show me the errors from the services that are failing."}
+]
+JSON
+}
+
+case "$DEFAULT_LANGUAGE" in
+    fr*) SUGGESTIONS="$(suggestions_fr)" ;;
+    *)   SUGGESTIONS="$(suggestions_en)" ;;
+esac
 
 compose() {
     (cd "$PROJECT_DIR" && docker compose "$@")
@@ -131,6 +217,145 @@ BEGIN
 END
 \$\$;
 SQL
+}
+
+# 170 prompt tokens for the whole schema, against ~5000 for the built-in tools
+# disabled above.
+#
+# Idempotent by URL, so anything changed afterwards in Admin Settings > Tools
+# survives.
+register_tool_server() {
+    psql_owui -q <<SQL
+DO \$\$
+DECLARE
+    servers jsonb;
+    stamp   bigint := extract(epoch from now())::bigint;
+BEGIN
+    SELECT coalesce(value::jsonb, '[]'::jsonb) INTO servers
+        FROM config WHERE key = 'tool_server.connections';
+    servers := coalesce(servers, '[]'::jsonb);
+
+    IF EXISTS (
+        SELECT 1 FROM jsonb_array_elements(servers) AS s
+        WHERE s->>'url' = '$TOOLS_URL'
+    ) THEN
+        RETURN;
+    END IF;
+
+    servers := servers || jsonb_build_object(
+        'url',       '$TOOLS_URL',
+        'path',      'openapi.json',
+        'type',      'openapi',
+        -- Unauthenticated: the ai network is internal and this server only reads.
+        'auth_type', 'none',
+        'key',       '',
+        -- access_grants, or has_connection_access makes this admin-only; see
+        -- apply_open_access, which patches a connection created before this.
+        'config',    jsonb_build_object(
+                         'enable', true,
+                         'access_grants', \$g\$[{"principal_type": "user", "principal_id": "*", "permission": "read"}]\$g\$::jsonb
+                     ),
+        'info',      jsonb_build_object(
+                         'id',          '$TOOLS_ID',
+                         'name',        'Server status',
+                         'description', 'Disk, CPU, memory, containers, restarts, errors, backups and tailnet devices'
+                     )
+    );
+
+    INSERT INTO config (key, value, updated_at)
+        VALUES ('tool_server.connections', servers::json, stamp)
+        ON CONFLICT (key) DO UPDATE
+        SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+END
+\$\$;
+SQL
+}
+
+# On the workspace entry, so the tool is offered without being ticked per chat.
+attach_tool_server() {
+    psql_owui -q <<SQL
+INSERT INTO model (id, user_id, base_model_id, name, meta, params, created_at, updated_at, is_active)
+SELECT
+    '$LLAMA_MODEL',
+    (SELECT id FROM "user" WHERE role = 'admin' ORDER BY created_at LIMIT 1),
+    NULL,
+    '$LLAMA_MODEL',
+    '{"capabilities": {"builtin_tools": false}, "toolIds": ["server:$TOOLS_ID"]}',
+    '{}',
+    extract(epoch from now())::bigint,
+    extract(epoch from now())::bigint,
+    true
+WHERE EXISTS (SELECT 1 FROM "user" WHERE role = 'admin')
+ON CONFLICT (id) DO UPDATE SET
+    meta = jsonb_set(
+        coalesce(model.meta::jsonb, '{}'::jsonb),
+        '{toolIds}',
+        coalesce(model.meta::jsonb->'toolIds', '[]'::jsonb) || '["server:$TOOLS_ID"]'::jsonb,
+        true
+    )::text,
+    updated_at = extract(epoch from now())::bigint
+WHERE NOT coalesce(model.meta::jsonb->'toolIds', '[]'::jsonb) ? 'server:$TOOLS_ID';
+SQL
+}
+
+# On the model rather than in ui.prompt_suggestions: the frontend reads
+# model.info.meta.suggestion_prompts first and only falls back to the global list,
+# and these assume the tool is attached.
+#
+# Each wording, in both languages, was checked against llama-server with the
+# schema attached - a prompt that reads well is not necessarily one this model
+# turns into a call. Both sets currently score 9/9, one distinct topic each.
+# Singular ("est-ce qu'un conteneur est arrêté ?") makes it ask which container,
+# and negation ("depuis quand X n'est-il plus en ligne ?") makes it answer with
+# nothing at all; both work stated positively and in the plural.
+#
+# Dollar-quoted so the French apostrophes need no doubling.
+apply_prompt_suggestions() {
+    psql_owui -q <<SQL
+INSERT INTO model (id, user_id, base_model_id, name, meta, params, created_at, updated_at, is_active)
+SELECT
+    '$LLAMA_MODEL',
+    (SELECT id FROM "user" WHERE role = 'admin' ORDER BY created_at LIMIT 1),
+    NULL,
+    '$LLAMA_MODEL',
+    -- toolIds too, or this path recreates the row without the tool the
+    -- suggestions depend on.
+    jsonb_build_object('capabilities', jsonb_build_object('builtin_tools', false),
+                       'toolIds', jsonb_build_array('server:$TOOLS_ID'),
+                       'suggestion_prompts', \$j\$$SUGGESTIONS\$j\$::jsonb)::text,
+    '{}',
+    extract(epoch from now())::bigint,
+    extract(epoch from now())::bigint,
+    true
+WHERE EXISTS (SELECT 1 FROM "user" WHERE role = 'admin')
+ON CONFLICT (id) DO UPDATE SET
+    meta = jsonb_set(
+        coalesce(model.meta::jsonb, '{}'::jsonb),
+        '{suggestion_prompts}',
+        \$j\$$SUGGESTIONS\$j\$::jsonb,
+        true
+    )::text,
+    updated_at = extract(epoch from now())::bigint;
+SQL
+}
+
+# For the groups whose work does not fit in one statement; apply_task_defaults,
+# apply_tts_defaults and apply_stt_defaults write their marker as part of theirs,
+# and apply_open_access writes its own inside its transaction.
+mark_seeded() {
+    psql_owui -q -c \
+        "INSERT INTO config (key, value, updated_at)
+             VALUES ('$1', '$2'::json, extract(epoch from now())::bigint)
+             ON CONFLICT (key) DO UPDATE
+             SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;"
+}
+
+# Every write to the model row is guarded by `WHERE EXISTS (... role = 'admin')`.
+# On a fresh install nobody has signed in yet, so those statements would insert
+# nothing, exit 0, and still be marked as seeded - permanently.
+admin_present() {
+    psql_owui -tAc "SELECT EXISTS (SELECT 1 FROM \"user\" WHERE role = 'admin');" 2>/dev/null \
+        | tr -d '[:space:]'
 }
 
 # 't' once the given version of a settings group has been seeded.
@@ -202,12 +427,93 @@ ON CONFLICT (key) DO UPDATE
 SQL
 }
 
+# base_model_id IS NULL restricts this to what Open WebUI calls an override of a
+# base model - the shape the Ollama-era row has. A model someone built on top of
+# a base keeps a base_model_id and is left alone even if the id ever collided.
+# Chats keep their own copy of the model id and there is no foreign key to this
+# table, so an old conversation stays readable; it was already impossible to
+# continue, since nothing serves that model.
+drop_stale_ollama_model() {
+    psql_owui -q <<SQL
+DELETE FROM model WHERE id = '$STALE_MODEL_ID' AND base_model_id IS NULL;
+SQL
+}
+
+# DEFAULT_USER_ROLE is PersistentConfig: the value in compose.yaml only applies
+# to an instance that has never started, so the database still holds "pending".
+# Accounts already parked had passed Authelia, so release them too.
+#
+# The role alone is not enough; both grants below undo an admin-only default:
+#   - get_filtered_models keeps a model that has a workspace row only for its
+#     owner or a named grantee, and that row belongs to the admin - so every
+#     other account would get an empty model picker.
+#   - has_connection_access treats a tool server with no access_grants as
+#     admin-only, so a normal user would get invented answers, not tool calls.
+# ('user', '*', 'read') is the public-read shape the code documents, and stays
+# revocable in the UI.
+#
+# One transaction, with the marker written last: psql autocommits statement by
+# statement, so committing the marker first - as this used to - would record the
+# group as seeded even when the grant below failed, and the grants would then be
+# skipped forever behind a single WARNING.
+apply_open_access() {
+    psql_owui -q <<SQL
+BEGIN;
+
+INSERT INTO config (key, value, updated_at) VALUES
+    ('ui.default_user_role', '"user"'::json, extract(epoch from now())::bigint)
+ON CONFLICT (key) DO UPDATE
+    SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+
+UPDATE "user" SET role = 'user' WHERE role = 'pending';
+
+INSERT INTO access_grant
+    (id, resource_type, resource_id, principal_type, principal_id, permission, created_at)
+VALUES
+    ('pi-pcloud-model-public-read', 'model', '$LLAMA_MODEL', 'user', '*', 'read',
+     extract(epoch from now())::bigint)
+ON CONFLICT (resource_type, resource_id, principal_type, principal_id, permission)
+    DO NOTHING;
+
+-- Dollar-quoted, so the JSON needs no doubled quotes.
+UPDATE config SET
+    value = (
+        SELECT jsonb_agg(
+            CASE WHEN server->>'url' = '$TOOLS_URL'
+                 THEN jsonb_set(
+                          server,
+                          '{config,access_grants}',
+                          \$g\$[{"principal_type": "user", "principal_id": "*", "permission": "read"}]\$g\$::jsonb,
+                          true
+                      )
+                 ELSE server
+            END
+        )
+        FROM jsonb_array_elements(config.value::jsonb) AS server
+    )::json,
+    updated_at = extract(epoch from now())::bigint
+WHERE key = 'tool_server.connections'
+  AND EXISTS (
+      SELECT 1 FROM jsonb_array_elements(config.value::jsonb) AS server
+      WHERE server->>'url' = '$TOOLS_URL'
+        AND coalesce(jsonb_array_length(server->'config'->'access_grants'), 0) = 0
+  );
+
+INSERT INTO config (key, value, updated_at) VALUES
+    ('$ACCESS_MARKER', '$ACCESS_VERSION'::json, extract(epoch from now())::bigint)
+ON CONFLICT (key) DO UPDATE
+    SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+
+COMMIT;
+SQL
+}
+
 # Open WebUI fires an extra, invisible LLM call per message for each of these:
 # a chat title, chat tags, follow-up suggestions, a search query rewrite. Against
 # a cloud API that is free; against a Pi generating ~10 tok/s it multiplies the
 # wait for the answer the user is actually looking at, several times over, all
 # competing for the same three CPU threads. Off by default here.
-apply_defaults() {
+apply_task_defaults() {
     psql_owui -q <<SQL
 INSERT INTO config (key, value, updated_at) VALUES
     ('task.title.enable',                'false'::json,          extract(epoch from now())::bigint),
@@ -222,14 +528,17 @@ INSERT INTO config (key, value, updated_at) VALUES
 ON CONFLICT (key) DO UPDATE
     SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
 SQL
+}
 
-    # Built-in tools (time, memory, chats, notes, knowledge, channels) are on by
-    # default for every model, and their schemas are injected into the prompt of
-    # every message sent from the browser - about 5000 tokens, which is ~3
-    # minutes of prompt processing on this CPU before the model starts writing.
-    # A workspace entry for the model is the only place that default can be
-    # turned off, so create one. Attaching tools to a chat explicitly still
-    # works.
+# Built-in tools (time, memory, chats, notes, knowledge, channels) are on by
+# default for every model, and their schemas are injected into the prompt of
+# every message sent from the browser - about 5000 tokens, which is ~3
+# minutes of prompt processing on this CPU before the model starts writing.
+# A workspace entry for the model is the only place that default can be
+# turned off, so create one. Attaching tools to a chat explicitly still works.
+#
+# Needs an admin to own the row, hence the separate marker; see MODEL_MARKER.
+apply_model_defaults() {
     psql_owui -q <<SQL
 INSERT INTO model (id, user_id, base_model_id, name, meta, params, created_at, updated_at, is_active)
 SELECT
@@ -282,7 +591,7 @@ main() {
 
     if [ "$(marker_present "$DEFAULTS_MARKER" "$DEFAULTS_VERSION")" = "f" ]; then
         log "Seeding low-latency defaults (title/tags/follow-up generation off)"
-        if apply_defaults; then
+        if apply_task_defaults; then
             changed=1
         else
             log "WARNING: failed to seed Open WebUI defaults"
@@ -295,6 +604,15 @@ main() {
             changed=1
         else
             log "WARNING: failed to seed the Open WebUI default language"
+        fi
+    fi
+
+    if [ "$(marker_present "$STALE_MODEL_MARKER" "$STALE_MODEL_VERSION")" = "f" ]; then
+        log "Removing the leftover Ollama-era model row ($STALE_MODEL_ID)"
+        if drop_stale_ollama_model && mark_seeded "$STALE_MODEL_MARKER" "$STALE_MODEL_VERSION"; then
+            changed=1
+        else
+            log "WARNING: failed to remove the stale $STALE_MODEL_ID model row"
         fi
     fi
 
@@ -313,6 +631,55 @@ main() {
             changed=1
         else
             log "WARNING: failed to seed Open WebUI speech-to-text settings"
+        fi
+    fi
+
+    # The config keys above need no account. Everything below writes the model's
+    # workspace row or grants access to it, and every one of those statements is
+    # guarded by `WHERE EXISTS (... role = 'admin')` - so before the first SSO
+    # login they would write nothing, exit 0, and be marked as seeded forever.
+    if [ "$(admin_present)" != "t" ]; then
+        log "no Open WebUI account yet; leaving the rest to the next run"
+        [ "$changed" = "1" ] || return 0
+        log "Restarting open-webui to pick up the new configuration"
+        compose restart open-webui >/dev/null 2>&1 || log "WARNING: could not restart open-webui"
+        wait_for_health_warning "pi-open-webui" 90 2 || true
+        return 0
+    fi
+
+    if [ "$(marker_present "$MODEL_MARKER" "$MODEL_VERSION")" = "f" ]; then
+        log "Turning the built-in tools off on $LLAMA_MODEL (~5000 prompt tokens)"
+        if apply_model_defaults && mark_seeded "$MODEL_MARKER" "$MODEL_VERSION"; then
+            changed=1
+        else
+            log "WARNING: failed to seed the $LLAMA_MODEL workspace row"
+        fi
+    fi
+
+    if [ "$(marker_present "$TOOLS_MARKER" "$TOOLS_VERSION")" = "f" ]; then
+        log "Registering the system-status tool server and attaching it to $LLAMA_MODEL"
+        if register_tool_server && attach_tool_server && mark_seeded "$TOOLS_MARKER" "$TOOLS_VERSION"; then
+            changed=1
+        else
+            log "WARNING: failed to register the system-status tool server"
+        fi
+    fi
+
+    if [ "$(marker_present "$ACCESS_MARKER" "$ACCESS_VERSION")" = "f" ]; then
+        log "Granting Open WebUI access to every SSO user (no admin approval)"
+        if apply_open_access; then
+            changed=1
+        else
+            log "WARNING: failed to open Open WebUI access to every SSO user"
+        fi
+    fi
+
+    if [ "$(marker_present "$SUGGESTIONS_MARKER" "$SUGGESTIONS_VERSION")" = "f" ]; then
+        log "Seeding the new-chat suggestions that exercise the status tool"
+        if apply_prompt_suggestions && mark_seeded "$SUGGESTIONS_MARKER" "$SUGGESTIONS_VERSION"; then
+            changed=1
+        else
+            log "WARNING: failed to seed the Open WebUI prompt suggestions"
         fi
     fi
 

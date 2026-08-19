@@ -16,6 +16,7 @@ main() {
     # causing headplane to crash with EISDIR on startup.
     HEADPLANE_CONFIG="$PROJECT_DIR/config/headplane/config.yaml"
     HEADPLANE_API_KEY_FILE="$PROJECT_DIR/config/headplane/headscale_api_key"
+    HOMEPAGE_API_KEY_FILE="$PROJECT_DIR/config/homepage/secrets/headscale_api_key"
     mkdir -p "$(dirname "$HEADPLANE_CONFIG")"
     if [ -d "$HEADPLANE_CONFIG" ]; then
         log "WARNING: headplane config.yaml is a directory (Docker bind-mount artifact). Removing..."
@@ -35,6 +36,24 @@ main() {
         printf 'pending-headscale-api-key\n' > "$HEADPLANE_API_KEY_FILE"
         chmod 600 "$HEADPLANE_API_KEY_FILE" 2>/dev/null || true
         log "Created placeholder $HEADPLANE_API_KEY_FILE (will be populated by headscale-init.sh)"
+    fi
+
+    # Same again for the second Headscale key, the one homepage's widget and the
+    # system-tools `devices` topic both bind-mount. It is created by
+    # homepage-widgets-bootstrap.sh, which runs in ExecStartPost - i.e. after the
+    # `docker compose up` that bind-mounts it - so on a fresh install Docker gets
+    # there first and makes a directory, which write_secret can then never
+    # replace. Left empty on purpose: that bootstrap only mints a key when the
+    # file has no content in it.
+    mkdir -p "$(dirname "$HOMEPAGE_API_KEY_FILE")"
+    if [ -d "$HOMEPAGE_API_KEY_FILE" ]; then
+        log "WARNING: homepage headscale_api_key is a directory (Docker bind-mount artifact). Removing..."
+        rm -rf "$HOMEPAGE_API_KEY_FILE"
+    fi
+    if [ ! -e "$HOMEPAGE_API_KEY_FILE" ]; then
+        touch "$HOMEPAGE_API_KEY_FILE"
+        safe_chmod 600 "$HOMEPAGE_API_KEY_FILE"
+        log "Created empty $HOMEPAGE_API_KEY_FILE (will be populated by homepage-widgets-bootstrap.sh)"
     fi
 
     if [ ! -f "$POLICY_TEMPLATE_FILE" ]; then

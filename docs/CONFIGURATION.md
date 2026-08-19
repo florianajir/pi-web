@@ -288,12 +288,190 @@ connections the model simply never shows up in the picker.
 leaves any other connection you configured in the UI alone, and restarts
 open-webui only when it changed something. It also seeds the low-latency
 defaults above - once, guarded by a `pi-pcloud.local_ai_defaults` marker row, so
-anything you change afterwards in Admin Settings stays changed. Run it by hand
-after a database restore:
+anything you change afterwards in Admin Settings stays changed. The same script
+registers the `system-tools` server below (marker `pi-pcloud.system_tools`) and
+seeds the new-chat suggestions (marker `pi-pcloud.prompt_suggestions`); the
+markers are independent, so re-seeding one never re-imposes the others.
+
+Everything that writes the model's *workspace row* - turning the built-in tools
+off (marker `pi-pcloud.local_ai_model_defaults`), attaching the tool server,
+seeding the suggestions - needs an admin account to own that row, and there is
+none until the first SSO login. Those steps are therefore skipped, unmarked, on a
+fresh install, and applied by the next run of the hook; the settings that live in
+the `config` table alone (connection, low-latency defaults, audio) apply from
+the first boot. Run it by hand after the first login, or after a database
+restore:
 
 ```bash
 sh scripts/open-webui-bootstrap.sh
 ```
+
+**Who may use it.** Authelia already decides who reaches
+`ai.${HOST_NAME:-pi.lan}`, so Open WebUI's own `pending` role - which parks every
+SSO login behind an admin approval screen - would only mean nobody can use the
+service until an admin notices. The script sets `ui.default_user_role` to `user`
+and releases accounts already parked (marker `pi-pcloud.open_access`).
+
+That alone is not enough to make the assistant usable, because two separate
+things default to admin-only:
+
+- A model with a workspace row is kept by `get_filtered_models` only for its
+  owner or for someone named in an access grant. The row exists here to turn the
+  builtin tools off and it belongs to the admin, so every other account got an
+  **empty model picker**.
+- A tool server whose `config` carries no `access_grants` is private to admins
+  (`has_connection_access`), so a normal user clicking one of the suggestions
+  below would get an invented answer with no tool call.
+
+Both are granted wildcard public read - `('user', '*', 'read')`, the shape the
+code itself documents as public - by the same marker. They stay visible and
+revocable in **Admin Settings** and **Workspace → Models**; narrowing either one
+by hand is never undone. Admin rights still have to be granted deliberately.
+
+**Answering questions about this server.** `system-tools` (built from
+`config/system-tools/`) is an OpenAPI tool server on the `ai` network. Open WebUI
+discovers tools from an OpenAPI spec and hands them to the model as function
+definitions, so the model can measure the machine it runs on instead of guessing
+at it - "how much disk is left?", "is anything down?", "how long has it been
+up?". It is attached to `gemma-4-e2b-it` in the workspace, so it is live on every
+chat; untick it under the model in **Workspace → Models** to turn it off.
+
+One operation, `get_system_status(topic)`, with `topic` one of:
+
+| Topic | Answers with |
+|-------|--------------|
+| `overview` | One line each of uptime, CPU, RAM, `/`, containers |
+| `disk` | Free space on `/`, `/mnt/usbdrive` and `/mnt/sdcard` |
+| `cpu` | Usage overall and per core, load average, temperature, clock |
+| `memory` | RAM and swap |
+| `uptime` | Uptime, boot time, host clock |
+| `services` | Container count, and which ones are not running or not healthy |
+| `restarts` | What restarted, how often, and with which exit code |
+| `errors` | The last few log lines of whatever is currently failing |
+| `backups` | Last backup per plan, whether it worked, when the next one runs |
+| `devices` | Tailnet devices, their owner, which are online, when the rest were last seen |
+
+**Why one operation and not ten.** Tool schemas are injected into the prompt of
+every message. At ~40 tok/s of prompt processing they are the latency budget, and
+that is exactly why the built-in tools are off above - they cost ~5000 tokens,
+about three minutes before the model writes a word. This one is 170 tokens
+(`curl llama-cpp:8080/tokenize` on the payload Open WebUI builds from the spec),
+which llama-server then caches for the rest of the conversation.
+
+That shape is what keeps growth cheap, and the difference is measured: the enum has
+gone 6 → 10 topics for 113 → 170 tokens - about **+14 per topic**, depending on
+how much the topic's own description has to explain,
+where a single extra *operation* costs **+72** on its own. So a new capability
+becomes a topic, never a second operation.
+
+The replies are digested for the same reason, and it matters more than the schema
+does: a reply is re-processed on every later turn of the conversation. `df -h`
+alone is ~400 tokens of column padding, so nothing here returns raw command
+output, and `errors` caps itself at three containers and three lines each.
+
+**Topic selection is testable, so test it.** The real ceiling is not tokens, it is
+whether a 4B model still picks the right topic as the list grows. One prompt per
+topic, sent to `llama-server` with the schema attached, currently scores 10/10 at
+ten topics - no degradation from six. What does break is phrasing, in two
+reproducible ways: the **singular** ("est-ce qu'*un* conteneur est arrêté ?") makes
+the model ask *which* container instead of calling anything, and **negation**
+("depuis quand X *n'est-il plus* en ligne ?") makes it answer nothing at all. Both
+work stated positively and in the plural. Re-run the check when adding a topic, and
+when writing a suggestion.
+
+**What it can reach.** `/` is bind-mounted read-only at `/hostfs`: `/proc` and
+`/sys` report the host from inside a container anyway, but `statvfs` can only
+measure a filesystem this process can itself see, which is what `disk` needs.
+
+The Docker socket is mounted `:ro`, the same way `homepage` already mounts it -
+but be clear about what that buys: `:ro` protects the socket *inode*, not the
+Docker API, and anything holding an open socket can still `POST
+/containers/create` and get host root. What actually constrains this server is its
+own code - it only ever issues `GET`, to two paths, and `services` is the only
+caller. There is likewise no endpoint that accepts a command, a path or a pattern:
+the model picks a topic from a closed list and each topic maps to fixed code, so a
+prompt injection has nothing to steer. The container itself runs `read_only` with
+`no-new-privileges`.
+
+`services`, `restarts` and `errors` filter the container list on
+`com.docker.compose.project=$COMPOSE_PROJECT` (passed in from
+`COMPOSE_PROJECT_NAME`, defaulting to `pi-web`). The socket is the host's, so
+without that filter the count also covers containers that have nothing to do with
+this stack - and any stray `docker run` left in `Exited` would be reported as
+something needing attention.
+
+`errors` reads container logs, which is the one place where "the model picks a
+topic, not a target" earns its keep: it only ever reads the tail of containers it
+has *already* found stopped or unhealthy. The model cannot name what gets read, so
+there is no way to ask it for the logs of something else.
+
+`backups` reads Backrest's own operation log,
+`$DATA_LOCATION/backrest/data/oplog.sqlite`, opened `mode=ro`. That directory is
+bind-mounted straight in at `/run/backrest` rather than reached through `/hostfs`,
+because `DATA_LOCATION` is relative to the project directory by default and a
+relative path means nothing against the host root - the directory, not the file,
+because the oplog does not exist until Backrest's first run and Docker would
+otherwise create a directory in its place.
+Backrest's repos live on a remote, so restic would want their password, and the
+log answers "did last night run" without one. Two things to know: the status codes
+come from `proto/v1/operations.proto`, where `WARNING` is declared before `ERROR`
+but numbered *after* the cancellations (reading declaration order off the binary
+gets it backwards - `ERROR` is 4); and a WAL database opened read-only can refuse
+the read if the WAL needs replaying, which surfaces as `backup log unreadable`
+rather than an error.
+
+`devices` reads headscale's node API - the tailnet is self-hosted, so there is no
+Tailscale SaaS call - reusing the API key `homepage`'s headscale widget already
+holds, mounted read-only at `/run/secrets/headscale_api_key`. Those keys expire, so
+this and the Homepage widget break together. It is also the one topic that needs
+the `frontend` network, since headscale listens there; the container makes egress
+GETs to a fixed URL and accepts no URL of its own, so what widens is the reachable
+surface, not the steerable one.
+
+Note what `devices` does *not* have: a parameter naming a device. Ten devices fit
+in eleven digested lines, so "when was the iPad last online?" is answered by the
+model reading its own tool result - no free-form target, and the closed-enum
+property survives. Past `DEVICE_LINES` devices the offline ones are trimmed
+oldest-first and the reply says how many it dropped.
+
+There is deliberately no `network` topic. It existed briefly and was dropped: the
+default route, the link speed and `wlan0: down` are static configuration, and
+traffic *since boot* is a number nothing can be done with - a rate would be needed,
+and beszel and the Homepage widget already graph one. The question it could not
+answer either way is which *service* is using the bandwidth, which would need
+per-container counters.
+
+To give a *different* model the same capability, add `server:pi-system` to its
+`toolIds` in **Workspace → Models**; the tool server itself is registered once,
+globally. To add a topic, extend `TOPICS` and the `Topic` literal in
+`config/system-tools/app.py`; to report another drive, add its mount point to
+`FILESYSTEMS` in the same file (one that is not mounted is skipped, so a drive
+that comes and goes is safe to list). Either way, `docker compose build
+system-tools` afterwards.
+
+**The tiles on the new-chat screen.** Open WebUI ships six suggestions of its own
+- vocabulary drills, the Roman Empire, options trading - which advertise a model
+this box does not run and never touch the tool, so nobody discovers the assistant
+can be asked about the machine. `scripts/open-webui-bootstrap.sh` replaces them
+with nine that each map to a topic, in the stack's `DEFAULT_LANGUAGE`: free disk
+space, whether every service is up, a general status, CPU temperature and load,
+uptime, who is online on the tailnet, last night's backup, recent restarts, and the
+errors of whatever is failing.
+
+They are written to `suggestion_prompts` on the model rather than to the global
+`ui.prompt_suggestions`, because the frontend reads
+`model.info.meta.suggestion_prompts` first and only falls back to the global
+list - a suggestion that assumes the status tool exists belongs to the model the
+tool is attached to. Edit them in **Workspace → Models → gemma-4-e2b-it**, or in
+the `SUGGESTIONS` heredoc in the script; the `pi-pcloud.prompt_suggestions`
+marker means a UI edit is never overwritten.
+
+Each wording was checked against `llama-server` with the tool schema attached,
+because a prompt that reads well is not necessarily one this 4B model turns into
+a call: "est-ce qu'un conteneur est arrêté ou en mauvaise santé ?" makes it ask
+*which* container instead of calling anything, where the plural "est-ce que tous
+les services tournent correctement ?" calls `services` every time. Worth
+re-checking a new suggestion the same way.
 
 **Language.** One `.env` variable, `DEFAULT_LANGUAGE`, sets the language of
 everything in the stack that has to choose one, as a BCP 47 tag. It defaults to
@@ -303,6 +481,7 @@ everything in the stack that has to choose one, as a BCP 47 tag. It defaults to
 |-----------|-----|
 | Open WebUI's interface | `DEFAULT_LOCALE`, for users who have not picked a language themselves |
 | Which Piper voice reads answers aloud | matched against the voices baked into the image |
+| The new-chat suggestion tiles | written in that language by `scripts/open-webui-bootstrap.sh` |
 
 `fr-FR` and `en-US` are the two tags with voices shipped. Anything else still
 works - the interface has its own translations, and Piper picks the closest
