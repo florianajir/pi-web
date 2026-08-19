@@ -2,6 +2,8 @@
 
 All configuration is managed through the `.env` file. Copy `.env.dist` and edit with your values.
 
+> Do not use `$` or `\` in any value: Docker Compose interpolates `$VAR` inside `.env` values, so `Sup3r$ecret!` reaches the services as `Sup3r!` with only a warning in the logs. Values are read unquoted, so quoting does not help.
+
 ## Environment Variables
 
 ### Personal Settings

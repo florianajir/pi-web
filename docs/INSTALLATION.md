@@ -32,11 +32,15 @@ curl -fsSL https://raw.githubusercontent.com/florianajir/pi-pcloud/main/install.
 The installer:
 
 1. Checks for `git`, `make`, Docker and the Compose plugin (offers to install the missing ones via `apt-get` / [get.docker.com](https://get.docker.com); a fresh Docker install requires logging out and re-running, since the `docker` group only takes effect at next login)
-2. Clones the repository into `~/pi-pcloud` (override with `PI_PCLOUD_DIR=/path`; run from inside an existing clone to reuse it — the checkout is fast-forwarded in place)
+2. Clones the repository into `~/pi-pcloud` (`/opt/pi-pcloud` when run as root; override with `PI_PCLOUD_DIR=/path`, or run from inside an existing clone to reuse it — that checkout is fast-forwarded in place)
 3. Builds `.env` from `.env.dist`, prompting only for the required values (the Makefile's `REQUIRED_ENV_VARS` list, enforced by `make check-env`) — timezone, LAN IP, interface, subnet, gateway and Pi-hole IP are auto-detected, and `PASSWORD` can be auto-generated
 4. Runs `make preflight` then `make install`
 
-It is safe to re-run: an existing clone is fast-forwarded and an existing `.env` is never modified (`.env` only appears once fully configured, so an interrupted run restarts cleanly). Any prompt can be pre-answered by exporting the variable first (`HOST_NAME`, `EMAIL`, `ADMIN_USER`, `PASSWORD`, `TIMEZONE`, `HOST_LAN_IP`, `CLOUDFLARE_DNS_API_TOKEN`, `CLOUDFLARE_ZONE_ID`), and exported network values (`HOST_LAN_PARENT`, `HOST_LAN_SUBNET`, `HOST_LAN_GATEWAY`, `PIHOLE_IP`, `ALLOW_IP_RANGES`) override auto-detection. This enables unattended installs from a non-interactive shell — they need passwordless sudo (the Raspberry Pi OS default).
+The network layout is resolved before the first prompt: a Wi-Fi parent interface asks for confirmation (macvlan, which gives Pi-hole its LAN address, does not work over Wi-Fi), a non-`/24` subnet asks for `PIHOLE_IP` explicitly, and if the layout cannot be determined at all the installer stops rather than deploying the `192.168.1.0/24` placeholders.
+
+It is safe to re-run: an existing clone is fast-forwarded and an existing `.env` is never modified (`.env` only appears once fully configured, so an interrupted run restarts cleanly). Any prompt can be pre-answered by exporting the variable first (`HOST_NAME`, `EMAIL`, `ADMIN_USER`, `PASSWORD`, `TIMEZONE`, `HOST_LAN_IP`, `CLOUDFLARE_DNS_API_TOKEN`, `CLOUDFLARE_ZONE_ID`), and exported network values (`HOST_LAN_PARENT`, `HOST_LAN_SUBNET`, `HOST_LAN_GATEWAY`, `PIHOLE_IP`, `ALLOW_IP_RANGES`) override auto-detection. This enables unattended installs from a non-interactive shell — they need passwordless sudo (the Raspberry Pi OS default), since `make install` applies sysctl, `/etc/hosts` and systemd changes.
+
+> Values must not contain `$` or `\`: Docker Compose interpolates `$VAR` inside `.env` values, so a password containing `$` would reach the services truncated. The installer refuses such values instead of writing them.
 
 Optional settings (SMTP, S3 backups, `DEFAULT_LANGUAGE`) are left empty — fill them in `.env` later (see [Configuration](CONFIGURATION.md)).
 
