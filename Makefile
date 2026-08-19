@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs preflight check-env headscale-register headscale-reset rotate-password rotate-password-full
+.PHONY: help install uninstall start stop restart status logs doctor preflight check-env headscale-register headscale-reset rotate-password rotate-password-full
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -23,6 +23,7 @@ help:
 	@echo "  restart          Restart stack"
 	@echo "  status           Show systemd status"
 	@echo "  logs             Follow compose logs"
+	@echo "  doctor           Report anything outside its threshold (disk, RAM, temp, containers, backups)"
 	@echo "  preflight        Quick env readiness check"
 	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  headscale-reset  Reset all Headscale nodes, preauth keys, and IP allocations"
@@ -155,6 +156,17 @@ status:
 logs:
 	@echo "📝 Logs (Ctrl+C to exit)"
 	$(COMPOSE) logs -f --tail=100
+
+# The same endpoint the assistant calls for the `anomalies` topic, so the shell
+# and the chat cannot disagree. Asked from inside the container because
+# system-tools only exposes its port on the compose networks, and with python3
+# because the image (python:3.12-slim) ships no curl - the same call its
+# healthcheck makes.
+doctor:
+	@echo "🩺 Diagnostic"
+	@$(COMPOSE) exec -T system-tools python3 -c \
+		"import urllib.request as r; print(r.urlopen('http://localhost:8000/status/anomalies').read().decode())" \
+		|| echo "❌ system-tools unreachable - check 'docker compose ps' and 'make logs'"
 
 headscale-register:
 	@echo "🔐 Registering headscale node..."

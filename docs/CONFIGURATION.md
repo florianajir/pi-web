@@ -341,6 +341,7 @@ One operation, `get_system_status(topic)`, with `topic` one of:
 | Topic | Answers with |
 |-------|--------------|
 | `overview` | One line each of uptime, CPU, RAM, `/`, containers |
+| `anomalies` | Only the readings outside their threshold - or that none are |
 | `disk` | Free space on `/`, `/mnt/usbdrive` and `/mnt/sdcard` |
 | `cpu` | Usage overall and per core, load average, temperature, clock |
 | `memory` | RAM and swap |
@@ -350,6 +351,50 @@ One operation, `get_system_status(topic)`, with `topic` one of:
 | `errors` | The last few log lines of whatever is currently failing |
 | `backups` | Last backup per plan, whether it worked, when the next one runs |
 | `devices` | Tailnet devices, their owner, which are online, when the rest were last seen |
+
+**Reporting versus judging.** Every topic but one hands the model a measurement
+and leaves the conclusion to it - and "184.5G free of 468.9G" is a conclusion a
+4B model gets wrong often enough to matter, mid-sentence, against a threshold it
+has to invent. `anomalies` moves that decision into code: it walks disk, memory,
+swap, temperature, 5-minute load, container health, restart counts and backup age,
+and returns *only* what is off. When nothing is, it says so in one line, naming
+what it checked - so the model states it rather than hedging.
+
+The thresholds are at the top of `app.py`. `DISK_PCT`, `MEMORY_PCT` and `TEMP_C`
+are deliberately Beszel's own alert values (85% / 90% / 70°C, see
+`scripts/beszel-agent-bootstrap.sh`), so anything this topic calls abnormal is
+something that has already pushed to ntfy - two voices on one number, rather than
+a chat that disagrees with your phone. `RESTART_LOOP` is 3, which only ever counts
+restarts *within* one run of the stack, because `docker compose up` zeroes the
+counter.
+
+**Swap needs two conditions, and that is the interesting one.** It was written
+first as a plain `SWAP_PCT = 50` and fired on its first run against a box where
+nothing was wrong: 103 days of uptime, swap 100% full, **7G of RAM available, no
+OOM kill on record, and 0.13 MB/min of actual paging**. The 2G is
+`/var/swap` on the NVMe, and what filled it was `parakeet` (578M), `llama-cpp`
+(351M) and `immich-machine-learning` (158M) - services that load a model, go idle,
+and have their cold pages evicted exactly once. That is what swap is *for*, and
+the fill level cannot tell it apart from a machine fighting for RAM.
+
+So the finding now needs `SWAP_PCT` **and** `RAM_PRESSURE_PCT` (80%) together.
+`RAM_PRESSURE_PCT` sits below `MEMORY_PCT` on purpose: paging under pressure
+starts before RAM is exhausted, so the swap finding can fire one step ahead of the
+memory one. The `memory` topic still reports swap unconditionally for anyone who
+wants the raw number. The general lesson for any threshold added here: a level is
+a state, and only some states are faults.
+
+Nothing new is measured for it - it reuses the collectors the other topics already
+call, so the whole pass is one `statvfs` per filesystem, two `/proc` reads, one
+inspect per container and one SQLite query: **60-80 ms** end to end, against the
+~300 ms `cpu` alone spends sleeping between its two `/proc/stat` samples. That
+sample is the one thing `anomalies` skips: the 5-minute load average already says
+whether the machine is saturated, sustained, which is the only version worth
+reporting.
+
+The same verdict is reachable from a shell with **`make doctor`**, which asks this
+container for the `anomalies` topic and prints it - the same endpoint, so the
+terminal and the chat cannot disagree.
 
 **Why one operation and not ten.** Tool schemas are injected into the prompt of
 every message. At ~40 tok/s of prompt processing they are the latency budget, and
@@ -362,7 +407,9 @@ That shape is what keeps growth cheap, and the difference is measured: the enum 
 gone 6 → 10 topics for 113 → 170 tokens - about **+14 per topic**, depending on
 how much the topic's own description has to explain,
 where a single extra *operation* costs **+72** on its own. So a new capability
-becomes a topic, never a second operation.
+becomes a topic, never a second operation. `anomalies` came in at **+19**,
+tokenizing the same payload with and without it - above that average, because its
+clause has to say what a threshold *is* and not merely name a subject.
 
 The replies are digested for the same reason, and it matters more than the schema
 does: a reply is re-processed on every later turn of the conversation. `df -h`
@@ -372,7 +419,18 @@ output, and `errors` caps itself at three containers and three lines each.
 **Topic selection is testable, so test it.** The real ceiling is not tokens, it is
 whether a 4B model still picks the right topic as the list grows. One prompt per
 topic, sent to `llama-server` with the schema attached, currently scores 10/10 at
-ten topics - no degradation from six. What does break is phrasing, in two
+ten topics - no degradation from six.
+
+`anomalies` was checked the same way and records one boundary. Both tile wordings
+("y a-t-il des anomalies...", "are there any anomalies...") select it reliably, and
+adding it moved none of the other topics. But a vague *"est-ce que tout va bien ?"*
+still routes to `overview` - a defensible answer, since `overview` does report the
+container count, though it would miss a full swap. Widening the topic's own
+description to "whether anything is wrong right now" was tried and changed that
+case not at all, only the token count, so the short clause stayed and the tile
+names anomalies outright instead.
+
+What does break is phrasing, in two
 reproducible ways: the **singular** ("est-ce qu'*un* conteneur est arrêté ?") makes
 the model ask *which* container instead of calling anything, and **negation**
 ("depuis quand X *n'est-il plus* en ligne ?") makes it answer nothing at all. Both
@@ -413,7 +471,11 @@ relative path means nothing against the host root - the directory, not the file,
 because the oplog does not exist until Backrest's first run and Docker would
 otherwise create a directory in its place.
 Backrest's repos live on a remote, so restic would want their password, and the
-log answers "did last night run" without one. Two things to know: the status codes
+log answers "did last night run" without one. The same reading is served as JSON
+at `/health/backups` - `ok`, `stale`, `failed` or `unknown`, no status a substring
+of another - which is what the Uptime Kuma `backup freshness` monitor matches on;
+see [Monitoring](MONITORING.md#what-is-actually-checked). It is kept out of the
+OpenAPI schema, so it costs no prompt tokens: the model reads the topic instead. Two things to know: the status codes
 come from `proto/v1/operations.proto`, where `WARNING` is declared before `ERROR`
 but numbered *after* the cancellations (reading declaration order off the binary
 gets it backwards - `ERROR` is 4); and a WAL database opened read-only can refuse
@@ -454,7 +516,7 @@ system-tools` afterwards.
 this box does not run and never touch the tool, so nobody discovers the assistant
 can be asked about the machine. `scripts/open-webui-bootstrap.sh` replaces them
 with nine that each map to a topic, in the stack's `DEFAULT_LANGUAGE`: free disk
-space, whether every service is up, a general status, CPU temperature and load,
+space, whether anything is abnormal, a general status, CPU temperature and load,
 uptime, who is online on the tailnet, last night's backup, recent restarts, and the
 errors of whatever is failing.
 
@@ -464,7 +526,10 @@ They are written to `suggestion_prompts` on the model rather than to the global
 list - a suggestion that assumes the status tool exists belongs to the model the
 tool is attached to. Edit them in **Workspace → Models → gemma-4-e2b-it**, or in
 the `SUGGESTIONS` heredoc in the script; the `pi-pcloud.prompt_suggestions`
-marker means a UI edit is never overwritten.
+marker means a UI edit is never overwritten. The marker carries a version
+(`SUGGESTIONS_VERSION`, currently `5-$DEFAULT_LANGUAGE`), so changing the tiles in
+the script means bumping it - which re-seeds them once, and does overwrite an edit
+made in the UI.
 
 Each wording was checked against `llama-server` with the tool schema attached,
 because a prompt that reads well is not necessarily one this 4B model turns into

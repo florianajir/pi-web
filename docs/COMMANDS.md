@@ -14,6 +14,7 @@ Run all commands from the pi-pcloud directory: `/opt/pi-pcloud`
 | `make restart` | Restart all services (after config changes) |
 | `make status` | Show stack status and port bindings |
 | `make logs` | Follow live logs |
+| `make doctor` | Report anything outside its threshold: disk, RAM, swap, temperature, load, containers, restarts, backups |
 | `make headscale-register <key>` | Register a device to VPN |
 | `make headscale-reset` | Reset all VPN nodes (**destructive**) |
 

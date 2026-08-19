@@ -20,9 +20,10 @@ Each group also declares where the notification is attached:
 Beside the per-container docker monitors (which only prove the container runs),
 the topology adds end-to-end checks that exercise the actual request path:
 HTTP monitors sent to Traefik with a Host header, a DNS resolution check through
-Pi-hole, and the gluetun public IP. Those catch the failure modes a docker check
-is blind to - a dropped Traefik route answers 404 while the container is happily
-running.
+Pi-hole, the gluetun public IP, and the age of the last backup. Those catch the
+failure modes a docker check is blind to - a dropped Traefik route answers 404
+while the container is happily running, and a backup that never started reports
+nothing at all.
 
 Uses direct Socket.IO calls for Uptime Kuma 2.x compatibility.
 """
@@ -784,6 +785,38 @@ class UptimeKumaBootstrap:
         }
         return self.ensure_monitor("vpn public ip", desired, defaults={"conditions": []})
 
+    def ensure_backup_freshness_monitor(self, parent_id, group, notification_id):
+        """Ensure a backup that never ran is noticed, not just one that failed.
+
+        Backrest's hook fires on the runs that happen: a plan that never started
+        sends nothing, and the pi-backrest container monitor beside it stays green
+        the whole time. system-tools reads the age of the last finished run off
+        backrest's operation log and answers `ok` only while it is inside
+        BACKUP_MAX_AGE_HOURS - the daily 04:00 schedule plus six hours of slack.
+
+        Hourly with a single retry: what is being measured moves once a day, so a
+        tighter interval would only add heartbeats to the database. The status is
+        matched rather than the HTTP code so the down message names the reason,
+        and a fresh install is legitimately down here until its first backup.
+        """
+        desired = {
+            "type": "json-query",
+            "parent": parent_id,
+            "url": "http://pi-system-tools:8000/health/backups",
+            "method": "GET",
+            "jsonPath": "status",
+            "jsonPathOperator": "==",
+            "expectedValue": "ok",
+            "timeout": 30,
+            "accepted_statuscodes": ["200-299"],
+            "interval": 3600,
+            "retryInterval": 3600,
+            "maxretries": 1,
+            "resendInterval": 0,
+            "notificationIDList": {str(notification_id): True} if notification_id else {},
+        }
+        return self.ensure_monitor("backup freshness", desired, defaults={"conditions": []})
+
     def status_page_exists(self, slug):
         """Check via the public (auth-free) HTTP API whether a status page slug exists."""
         import urllib.request
@@ -1013,6 +1046,16 @@ def main():
             api.ensure_vpn_monitor(group_ids["Remote Access"], group, tier_for(group))
         except Exception as e:
             log(f"WARNING: Failed to ensure VPN monitor: {e}")
+
+        # Personal Data, where pi-backrest already sits, and it alerts per child:
+        # a missed backup is worth its own message rather than a group aggregate.
+        group = groups_by_name["Personal Data"]
+        try:
+            api.ensure_backup_freshness_monitor(
+                group_ids["Personal Data"], group, tier_for(group),
+            )
+        except Exception as e:
+            log(f"WARNING: Failed to ensure backup freshness monitor: {e}")
 
         # Public status page consumed by the Homepage 'uptimekuma' widget
         try:

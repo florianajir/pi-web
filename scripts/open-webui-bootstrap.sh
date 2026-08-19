@@ -97,7 +97,7 @@ TOOLS_ID="pi-system"
 SUGGESTIONS_MARKER="pi-pcloud.prompt_suggestions"
 # The language is part of the version, like the TTS marker above: changing
 # DEFAULT_LANGUAGE swaps the tiles once, re-running does nothing.
-SUGGESTIONS_VERSION="\"4-$DEFAULT_LANGUAGE\""
+SUGGESTIONS_VERSION="\"5-$DEFAULT_LANGUAGE\""
 # `memory` is left out because `overview` already reports RAM. Quoted heredocs,
 # so neither the apostrophes nor the double quotes need escaping. One function
 # per language rather than one case with heredocs inside it, which sh parses but
@@ -106,8 +106,8 @@ suggestions_fr() { cat <<'JSON'
 [
   {"title": ["Combien d'espace disque", "reste-t-il ?"],
    "content": "Combien d'espace disque reste-t-il sur le serveur ?"},
-  {"title": ["Est-ce que tout tourne", "correctement ?"],
-   "content": "Est-ce que tous les services du serveur tournent correctement ?"},
+  {"title": ["Y a-t-il des anomalies", "sur le serveur ?"],
+   "content": "Y a-t-il des anomalies sur le serveur en ce moment ?"},
   {"title": ["Donne-moi l'état", "du serveur"],
    "content": "Donne-moi un état général du serveur."},
   {"title": ["Le Pi chauffe-t-il ?", "température et charge"],
@@ -130,8 +130,8 @@ suggestions_en() { cat <<'JSON'
 [
   {"title": ["How much disk space", "is left?"],
    "content": "How much disk space is left on the server?"},
-  {"title": ["Is everything", "running correctly?"],
-   "content": "Are all the services on the server running correctly?"},
+  {"title": ["Are there any anomalies", "on the server?"],
+   "content": "Are there any anomalies on the server right now?"},
   {"title": ["Give me an overview", "of the server"],
    "content": "Give me a general overview of the server."},
   {"title": ["Is the Pi hot?", "temperature and load"],

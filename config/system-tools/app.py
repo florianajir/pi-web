@@ -62,6 +62,31 @@ RECENT_START = 3600
 LOG_LINES = 3
 LOG_WIDTH = 120
 
+# Thresholds for the `anomalies` topic. The first three are Beszel's own alert
+# values (scripts/beszel-agent-bootstrap.sh), so anything this topic calls
+# abnormal is something Beszel has already pushed to ntfy: two voices, one
+# number, rather than a second opinion nobody asked for.
+DISK_PCT = 85
+MEMORY_PCT = 90
+TEMP_C = 70
+# Beszel has no swap alert, and swap that is merely full is not one either: a
+# service that loaded a model and went idle has its cold pages evicted once and
+# never faults them back, which is precisely what swap is for. Measured here at
+# 103 days of uptime - swap 100% full, 7G of RAM available, no OOM kill, and
+# 0.13 MB/min of paging - the fill level alone said "problem" where there was
+# none. So both have to hold: swap full *while* RAM is tight. RAM_PRESSURE_PCT
+# sits below MEMORY_PCT on purpose, because paging under pressure starts before
+# RAM is exhausted.
+SWAP_PCT = 50
+RAM_PRESSURE_PCT = 80
+# `docker compose up` zeroes RestartCount, so this many within one run of the
+# stack is a loop rather than a history.
+RESTART_LOOP = 3
+# The plan runs daily at 04:00 (config/backrest/config.json.template), putting
+# 24h between starts; 30 leaves six hours for a late or long run before the
+# absence counts. Also what the Uptime Kuma monitor reads off /health/backups.
+BACKUP_MAX_AGE_H = int(os.environ.get("BACKUP_MAX_AGE_HOURS", "30"))
+
 HEADSCALE_URL = os.environ.get("HEADSCALE_URL", "")
 HEADSCALE_KEY_FILE = Path(os.environ.get("HEADSCALE_KEY_FILE", "/run/secrets/headscale_api_key"))
 # All of them fit in a digest at this size; past it, offline devices are trimmed
@@ -108,8 +133,9 @@ def duration(seconds: float) -> str:
     return " ".join(parts)
 
 
-def topic_disk() -> str:
-    lines = []
+def disk_usage() -> list[tuple[str, int, int, int]]:
+    """(mount, percent used, bytes free, bytes total) per mounted filesystem."""
+    rows = []
     for mount in FILESYSTEMS:
         path = HOSTFS / mount.lstrip("/")
         # An unmounted drive leaves an empty directory on the root filesystem,
@@ -125,7 +151,15 @@ def topic_disk() -> str:
             continue
         free = st.f_bavail * st.f_frsize
         used = total - st.f_bfree * st.f_frsize
-        lines.append(f"{mount}: {human_bytes(free)} free of {human_bytes(total)} ({used * 100 // total}% used)")
+        rows.append((mount, used * 100 // total, free, total))
+    return rows
+
+
+def topic_disk() -> str:
+    lines = [
+        f"{mount}: {human_bytes(free)} free of {human_bytes(total)} ({pct}% used)"
+        for mount, pct, free, total in disk_usage()
+    ]
     return "\n".join(lines) or "no filesystem readable"
 
 
@@ -173,11 +207,16 @@ def topic_cpu() -> str:
     return "\n".join(lines)
 
 
-def topic_memory() -> str:
+def meminfo() -> dict[str, int]:
     info = {}
     for entry in read(PROC / "meminfo").splitlines():
         key, _, value = entry.partition(":")
         info[key] = int(value.split()[0]) * 1024 if value.split() else 0
+    return info
+
+
+def topic_memory() -> str:
+    info = meminfo()
     total, available = info.get("MemTotal", 0), info.get("MemAvailable", 0)
     if not total:
         return "memory unreadable"
@@ -288,6 +327,22 @@ def topic_restarts() -> str:
     return "\n".join(note for _, note in lines[:6])
 
 
+def restart_loops() -> list[tuple[str, int]]:
+    """Containers restarting often enough to be looping rather than to have a
+    history. RestartCount only comes back from an inspect per container, so this
+    walk costs what topic_restarts costs; neither is called often enough to make
+    caching it worth the staleness."""
+    loops = []
+    for container in project_containers():
+        detail = docker_get(f"/containers/{container['Id']}/json")
+        if not isinstance(detail, dict):
+            continue
+        count = detail.get("RestartCount") or 0
+        if count >= RESTART_LOOP:
+            loops.append((short_name(container), count))
+    return sorted(loops)
+
+
 def failing_containers() -> list[dict]:
     return [
         container
@@ -331,9 +386,15 @@ def topic_errors() -> str:
     return "\n".join(blocks)
 
 
-def topic_backups() -> str:
-    """Read from backrest's operation log rather than its API: the repos live on a
-    remote, and the log answers "did last night run" without a restic password."""
+def backup_runs() -> list[dict] | None:
+    """The last finished run of every plan, from backrest's operation log.
+
+    Read from the log rather than backrest's API: the repos live on a remote, and
+    the log answers "did last night run" without a restic password.
+
+    None means the log could not be read, which is not the same answer as a log
+    that records no backup yet - one is ignorance, the other is a fact.
+    """
     try:
         with sqlite3.connect(f"file:{OPLOG}?mode=ro", uri=True) as log:
             rows = log.execute(
@@ -342,9 +403,7 @@ def topic_backups() -> str:
                 "WHERE g.plan_id != '_system_' ORDER BY o.start_time_ms DESC"
             ).fetchall()
     except sqlite3.Error:
-        return "backup log unreadable"
-    if not rows:
-        return "no backup recorded"
+        return None
 
     now = time.time()
     latest, scheduled, failures = {}, {}, {}
@@ -357,15 +416,36 @@ def topic_backups() -> str:
         elif status == 1 and when > now:
             scheduled[key] = when
 
+    # Ages, not timestamps: every caller wants "how long ago", and resolving it
+    # here keeps one `now` across the whole reply.
+    return [
+        {
+            "key": key,
+            "age": now - when,
+            "status": status,
+            "snapshot": snapshot,
+            "failures": failures.get(key, 0),
+            "next": scheduled[key] - now if key in scheduled else None,
+        }
+        for key, (when, status, snapshot) in latest.items()
+    ]
+
+
+def topic_backups() -> str:
+    runs = backup_runs()
+    if runs is None:
+        return "backup log unreadable"
+    if not runs:
+        return "no backup recorded"
     lines = []
-    for key, (when, status, snapshot) in latest.items():
-        line = f"{key}: {BACKUP_STATUS.get(status, status)} {duration(now - when)} ago"
-        if snapshot:
-            line += f" (snapshot {snapshot[:8]})"
-        if failures.get(key):
-            line += f", {failures[key]} failed run(s) on record"
-        if key in scheduled:
-            line += f"; next in {duration(scheduled[key] - now)}"
+    for run in runs:
+        line = f"{run['key']}: {BACKUP_STATUS.get(run['status'], run['status'])} {duration(run['age'])} ago"
+        if run["snapshot"]:
+            line += f" (snapshot {run['snapshot'][:8]})"
+        if run["failures"]:
+            line += f", {run['failures']} failed run(s) on record"
+        if run["next"] is not None:
+            line += f"; next in {duration(run['next'])}"
         lines.append(line)
     return "\n".join(lines)
 
@@ -423,8 +503,97 @@ def topic_overview() -> str:
     )
 
 
+def topic_anomalies() -> str:
+    """Every reading that is outside its threshold, and nothing else.
+
+    The other topics report; this one decides. It exists because otherwise the
+    model has to work out on its own whether "12G free of 230G" is a problem, and
+    a 4B model comparing numbers mid-sentence gets it wrong often enough to
+    matter. The thresholds are in code, so the same box gets the same verdict
+    every time it is asked.
+
+    No CPU sample here: topic_cpu sleeps 300ms to take one, and the 5-minute load
+    average already says whether the machine is saturated - sustained, which is
+    the only version worth reporting.
+    """
+    findings = []
+
+    for mount, pct, free, _total in disk_usage():
+        if pct >= DISK_PCT:
+            findings.append(
+                f"disk {mount}: {pct}% used, only {human_bytes(free)} free "
+                f"(threshold {DISK_PCT}%)"
+            )
+
+    info = meminfo()
+    total = info.get("MemTotal", 0)
+    ram_pct = (total - info.get("MemAvailable", 0)) * 100 // total if total else 0
+    if total and ram_pct >= MEMORY_PCT:
+        findings.append(f"memory: {ram_pct}% used (threshold {MEMORY_PCT}%)")
+    swap_total = info.get("SwapTotal", 0)
+    if swap_total:
+        swap_pct = (swap_total - info.get("SwapFree", 0)) * 100 // swap_total
+        # Both, not either: see RAM_PRESSURE_PCT. `memory` reports swap
+        # unconditionally for anyone who wants the number on its own.
+        if swap_pct >= SWAP_PCT and ram_pct >= RAM_PRESSURE_PCT:
+            findings.append(
+                f"swap: {swap_pct}% used while RAM is at {ram_pct}% "
+                f"(thresholds {SWAP_PCT}% and {RAM_PRESSURE_PCT}%)"
+            )
+
+    temp = read(SYS / "class/thermal/thermal_zone0/temp").strip()
+    if temp.isdigit() and int(temp) / 1000 >= TEMP_C:
+        findings.append(f"temperature: {int(temp) / 1000:.1f}C (threshold {TEMP_C}C)")
+
+    load = read(PROC / "loadavg").split()
+    cores = max(len(cpu_times()) - 1, 1)
+    if len(load) >= 2 and float(load[1]) > cores:
+        findings.append(
+            f"load average: {load[1]} over the last 5 min on {cores} cores"
+        )
+
+    failing = failing_containers()
+    if failing:
+        names = ", ".join(
+            f"{short_name(c)} ({c.get('Status') or c.get('State')})"
+            for c in sorted(failing, key=short_name)
+        )
+        findings.append(f"containers: {len(failing)} not healthy: {names}")
+
+    for name, count in restart_loops():
+        findings.append(
+            f"restarts: {name} has restarted {count} times since the stack came up"
+        )
+
+    runs = backup_runs()
+    if runs is None:
+        findings.append("backups: the log cannot be read, so their state is unknown")
+    elif not runs:
+        findings.append("backups: none recorded yet")
+    else:
+        for run in runs:
+            if run["status"] == 4:
+                findings.append(
+                    f"backups: {run['key']} failed on its last run, "
+                    f"{duration(run['age'])} ago"
+                )
+            elif run["age"] > BACKUP_MAX_AGE_H * 3600:
+                findings.append(
+                    f"backups: {run['key']} last ran {duration(run['age'])} ago, "
+                    f"past the {BACKUP_MAX_AGE_H}h it is expected within"
+                )
+
+    if not findings:
+        return (
+            "nothing abnormal: disk, memory, swap, temperature, load, containers, "
+            "restarts and backups are all within their thresholds"
+        )
+    return "\n".join(findings)
+
+
 TOPICS = {
     "overview": topic_overview,
+    "anomalies": topic_anomalies,
     "disk": topic_disk,
     "cpu": topic_cpu,
     "memory": topic_memory,
@@ -437,7 +606,7 @@ TOPICS = {
 }
 
 Topic = Literal[
-    "overview", "disk", "cpu", "memory", "uptime",
+    "overview", "anomalies", "disk", "cpu", "memory", "uptime",
     "services", "restarts", "errors", "backups", "devices",
 ]
 
@@ -448,6 +617,7 @@ Topic = Literal[
     summary="Live status of the server this assistant runs on",
     description=(
         "Returns current server measurements. Topics: overview (a summary of all of them), "
+        "anomalies (only what is outside its threshold, or that nothing is), "
         "disk (free space per filesystem), cpu (usage, load, temperature), memory (RAM and swap), "
         "uptime, services (are the containers up), "
         "restarts (what restarted and why), errors (log tail of whatever is failing), "
@@ -464,3 +634,45 @@ def get_system_status(topic: Topic) -> str:
 @app.get("/health", include_in_schema=False)
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/health/backups", include_in_schema=False)
+def health_backups() -> dict[str, str]:
+    """Backup freshness as a verdict, for the Uptime Kuma monitor that
+    scripts/uptime-kuma-bootstrap.py creates against this path.
+
+    Backrest reports what it ran, so a failed backup notifies and a backup that
+    never started says nothing at all; this is the half nothing else covers.
+    Kept out of the schema because the model reads the `backups` topic instead,
+    and every operation in the schema is prompt tokens on every message.
+
+    No status is a substring of another, so a json-query matching on any of them
+    cannot match two.
+    """
+    runs = backup_runs()
+    if runs is None:
+        return {"status": "unknown", "detail": "backup log unreadable"}
+    if not runs:
+        return {"status": "stale", "detail": "no backup recorded yet"}
+    failed = [run for run in runs if run["status"] == 4]
+    if failed:
+        return {
+            "status": "failed",
+            "detail": "; ".join(
+                f"{run['key']} failed {duration(run['age'])} ago" for run in failed
+            ),
+        }
+    stale = [run for run in runs if run["age"] > BACKUP_MAX_AGE_H * 3600]
+    if stale:
+        return {
+            "status": "stale",
+            "detail": "; ".join(
+                f"{run['key']} last ran {duration(run['age'])} ago, "
+                f"over the {BACKUP_MAX_AGE_H}h limit"
+                for run in stale
+            ),
+        }
+    return {
+        "status": "ok",
+        "detail": "; ".join(f"{run['key']} {duration(run['age'])} ago" for run in runs),
+    }
