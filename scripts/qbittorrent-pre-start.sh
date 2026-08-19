@@ -3,7 +3,7 @@
 # Writes the config only if it does not yet exist, preserving runtime edits.
 # Runs as ExecStartPre before docker compose up.
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 
@@ -38,8 +38,8 @@ main() {
     mkdir -p "$config_dir"
 
     sed \
-        -e "s|__ALLOW_IP_RANGES__|$allow_ip_ranges_ini|g" \
-        -e "s|__USER__|$user|g" \
+        -e "s|__ALLOW_IP_RANGES__|$(sed_escape "$allow_ip_ranges_ini")|g" \
+        -e "s|__USER__|$(sed_escape "$user")|g" \
         "$QB_CONFIG_TEMPLATE" > "$config_file"
 
     log "Rendered qBittorrent config to $config_file"

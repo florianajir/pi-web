@@ -2,7 +2,7 @@
 # Auto-initialization script for Headscale + Tailscale + Headplane
 # Runs automatically on first start, creates user and performs one-time Tailscale bootstrap with a short-lived preauthkey, then initializes Headplane config with a long-lived reusable preauthkey.
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 
@@ -123,9 +123,9 @@ init_headplane_config() {
     fi
 
     sed \
-        -e "s|__COOKIE_SECRET__|${COOKIE_SECRET}|g" \
-        -e "s|__HEADSCALE_URL__|${HEADSCALE_URL}|g" \
-        -e "s|__HEADPLANE_AGENT__PRE_AUTHKEY__|${HEADPLANE_AUTHKEY}|g" \
+        -e "s|__COOKIE_SECRET__|$(sed_escape "${COOKIE_SECRET}")|g" \
+        -e "s|__HEADSCALE_URL__|$(sed_escape "${HEADSCALE_URL}")|g" \
+        -e "s|__HEADPLANE_AGENT__PRE_AUTHKEY__|$(sed_escape "${HEADPLANE_AUTHKEY}")|g" \
         "$template" > "$config"
 
     log "Headplane config written to $config"

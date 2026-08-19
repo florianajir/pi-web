@@ -7,7 +7,7 @@
 # from inside the container. The API key is read straight from config.xml
 # (rendered by prowlarr-pre-start.sh). Runs as ExecStartPost after docker compose up.
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Render Headscale policy from template using EMAIL
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 
@@ -91,8 +91,8 @@ main() {
     fi
 
     UPDATED_POLICY=$(sed \
-        -e "s|__HEADSCALE_USER__|$EMAIL|g" \
-        -e "s|__HOST_LAN_SUBNET__|$HOST_LAN_SUBNET|g" \
+        -e "s|__HEADSCALE_USER__|$(sed_escape "$EMAIL")|g" \
+        -e "s|__HOST_LAN_SUBNET__|$(sed_escape "$HOST_LAN_SUBNET")|g" \
         "$POLICY_TEMPLATE_FILE")
 
     if [ -f "$POLICY_FILE" ] && [ "$UPDATED_POLICY" = "$(cat "$POLICY_FILE")" ]; then
@@ -126,8 +126,8 @@ main() {
     fi
 
     UPDATED_CONFIG=$(sed \
-        -e "s|__HOST_NAME__|$HOST_NAME|g" \
-        -e "s|__OIDC_HEADSCALE_SECRET__|$OIDC_HEADSCALE_SECRET|g" \
+        -e "s|__HOST_NAME__|$(sed_escape "$HOST_NAME")|g" \
+        -e "s|__OIDC_HEADSCALE_SECRET__|$(sed_escape "$OIDC_HEADSCALE_SECRET")|g" \
         "$CONFIG_TEMPLATE_FILE")
 
     if [ -f "$CONFIG_FILE" ] && [ "$UPDATED_CONFIG" = "$(cat "$CONFIG_FILE")" ]; then

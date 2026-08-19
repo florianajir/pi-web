@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Regenerate homepage's favicon set from config/homepage/icons/pi.svg.
 #
 # Why the rasters exist at all: homepage's `favicon:` setting only takes effect
@@ -9,7 +9,7 @@
 # the stock ones in /app/public so the pi glyph is correct from the first byte.
 #
 # Only needs re-running when pi.svg changes.
-set -euo pipefail
+set -eu
 
 cd "$(dirname "$0")/.."
 ICONS=config/homepage/icons

@@ -6,7 +6,7 @@
 # Writes the config only if it does not yet exist, preserving runtime edits.
 # Runs as ExecStartPre before docker compose up.
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 
@@ -30,7 +30,7 @@ main() {
 
     mkdir -p "$config_dir"
 
-    sed -e "s|__API_KEY__|$api_key|g" "$PROWLARR_CONFIG_TEMPLATE" > "$config_file"
+    sed -e "s|__API_KEY__|$(sed_escape "$api_key")|g" "$PROWLARR_CONFIG_TEMPLATE" > "$config_file"
 
     # linuxserver's s6 init chowns /config to PUID:PGID on start, but make the file
     # readable by the project owner too (root-run systemd start otherwise leaves root:root).

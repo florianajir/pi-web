@@ -5,7 +5,7 @@
 # can be called unauthenticated from 127.0.0.1.
 # Runs as ExecStartPost after docker compose up. Idempotent.
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 

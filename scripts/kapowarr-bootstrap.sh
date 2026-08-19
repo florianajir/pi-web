@@ -7,7 +7,7 @@
 # python3. Credentials are passed via the environment, never on the command line.
 # Runs as ExecStartPost after docker compose up. Best-effort (warns, never fails start).
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 

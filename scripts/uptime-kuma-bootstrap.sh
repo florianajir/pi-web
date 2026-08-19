@@ -4,7 +4,7 @@
 # Runs the Python bootstrap script inside a temporary container on the
 # same Docker network as Uptime Kuma (no local venv required).
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 
