@@ -39,7 +39,6 @@ if [ ! -f "${TEMPLATE_FILE}" ]; then
   die "template not found at ${TEMPLATE_FILE}"
 fi
 
-# Idempotent: if config already exists and has content, skip
 if [ -f "${CONFIG_FILE}" ]; then
   if [ -s "${CONFIG_FILE}" ]; then
     if jq -e 'has("instance") and (.instance | type == "string") and (.instance | length > 0)' "${CONFIG_FILE}" >/dev/null 2>&1; then
@@ -60,17 +59,14 @@ if [ -f "${CONFIG_FILE}" ]; then
   fi
 fi
 
-# Ensure directory exists
 mkdir -p "${CONFIG_DIR}"
 
-# Check for required S3 credentials if we're going to initialize
 if [ -z "${BACKREST_S3_URI}" ] || [ -z "${BACKREST_S3_REPO_PASSWORD}" ] || \
    [ -z "${S3_ACCESS_KEY_ID}" ] || [ -z "${S3_SECRET_ACCESS_KEY}" ]; then
   log "WARNING: S3 credentials incomplete; Backrest will start but S3 repo may not be available"
   log "Set: BACKREST_S3_URI, BACKREST_S3_REPO_PASSWORD, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY"
 fi
 
-# Render template with sed
 tmp_file="$(mktemp)"
 trap 'rm -f "${tmp_file}" "${tmp_patch:-}"' EXIT INT TERM
 
@@ -83,7 +79,6 @@ sed \
   -e "s|__BACKREST_S3_REGION__|${S3_REGION}|g" \
   "${TEMPLATE_FILE}" > "${tmp_file}"
 
-# Validate JSON
 if ! jq empty "${tmp_file}" 2>/dev/null; then
   die "generated config is not valid JSON"
 fi

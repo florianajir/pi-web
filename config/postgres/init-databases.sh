@@ -1,7 +1,6 @@
 #!/bin/bash
 set -e
 
-# Create a temporary SQL file with environment variables substituted
 TEMP_SQL=$(mktemp)
 trap "rm -f $TEMP_SQL" EXIT
 
@@ -145,5 +144,4 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO vaultwarden;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO vaultwarden;
 EOF
 
-# Execute the SQL file
 psql -v ON_ERROR_STOP=1 --username postgres --dbname postgres < "$TEMP_SQL"

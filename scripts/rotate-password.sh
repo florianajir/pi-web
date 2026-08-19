@@ -30,26 +30,14 @@
 #     rotating the Postgres roles those services hold poisons .env for a
 #     FUTURE, unrelated container recreate (a reboot, `make restart`, an image
 #     bump) to break on - so --skip-postgres mode never touches .env at all.
-#   - Every Postgres role rotation is followed by a real re-authentication
-#     check, and every step that depends on a role having actually rotated
-#     (writing Authelia's db_password, recreating lldap/open-webui/
-#     immich-server/nextcloud/backrest) is gated on that specific role's
-#     success - a role that failed to rotate is left exactly as it was,
-#     nothing downstream is touched into a broken state.
 #   - The authelia-config/secrets directory can end up owned by root (this
 #     stack's systemd unit runs docker compose as root, and some root-run init
 #     path can flip ownership between edits). Secret-file writes below try a
 #     plain write first and fall back to sudo.
-#   - The new password is never printed to stdout/logs (see AGENTS.md's "never
-#     print secrets" rule) - it's written to a chmod-600 result file whose
-#     path is printed instead. Read it once, then delete it.
 #
-# Best-effort by design for everything past the Postgres/LDAP/Authelia core
-# (same philosophy as the other bootstrap scripts in this directory): each
-# step logs and continues on failure rather than aborting the whole rotation,
-# because a partial rotation you can see the report for is much safer to
-# recover from than one that dies halfway with no summary. Read the final
-# report and fix up anything marked FAILED manually.
+# Best-effort past the Postgres/LDAP/Authelia core: a partial rotation you can
+# read the report for is safer to recover from than one that dies halfway with no
+# summary. Fix up anything marked FAILED manually.
 #
 # Usage: sh scripts/rotate-password.sh [--yes] [--skip-postgres]
 #   --yes             Skip the interactive confirmation (the Makefile target
@@ -57,20 +45,14 @@
 #                      --yes).
 #   --skip-postgres    Rotate only the LLDAP admin account + Authelia's
 #                      matching ldap_password secret (the actual SSO master
-#                      credential). Does not touch .env, any Postgres role, or
-#                      any other service - see the header note above on why
-#                      writing .env without rotating the roles it also feeds
-#                      would be worse than not rotating at all.
+#                      credential). Touches nothing else, .env included - see
+#                      the .env bullet above.
 
 . "$(dirname "$0")/lib.sh"
 
-# No `set -e` on purpose: nearly every step below is deliberately best-effort
-# (log and continue on failure - see the file header). Under `set -e`, a
-# single transient curl/docker-exec failure inside a plain `var=$(cmd)`
-# assignment (e.g. a connection hiccup probing Prowlarr's API) would abort the
-# ENTIRE rotation, including unrelated later steps - the opposite of what this
-# script is for. Each function already guards its own risky commands with
-# explicit `if`/`[ -n ... ]` checks instead.
+# No `set -e` on purpose: under it, one transient curl/docker-exec failure inside
+# a plain `var=$(cmd)` assignment would abort the ENTIRE rotation, including
+# unrelated later steps. Each function guards its own risky commands instead.
 
 ASSUME_YES=0
 SKIP_POSTGRES=0
@@ -81,8 +63,7 @@ for arg in "$@"; do
     esac
 done
 
-# Matches compose.yaml's lldap service (LLDAP_LDAP_BASE_DN) - not overridable
-# via env, same as every other hardcoded container/network name in this file.
+# Matches LLDAP_LDAP_BASE_DN in compose.yaml, which is not overridable via env.
 LLDAP_BASE_DN="dc=home,dc=ldap"
 LLDAP_ADMIN_USERNAME="admin"
 LDAP_CLIENT_IMAGE="osixia/openldap:1.5.0"
@@ -134,9 +115,7 @@ recreate() {
     fi
 }
 
-# Secret files under authelia-config/secrets can end up root-owned (this
-# stack's root-run systemd path touches them) - try a plain write, fall back
-# to sudo so the rotation doesn't die on an ownership fluke.
+# Plain write first, sudo fallback - see the ownership note in the file header.
 write_secret_file() {
     local path="$1"
     local content="$2"
@@ -164,13 +143,10 @@ backup_secret_file() {
 }
 
 # --- Postgres: generic role rotation + live auth verification ---
-# ALTER ROLE takes effect immediately and never crashes Postgres itself; the
-# only risk is a client still holding the OLD password in its own env failing
-# its NEXT new connection attempt. Existing established connections are
-# unaffected. Verification below is a real auth check, not just "ALTER ROLE
-# returned OK" - and the return code is what every caller gates its dependent
-# step on (see main()) so a failed role rotation never cascades into a
-# crash-looped container or a crash-looped Authelia.
+# ALTER ROLE takes effect immediately and leaves established connections alone;
+# the only risk is a client still holding the OLD password failing its NEXT
+# connection. Verification is a real auth check rather than "ALTER ROLE returned
+# OK", because callers gate their dependent step on this return code.
 
 rotate_postgres_role() {
     local role="$1"
@@ -195,12 +171,9 @@ rotate_postgres_role() {
     return 1
 }
 
-# Sets IMMICH_ROLE_OK / AUTHELIA_ROLE_OK / LLDAP_ROLE_OK / OPEN_WEBUI_ROLE_OK
-# to "1"/"0" so main() can gate each role's dependent step (Authelia's
-# db_password, or a container recreate) on whether IT specifically succeeded -
-# not on whether the batch as a whole ran. The `postgres` superuser role has
-# no dependent step (nothing else authenticates as it), so its result is just
-# logged by rotate_postgres_role itself, nothing to gate.
+# The per-role *_ROLE_OK flags let main() gate each dependent step on whether THAT
+# role rotated, not on whether the batch as a whole ran. `postgres` gets no flag:
+# nothing else authenticates as it, so there is nothing to gate.
 rotate_postgres_roles() {
     if ! container_is_running "pi-postgres"; then
         note "✘ SKIPPED all postgres roles (pi-postgres not running)"
@@ -212,16 +185,14 @@ rotate_postgres_roles() {
     rotate_postgres_role authelia authelia      && AUTHELIA_ROLE_OK=1   || AUTHELIA_ROLE_OK=0
     rotate_postgres_role lldap lldap            && LLDAP_ROLE_OK=1      || LLDAP_ROLE_OK=0
     rotate_postgres_role open-webui open-webui  && OPEN_WEBUI_ROLE_OK=1 || OPEN_WEBUI_ROLE_OK=0
-    # nextcloud is rotated separately, in rotate_nextcloud_db_password(),
-    # AFTER config.php is updated - see the ordering note in main(). It sets
-    # NEXTCLOUD_ROLE_OK itself.
+    # nextcloud is rotated in rotate_nextcloud_db_password(), after config.php
+    # is updated - see the ordering note there.
 }
 
 # --- LLDAP: the actual admin login password (LDAP password-modify, not env) ---
-# Proven live: recreating lldap with a new LLDAP_LDAP_USER_PASS does NOT reset
-# an existing admin account's password. This uses the standard LDAP
-# password-modify extended operation instead, authenticated with the OLD
-# password (captured before any edits).
+# Recreating lldap with a new LLDAP_LDAP_USER_PASS does NOT reset an existing
+# admin account's password, so use the LDAP password-modify extended operation,
+# authenticated with the OLD password captured before any edits.
 
 rotate_lldap_admin_password() {
     local bind_dn="uid=${LLDAP_ADMIN_USERNAME},ou=people,${LLDAP_BASE_DN}"
@@ -253,16 +224,10 @@ rotate_lldap_admin_password() {
 }
 
 # --- Authelia secrets (files, not env - a restart re-reads them) ---
-# Split in two, called at two different points in main(), because the two
-# files have different dependencies:
-#   - ldap_password only needs the LLDAP admin password already rotated (LDAP
-#     protocol, no Postgres involved) - written immediately so the SSO outage
-#     window is as short as possible, in BOTH modes.
-#   - db_password is Authelia's ACTUAL Postgres credential (the
-#     AUTHELIA_DB_PASSWORD compose env var is not what Authelia reads) and is
-#     only safe to write once the `authelia` Postgres role has actually
-#     rotated - writing it before that crash-loops Authelia on its own DB
-#     ping. Full-mode only, gated by main() on AUTHELIA_ROLE_OK.
+# Split in two and called at different points in main() because their
+# dependencies differ: ldap_password needs only the LLDAP rotation, so it goes
+# out immediately to keep the SSO outage short, while db_password is only safe to
+# write once the `authelia` Postgres role has rotated.
 
 rotate_authelia_ldap_secret() {
     local data_root secrets_dir
@@ -339,12 +304,9 @@ rotate_authelia_db_secret() {
 }
 
 # --- Nextcloud: config.php dbpassword + real admin account ---
-# Must happen BEFORE the postgres role password is rotated: occ needs the
-# CURRENT (old) password to still be valid to boot and write the new one into
-# config.php. Nextcloud is briefly unable to reach its DB between this step
-# and the nextcloud ALTER ROLE - that's expected and self-heals immediately.
-# Sets NEXTCLOUD_ROLE_OK so main() can gate the later `recreate nextcloud` and
-# backrest's recreate (which bundles this role's password too) on it.
+# occ needs the OLD role password still valid to boot and write the new one into
+# config.php, so config.php goes first and the ALTER ROLE follows. Nextcloud
+# cannot reach its DB in the gap between the two, which self-heals immediately.
 
 rotate_nextcloud_db_password() {
     NEXTCLOUD_ROLE_OK=0
@@ -382,9 +344,8 @@ rotate_nextcloud_admin_password() {
         return 0
     fi
 
-    # The real admin account was provisioned as $EMAIL, not $ADMIN_USER (see
-    # compose.yaml homepage service comment) - NEXTCLOUD_ADMIN_USER only ever
-    # applied at first install. Try EMAIL first, fall back to ADMIN_USER.
+    # NEXTCLOUD_ADMIN_USER only applied at first install, where it resolved to
+    # $EMAIL - so that, not $ADMIN_USER, is the account that exists.
     for username in "$EMAIL" "$ADMIN_USER"; do
         [ -n "$username" ] || continue
         if docker exec -e OC_PASS="$NEW_PASSWORD" pi-nextcloud php occ user:resetpassword --password-from-env "$username" >/dev/null 2>&1; then
@@ -408,12 +369,9 @@ rotate_ntfy() {
 }
 
 # --- qBittorrent: live WebUI API call, no recreate needed ---
-# QBITTORRENT_CREDENTIALS_OK reflects whether qBittorrent's WebUI password
-# actually rotated - not just the one failure mode (a too-short ADMIN_USER)
-# that was hit live. Any reason it didn't rotate (not running, too-short
-# username, or an API call failure) leaves it "0", so rotate_prowlarr/
-# rotate_kapowarr correctly skip updating their stored copy of a password
-# qBittorrent itself never actually adopted.
+# QBITTORRENT_CREDENTIALS_OK stays "0" for every reason the rotation can fail, so
+# rotate_prowlarr/rotate_kapowarr do not store a password qBittorrent itself
+# never adopted.
 
 rotate_qbittorrent() {
     local http_code
@@ -610,9 +568,8 @@ main() {
     NEW_PASSWORD="$(generate_secret)"
     TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 
-    # The new password is never echoed to stdout/logs (AGENTS.md: never print
-    # secrets) - it's written once to this chmod-600 file instead. Read it,
-    # then delete it.
+    # Never echoed to stdout or the logs (AGENTS.md: never print secrets); the
+    # summary prints this path instead.
     RESULT_FILE="$PROJECT_DIR/.rotate-password.new-password.$TIMESTAMP"
     if ! write_secret_file "$RESULT_FILE" "$NEW_PASSWORD"; then
         die "Could not write $RESULT_FILE to record the new password - aborting before making any change"
@@ -658,16 +615,14 @@ main() {
         rotate_authelia_db_secret
 
         log "=== Recreating containers that bake PASSWORD into their environment ==="
-        # Each recreate is gated on ITS OWN role having actually rotated - a
-        # container whose role failed to rotate is left running on its
-        # current, still-consistent env rather than recreated into a
-        # crash loop against a password Postgres doesn't have.
+        # Gated per role: a container whose role failed to rotate is left running
+        # on its current, still-consistent env rather than recreated into a crash
+        # loop against a password Postgres does not have.
         if [ "$LLDAP_ROLE_OK" = "1" ]; then recreate lldap; else note "… Skipped recreating lldap - its Postgres role didn't rotate"; fi
         if [ "$OPEN_WEBUI_ROLE_OK" = "1" ]; then recreate open-webui; else note "… Skipped recreating open-webui - its Postgres role didn't rotate"; fi
         if [ "$IMMICH_ROLE_OK" = "1" ]; then recreate immich-server pi-immich; else note "… Skipped recreating immich-server - its Postgres role didn't rotate"; fi
         if [ "$NEXTCLOUD_ROLE_OK" = "1" ]; then recreate nextcloud; else note "… Skipped recreating nextcloud - its Postgres role/dbpassword didn't rotate cleanly"; fi
-        # backrest bundles all four of the roles above into one environment -
-        # only safe to refresh if every one of them actually rotated.
+        # backrest bundles all four roles above into one environment.
         if [ "$NEXTCLOUD_ROLE_OK" = "1" ] && [ "$AUTHELIA_ROLE_OK" = "1" ] && [ "$LLDAP_ROLE_OK" = "1" ] && [ "$OPEN_WEBUI_ROLE_OK" = "1" ]; then
             recreate backrest
         else

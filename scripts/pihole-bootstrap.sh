@@ -1,9 +1,7 @@
 #!/bin/sh
 # Bootstrap Pi-hole: adds recommended block lists, allows the click-redirect
-# domains they over-block, then updates gravity.
-# Uses the Pi-hole v6 REST API via docker exec curl.
-# Firebog "ticked" lists (low false-positive rate) — https://firebog.net
-# Safe to run multiple times — skips lists already present.
+# domains they over-block, then updates gravity. Idempotent - lists and allows
+# already present are skipped.
 
 set -e
 
@@ -14,7 +12,7 @@ RETRY_INTERVAL=5
 PIHOLE_CONTAINER="${PIHOLE_CONTAINER:-pi-pihole}"
 PIHOLE_API="http://localhost:8082/api"
 
-# Firebog "ticked" lists — https://firebog.net
+# Firebog's "ticked" lists, the low-false-positive set — https://firebog.net
 # Groups: Base | Suspicious | Advertising | Tracking & Telemetry | Malicious
 BLOCK_LISTS="
 https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
@@ -60,13 +58,12 @@ analytics.google.com
 dit.whatsapp.net
 "
 
-# Run curl inside the Pi-hole container (has curl; avoids extra network hop).
+# Inside the container: it ships curl, and there is no network hop to reach.
 pihole_curl() {
     docker exec "$PIHOLE_CONTAINER" curl -sS "$@"
 }
 
-# Authenticate and return the session ID (sid).
-# Password is written to a temp file to avoid it appearing in process args or logs.
+# The password goes in via a temp file so it never appears in process args or logs.
 get_session() {
     local password="$1"
     local body_file response
@@ -84,7 +81,6 @@ get_session() {
     printf '%s' "$response" | grep -o '"sid":"[^"]*"' | head -1 | cut -d'"' -f4
 }
 
-# Add a block list via the API.
 # Returns 0 if newly added, 1 if already present or on error.
 add_list() {
     local sid="$1"
@@ -106,9 +102,8 @@ add_list() {
     esac
 }
 
-# Add an exact allow entry. Exact, not regex: an allow is a hole in the filter,
-# so it stays as narrow as the domain that was actually breaking.
-# Returns 0 if newly added, 1 if already present or on error.
+# Exact, not regex: an allow is a hole in the filter, so it stays as narrow as the
+# domain that was actually breaking. Returns 0 if newly added, 1 otherwise.
 add_allow() {
     local sid="$1"
     local domain="$2"
@@ -130,7 +125,6 @@ add_allow() {
 update_gravity() {
     local sid="$1"
     log "Updating gravity (downloading block lists, this may take a while)..."
-    # Pi-hole v6: trigger gravity update via API
     local http_code
     http_code=$(pihole_curl \
         -o /dev/null \
@@ -142,7 +136,7 @@ update_gravity() {
         log "Gravity update triggered via API (runs in background)"
         return 0
     fi
-    # Fallback: reload lists via CLI (v6 known-working command)
+    # Fallback for versions whose API action is unavailable.
     if docker exec "$PIHOLE_CONTAINER" pihole reloadlists >/dev/null 2>&1; then
         log "Lists reloaded via CLI"
         return 0

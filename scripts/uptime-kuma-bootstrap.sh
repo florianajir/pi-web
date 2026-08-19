@@ -39,10 +39,9 @@ main() {
     wait_for_container "pi-uptime-kuma" "$MAX_RETRIES" "$RETRY_INTERVAL"
     wait_for_kuma_health
 
-    # Give Uptime Kuma a moment to fully initialize after healthcheck passes
+    # The healthcheck passes a little before the Socket.IO endpoint answers.
     sleep 5
 
-    # Pull image if needed (will be cached after first run)
     docker image inspect "$PYTHON_IMAGE" >/dev/null 2>&1 || docker pull "$PYTHON_IMAGE"
 
     # Passed explicitly: the script's fallback shells out to `docker inspect`, which

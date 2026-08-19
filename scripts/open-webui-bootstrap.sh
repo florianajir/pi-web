@@ -1,107 +1,83 @@
 #!/bin/sh
-# Registers the local llama-cpp backend as an Open WebUI connection.
+# Registers the local llama-cpp backend as an Open WebUI connection and seeds the
+# settings a fresh install needs.
 #
-# The OPENAI_API_BASE_URL / ENABLE_OPENAI_API variables on the open-webui
-# service are "PersistentConfig" ones: Open WebUI copies them into its database
-# the first time it starts and reads the database from then on, so on an
-# instance that already has connections configured the environment is ignored
-# and the model never appears in the picker. Hence this bootstrap.
+# OPENAI_API_BASE_URL and friends are "PersistentConfig" variables: Open WebUI
+# copies them into its database on first start and reads the database from then
+# on, so on an instance that already has connections the compose environment is
+# ignored and the model never appears in the picker.
 #
-# Open WebUI's connection API needs an admin session token, and logins go
-# through Authelia SSO (ENABLE_LOGIN_FORM=false), so there is no scriptable
-# credential to obtain one with - the config table is the practical route.
+# The connection API needs an admin session token, and logins go through Authelia
+# SSO (ENABLE_LOGIN_FORM=false), so there is no scriptable credential to obtain
+# one with - the config table is the practical route.
 #
-# Idempotent: it appends the connection only when missing, leaves any other
-# connection alone, and only restarts open-webui when it actually changed
-# something (the running process caches the config it loaded at startup).
+# Restarts open-webui only when something changed; the running process caches the
+# config it loaded at startup.
 set -eu
 
 . "$(dirname "$0")/lib.sh"
 
-# The stack-wide language, as a BCP 47 tag - the same .env variable compose
-# passes to piper and open-webui. Read from the file rather than the environment
-# because this script writes to the database directly, and so never sees the
-# variables compose expands. Everything below that has to pick a language picks
-# this one.
+# Read from the file rather than the environment: this script writes to the
+# database directly, and so never sees the variables compose expands.
 DEFAULT_LANGUAGE="$(get_env_value DEFAULT_LANGUAGE)"
 [ -n "$DEFAULT_LANGUAGE" ] || DEFAULT_LANGUAGE="en-US"
 
-# Service name and port from compose.yaml; both containers sit on the ai network.
 LLAMA_URL="http://llama-cpp:8080/v1"
-# Model alias llama-cpp serves (LLAMA_ARG_ALIAS in compose.yaml).
+# Must match LLAMA_ARG_ALIAS in compose.yaml.
 LLAMA_MODEL="gemma-4-e2b-it"
-# Marker row recording that the defaults below were seeded, so they are applied
-# once and never re-imposed - anything changed afterwards in Admin Settings
-# stays changed.
+# Each settings group carries its own marker row, so it is seeded once and never
+# re-imposed - anything changed afterwards in Admin Settings stays changed. Bump
+# a version to seed that group's new values once.
 DEFAULTS_MARKER="pi-pcloud.local_ai_defaults"
-# Bump when the defaults below change, to seed the new ones once.
 DEFAULTS_VERSION='"2"'
-# The workspace row for the model carries its own marker: writing it needs an
-# admin account to own it, which a fresh install does not have until the first
-# SSO login, while the config keys above apply from the first boot. One marker
-# across both would record the half that could not run yet as done.
+# Separate from the config markers: writing the workspace row needs an admin
+# account to own it, which a fresh install does not have until the first SSO
+# login. One marker across both would record the half that could not run yet
+# as done.
 MODEL_MARKER="pi-pcloud.local_ai_model_defaults"
 MODEL_VERSION='"1"'
-# Before llama.cpp, the local model came from Ollama and carried its naming
-# convention; the switch renamed it to LLAMA_MODEL above and left the old
-# workspace row behind. Inert - get_all_models drops a base-model override whose
-# base is not served by any backend - but it shows up in the model table and in
-# every backup after it. Removed once, and again after a database restore brings
-# it back, which a one-off DELETE would not cover.
+# The workspace row the Ollama-era naming left behind. Inert - get_all_models
+# drops a base-model override whose base no backend serves - but it shows up in
+# the model table and in every backup after it. Marked rather than deleted once,
+# so a database restore that brings it back is cleaned up again.
 STALE_MODEL_MARKER="pi-pcloud.ollama_model_cleanup"
 STALE_MODEL_VERSION='"1"'
 STALE_MODEL_ID="gemma4:e2b"
-# The text-to-speech settings carry their own marker, so bumping one group's
-# version never re-imposes the other's.
 TTS_MARKER="pi-pcloud.local_tts_defaults"
 # The language is part of the version, so changing DEFAULT_LANGUAGE re-seeds the
-# voice once and re-running with the same language keeps doing nothing.
+# voice once.
 TTS_VERSION="\"2-$DEFAULT_LANGUAGE\""
-# Piper's OpenAI-compatible facade (config/piper), on the same ai network.
 TTS_BASE_URL="http://piper:8000/v1"
 case "$DEFAULT_LANGUAGE" in
     fr*) TTS_VOICE="fr_FR-siwis-medium" ;;
-    # Anything else gets the English voice, which is also what piper falls back
-    # to on its own when no voice matches the language - its baked-in list sorts
-    # en_US before fr_FR. Seeding the same name keeps Admin Settings > Audio
-    # showing the voice that will actually answer, rather than a name that is
-    # silently substituted on every request.
+    # Also what piper falls back to on its own when no voice matches the
+    # language. Seeding the same name keeps Admin Settings > Audio showing the
+    # voice that will actually answer, rather than one silently substituted on
+    # every request.
     *)   TTS_VOICE="en_US-lessac-medium" ;;
 esac
-# Speech-to-text, its own marker again so the two audio halves move separately.
 # No language in the version: parakeet-tdt-0.6b-v3 is multilingual and picks the
 # language off the audio, so DEFAULT_LANGUAGE has nothing to select here.
 STT_MARKER="pi-pcloud.local_stt_defaults"
 STT_VERSION='"1"'
-# Parakeet's OpenAI-compatible facade (config/parakeet), on the ai network.
 STT_BASE_URL="http://parakeet:8000/v1"
-# Sent as the `model` field and otherwise ignored: the container serves the one
-# model it was built with. Set so the admin page names something recognisable.
+# Sent as the `model` field and otherwise ignored - the container serves the one
+# model it was built with - so the admin page names something recognisable.
 STT_MODEL="parakeet-tdt-0.6b-v3"
-# The interface language. DEFAULT_LOCALE is PersistentConfig like the rest, so
-# compose only reaches an instance that has never started; here the database
-# still holds Open WebUI's own empty default, which means "follow the browser".
 LOCALE_MARKER="pi-pcloud.default_locale"
 LOCALE_VERSION="\"1-$DEFAULT_LANGUAGE\""
 # Open access to anyone Authelia lets in, rather than Open WebUI's approval queue.
 ACCESS_MARKER="pi-pcloud.open_access"
 ACCESS_VERSION='"2"'
-# The system-status tool server (config/system-tools), on the ai network.
 TOOLS_MARKER="pi-pcloud.system_tools"
 TOOLS_VERSION='"1"'
 TOOLS_URL="http://system-tools:8000"
 # Stable id: the tool is attached to a model as "server:<id>", so it must not
 # change between runs or the reference on the model breaks.
 TOOLS_ID="pi-system"
-# The splash-screen suggestions.
 SUGGESTIONS_MARKER="pi-pcloud.prompt_suggestions"
-# The language is part of the version, like the TTS marker above: changing
-# DEFAULT_LANGUAGE swaps the tiles once, re-running does nothing.
 SUGGESTIONS_VERSION="\"5-$DEFAULT_LANGUAGE\""
-# `memory` is left out because `overview` already reports RAM. Quoted heredocs,
-# so neither the apostrophes nor the double quotes need escaping. One function
-# per language rather than one case with heredocs inside it, which sh parses but
-# nobody enjoys reading.
+# No tile for `memory`: `overview` already reports RAM.
 suggestions_fr() { cat <<'JSON'
 [
   {"title": ["Combien d'espace disque", "reste-t-il ?"],
@@ -219,11 +195,9 @@ END
 SQL
 }
 
-# 170 prompt tokens for the whole schema, against ~5000 for the built-in tools
-# disabled above.
-#
-# Idempotent by URL, so anything changed afterwards in Admin Settings > Tools
-# survives.
+# 170 prompt tokens for the whole schema, against the ~5000 of the built-in tools
+# disabled above. Idempotent by URL, so anything changed afterwards in Admin
+# Settings > Tools survives.
 register_tool_server() {
     psql_owui -q <<SQL
 DO \$\$
@@ -299,17 +273,14 @@ SQL
 }
 
 # On the model rather than in ui.prompt_suggestions: the frontend reads
-# model.info.meta.suggestion_prompts first and only falls back to the global list,
-# and these assume the tool is attached.
+# model.info.meta.suggestion_prompts first and only falls back to the global
+# list, and these assume the tool is attached.
 #
-# Each wording, in both languages, was checked against llama-server with the
-# schema attached - a prompt that reads well is not necessarily one this model
-# turns into a call. Both sets currently score 9/9, one distinct topic each.
+# Each wording was checked against llama-server with the schema attached - a
+# prompt that reads well is not necessarily one this model turns into a call.
 # Singular ("est-ce qu'un conteneur est arrêté ?") makes it ask which container,
 # and negation ("depuis quand X n'est-il plus en ligne ?") makes it answer with
 # nothing at all; both work stated positively and in the plural.
-#
-# Dollar-quoted so the French apostrophes need no doubling.
 apply_prompt_suggestions() {
     psql_owui -q <<SQL
 INSERT INTO model (id, user_id, base_model_id, name, meta, params, created_at, updated_at, is_active)
@@ -339,9 +310,8 @@ ON CONFLICT (id) DO UPDATE SET
 SQL
 }
 
-# For the groups whose work does not fit in one statement; apply_task_defaults,
-# apply_tts_defaults and apply_stt_defaults write their marker as part of theirs,
-# and apply_open_access writes its own inside its transaction.
+# For the groups whose work does not fit in one statement; the others write their
+# marker as part of theirs, so a failure cannot record them as seeded.
 mark_seeded() {
     psql_owui -q -c \
         "INSERT INTO config (key, value, updated_at)
@@ -350,15 +320,13 @@ mark_seeded() {
              SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;"
 }
 
-# Every write to the model row is guarded by `WHERE EXISTS (... role = 'admin')`.
-# On a fresh install nobody has signed in yet, so those statements would insert
-# nothing, exit 0, and still be marked as seeded - permanently.
+# Every write to the model row is guarded by `WHERE EXISTS (... role = 'admin')`,
+# and on a fresh install nobody has signed in yet - see main().
 admin_present() {
     psql_owui -tAc "SELECT EXISTS (SELECT 1 FROM \"user\" WHERE role = 'admin');" 2>/dev/null \
         | tr -d '[:space:]'
 }
 
-# 't' once the given version of a settings group has been seeded.
 marker_present() {
     psql_owui -tAc \
         "SELECT EXISTS (
@@ -366,12 +334,9 @@ marker_present() {
          );" 2>/dev/null | tr -d ' \r\n'
 }
 
-# Point Open WebUI's read-aloud button at the local Piper container. Seeded, not
-# enforced: the engine has to be set somewhere for the feature to exist at all,
-# but this runs once, so switching back to the browser voice - or to another
-# voice - in Admin Settings sticks. Per-user voice choices in Settings > Audio
-# override the default below anyway, and Piper falls back to it when asked for a
-# voice it does not have.
+# Seeded, not enforced: an engine has to be named for the read-aloud button to
+# exist at all, but this runs once, so switching back to the browser voice in
+# Admin Settings sticks. Per-user choices in Settings > Audio override it anyway.
 apply_tts_defaults() {
     psql_owui -q <<SQL
 INSERT INTO config (key, value, updated_at) VALUES
@@ -385,10 +350,10 @@ ON CONFLICT (key) DO UPDATE
 SQL
 }
 
-# Set the interface language for anyone who has not picked one in their own
-# settings. Seeded once per language, like the two above: choosing another
-# language in Settings > Interface sticks, and so does an admin setting the
-# default back to blank to follow each visitor's browser instead.
+# DEFAULT_LOCALE is PersistentConfig, so compose only reaches an instance that
+# has never started; on an existing one the database still holds Open WebUI's
+# empty default, which means "follow the browser". Seeded once, like the rest, so
+# an admin can set it back to blank.
 apply_locale_default() {
     psql_owui -q <<SQL
 INSERT INTO config (key, value, updated_at) VALUES
@@ -399,22 +364,13 @@ ON CONFLICT (key) DO UPDATE
 SQL
 }
 
-# Point the microphone button at the local Parakeet container. This mirrors the
-# AUDIO_STT_* variables on the open-webui service, which cover a fresh install on
-# their own - those are PersistentConfig, so they are ignored by an instance
-# whose database already exists, which is the case this function is here for.
+# Mirrors the AUDIO_STT_* variables on the open-webui service, which are
+# PersistentConfig and so cover only a fresh install - an existing database is
+# what this function is here for. Seeded, not enforced, like the TTS block above.
 #
-# Seeded, not enforced, like the TTS block above: an engine has to be named for the feature
-# to work at all, but this runs once, so switching back to Open WebUI's built-in
-# whisper - or out to a hosted API - in Admin Settings > Audio sticks.
-#
-# Leaving the engine empty is what selects that built-in whisper, which runs
-# inside the open-webui container: `base`, 20.2% WER on read French, and no room
-# under that container's 1g to load anything better. See the parakeet service in
-# compose.yaml for the numbers behind the swap.
-#
-# No API key: the ai network is internal and the facade authenticates nobody,
-# same as llama-cpp and piper.
+# An empty engine selects the built-in whisper, which runs inside the open-webui
+# container: `base`, 20.2% WER on read French, and no room under that container's
+# 1g for anything better. See the parakeet service in compose.yaml.
 apply_stt_defaults() {
     psql_owui -q <<SQL
 INSERT INTO config (key, value, updated_at) VALUES
@@ -427,12 +383,10 @@ ON CONFLICT (key) DO UPDATE
 SQL
 }
 
-# base_model_id IS NULL restricts this to what Open WebUI calls an override of a
-# base model - the shape the Ollama-era row has. A model someone built on top of
-# a base keeps a base_model_id and is left alone even if the id ever collided.
-# Chats keep their own copy of the model id and there is no foreign key to this
-# table, so an old conversation stays readable; it was already impossible to
-# continue, since nothing serves that model.
+# base_model_id IS NULL restricts this to a base-model override, the shape the
+# Ollama-era row has, so a model someone built on top of a base is left alone
+# even if the id ever collided. Chats keep their own copy of the model id and
+# there is no foreign key here, so old conversations stay readable.
 drop_stale_ollama_model() {
     psql_owui -q <<SQL
 DELETE FROM model WHERE id = '$STALE_MODEL_ID' AND base_model_id IS NULL;
@@ -475,7 +429,6 @@ VALUES
 ON CONFLICT (resource_type, resource_id, principal_type, principal_id, permission)
     DO NOTHING;
 
--- Dollar-quoted, so the JSON needs no doubled quotes.
 UPDATE config SET
     value = (
         SELECT jsonb_agg(
@@ -531,13 +484,11 @@ SQL
 }
 
 # Built-in tools (time, memory, chats, notes, knowledge, channels) are on by
-# default for every model, and their schemas are injected into the prompt of
-# every message sent from the browser - about 5000 tokens, which is ~3
-# minutes of prompt processing on this CPU before the model starts writing.
-# A workspace entry for the model is the only place that default can be
-# turned off, so create one. Attaching tools to a chat explicitly still works.
-#
-# Needs an admin to own the row, hence the separate marker; see MODEL_MARKER.
+# default for every model, and their schemas go into the prompt of every message
+# sent from the browser - about 5000 tokens, ~3 minutes of prompt processing on
+# this CPU before the model starts writing. A workspace entry for the model is
+# the only place that default can be turned off. Attaching tools to a chat
+# explicitly still works.
 apply_model_defaults() {
     psql_owui -q <<SQL
 INSERT INTO model (id, user_id, base_model_id, name, meta, params, created_at, updated_at, is_active)
@@ -634,10 +585,10 @@ main() {
         fi
     fi
 
-    # The config keys above need no account. Everything below writes the model's
-    # workspace row or grants access to it, and every one of those statements is
-    # guarded by `WHERE EXISTS (... role = 'admin')` - so before the first SSO
-    # login they would write nothing, exit 0, and be marked as seeded forever.
+    # Everything below writes the model's workspace row or grants access to it,
+    # and every one of those statements is guarded by `WHERE EXISTS (... role =
+    # 'admin')` - so before the first SSO login they would write nothing, exit 0,
+    # and be marked as seeded forever.
     if [ "$(admin_present)" != "t" ]; then
         log "no Open WebUI account yet; leaving the rest to the next run"
         [ "$changed" = "1" ] || return 0

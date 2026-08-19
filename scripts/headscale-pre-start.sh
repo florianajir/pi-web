@@ -11,9 +11,8 @@ CONFIG_TEMPLATE_FILE="$PROJECT_DIR/config/headscale/config.yaml.template"
 CONFIG_FILE="$PROJECT_DIR/config/headscale/config.yaml"
 
 main() {
-    # Ensure headplane config.yaml exists as a file before docker compose up.
-    # If the file is missing, Docker would create a directory at the bind-mount path
-    # causing headplane to crash with EISDIR on startup.
+    # These paths must exist as files before `docker compose up`: Docker creates a
+    # directory at a missing bind-mount source, and headplane then dies on EISDIR.
     HEADPLANE_CONFIG="$PROJECT_DIR/config/headplane/config.yaml"
     HEADPLANE_API_KEY_FILE="$PROJECT_DIR/config/headplane/headscale_api_key"
     HOMEPAGE_API_KEY_FILE="$PROJECT_DIR/config/homepage/secrets/headscale_api_key"

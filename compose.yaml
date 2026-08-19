@@ -1609,7 +1609,6 @@ services:
       # pass is nearly free: 5.3 -> 10.6 tok/s here, with identical output.
       - LLAMA_ARG_SPEC_DRAFT_MODEL=/models/mtp-gemma-4-E2B-it-Q4_0.gguf
       - LLAMA_ARG_SPEC_TYPE=draft-mtp
-      # Name open-webui shows in its model picker.
       - LLAMA_ARG_ALIAS=gemma-4-e2b-it
       - LLAMA_ARG_PORT=8080
       # A fourth thread measured no faster (bandwidth bound), and leaving core 0
@@ -1621,10 +1620,9 @@ services:
       # quantising it cost ~10% generation speed for no memory worth having.
       - LLAMA_ARG_CTX_SIZE=16384
       # Thinking off: at 10 tok/s, reasoning meant ~500 tokens - a minute of empty
-      # chat window - before the first word of an answer. This is the switch the
-      # chat template reads; --reasoning-budget 0 is NOT equivalent, it closes the
-      # channel without telling the model, which then reasons in the visible
-      # answer. Drop this line to restore thinking.
+      # chat window - before the first word of an answer. Drop this line to
+      # restore it. --reasoning-budget 0 is NOT equivalent: it closes the channel
+      # without telling the model, which then reasons in the visible answer.
       - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking":false}'
       # Concurrent requests queue instead of splitting the three threads: the
       # default runs several slots at once, and two parallel requests each
@@ -1641,7 +1639,8 @@ services:
       start_period: 120s
       start_interval: 5s
     labels:
-      # Same as piper: an API behind open-webui, so no href, just health.
+      # No homepage.href: an API behind open-webui, not a page to open. mdi- icons
+      # throughout the group because dashboard-icons has nothing for these.
       - "homepage.group=AI"
       - "homepage.name=llama.cpp"
       - "homepage.description=Gemma 4 E2B inference"
@@ -1671,11 +1670,10 @@ services:
       - 8000
     environment:
       # open-webui defaults to OpenAI voice names (alloy, echo), none of which
-      # exist here, so in practice this is the voice. Derived from the stack-wide
-      # DEFAULT_LANGUAGE rather than named, so moving the stack to another
-      # language does not mean knowing a Piper voice id; set PIPER_DEFAULT_VOICE
-      # to name one outright. A voice has to be in the image to be picked - see
-      # the VOICES build arg in config/piper/Dockerfile.
+      # exist here, so in practice this picks the voice. A language rather than a
+      # voice id, so moving the stack to another language needs no Piper
+      # knowledge; set PIPER_DEFAULT_VOICE to name one outright. The voice has to
+      # be in the image - see the VOICES build arg in config/piper/Dockerfile.
       - PIPER_DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-en-US}
     healthcheck:
       <<: *healthcheck-relaxed
@@ -1683,8 +1681,6 @@ services:
       test: ["CMD", "python3", "-c", "import urllib.request as r; r.urlopen('http://localhost:8000/health').read()"]
       start_period: 30s
     labels:
-      # No homepage.href: an API for open-webui, no page to open. mdi- icon
-      # because dashboard-icons has nothing for piper.
       - "homepage.group=AI"
       - "homepage.name=Piper"
       - "homepage.description=Text-to-speech, French by default"
@@ -1697,21 +1693,14 @@ services:
 
   # Speech-to-text for open-webui's microphone button.
   #
-  # Open WebUI ships its own faster-whisper, but it runs inside the open-webui
-  # container - capped at 1g and already sitting at ~730MB - so the model has to
-  # stay small enough to be bad. On 113s of read French (FLEURS fr_fr) over this
-  # Pi's three cores it scored 20.2% WER at 0.95x realtime with the default
-  # `base`; `small` reached 12.5% at 1.25x and `medium` 4.9% at 3.99x, the last
-  # two needing 1-2.7GB the web UI has no room for.
-  #
-  # Parakeet is a TDT model: the decoder is a small joint network stepped once
-  # per frame rather than an autoregressive LM, so it lands whisper-medium's
-  # accuracy at a fraction of the cost - 8.7% WER at 0.17x realtime here, which
-  # is a dictated sentence coming back in well under a second. It punctuates and
-  # capitalises, and it has no language setting at all: it covers 25 European
-  # languages and picks one acoustically, so nothing needs configuring to dictate
-  # in one language today and another tomorrow. The numbers above were taken on
-  # French because that is what gets dictated here, not because it is a limit.
+  # Open WebUI's own faster-whisper runs inside the open-webui container, capped
+  # at 1g and already sitting at ~730MB, so the model has to stay small enough to
+  # be bad. On 113s of read French (FLEURS fr_fr) over this Pi's three cores the
+  # default `base` scored 20.2% WER at 0.95x realtime; `small` 12.5% at 1.25x and
+  # `medium` 4.9% at 3.99x, the last two needing 1-2.7GB the web UI has no room
+  # for. Parakeet lands whisper-medium's accuracy at 8.7% WER and 0.17x realtime,
+  # a dictated sentence coming back in well under a second, and has no language
+  # setting at all: it covers 25 European languages and picks one acoustically.
   #
   # Built here for the same reason as piper: upstream publishes no image, and
   # onnx-asr has no HTTP server at all - see config/parakeet/openai_api.py.
@@ -1727,24 +1716,19 @@ services:
     expose:
       - 8000
     environment:
-      # int8, the quantization baked into the image by the Dockerfile's build
-      # arg of the same name. fp32 is the better model - 4.5% WER against 8.7% -
-      # but it is 2.3GB resident instead of 1.2GB and a ~2.5GB download in the
-      # image; switching means rebuilding with --build-arg PARAKEET_QUANTIZATION=
-      # so that the weights loaded are the weights present.
+      # Must match the Dockerfile build arg of the same name, or the weights
+      # loaded are not the weights present. fp32 is the better model - 4.5% WER
+      # against 8.7% - but 2.3GB resident instead of 1.2GB, and a ~2.5GB download.
       - PARAKEET_QUANTIZATION=int8
       # Matches the cpuset below; onnxruntime would otherwise size its thread
       # pool from the host's four cores and oversubscribe the cgroup.
       - PARAKEET_THREADS=3
     healthcheck:
       <<: *healthcheck-relaxed
-      # python:3.12-slim ships no curl or wget, same as piper. /health is 503
-      # until the model is resident, which takes ~5s from start.
+      # /health is 503 until the model is resident, ~5s from start.
       test: ["CMD", "python3", "-c", "import urllib.request as r; r.urlopen('http://localhost:8000/health').read()"]
       start_period: 60s
     labels:
-      # No homepage.href: an API for open-webui, like piper, so the card only
-      # reports health. mdi- because dashboard-icons has nothing for parakeet.
       - "homepage.group=AI"
       - "homepage.name=Parakeet"
       - "homepage.description=Multilingual speech-to-text"
@@ -1752,10 +1736,10 @@ services:
     deploy: *cpu-request-small
     # Same three cores as llama-cpp and piper, leaving core 0 to traefik and DNS.
     cpuset: "1-3"
-    # ~1.2GB resident for the int8 weights and the onnxruntime arena, plus room
-    # for the encoder's working set on a full transcription window (~1.4GB
-    # measured). The headroom is what stops a long upload from being an OOM:
-    # before openai_api.py windowed them, a 120s pass went past 2GB.
+    # ~1.2GB resident for the int8 weights and the onnxruntime arena, plus the
+    # encoder's working set on a full window (~1.4GB measured). The headroom is
+    # what stops a long upload being an OOM: before openai_api.py windowed them,
+    # a 120s pass went past 2GB.
     mem_limit: 2560m
     oom_score_adj: *oom-score-deprioritize
 
@@ -1806,14 +1790,12 @@ services:
       # first run, and Docker would materialise a directory in its place.
       - ${DATA_LOCATION:-./data}/backrest/data:/run/backrest:ro
       # The key homepage's headscale widget already uses, rather than a second one
-      # to rotate. Headscale API keys expire, so both break together.
-      # scripts/headscale-pre-start.sh keeps the path a file; without it Docker
-      # would create a directory here on a fresh install, and the bootstrap that
-      # fills the key in could then never write it.
+      # to rotate: Headscale API keys expire, so both break together.
+      # scripts/headscale-pre-start.sh keeps the path a file, or Docker would
+      # create a directory here and the bootstrap could never write the key in.
       - ./config/homepage/secrets/headscale_api_key:/run/secrets/headscale_api_key:ro
     healthcheck:
       <<: *healthcheck-relaxed
-      # python:3.12-slim ships no curl or wget.
       test: ["CMD", "python3", "-c", "import urllib.request as r; r.urlopen('http://localhost:8000/health').read()"]
       start_period: 20s
     labels:
@@ -1853,31 +1835,26 @@ services:
       - OAUTH_USERNAME_CLAIM=preferred_username
       - DATABASE_URL=postgresql://open-webui:${PASSWORD}@postgres/open-webui
       # The key is required by the client but ignored by llama-server, which runs
-      # unauthenticated on the internal ai network.
+      # unauthenticated on the internal ai network - same for piper and parakeet.
       - ENABLE_OPENAI_API=true
       - OPENAI_API_BASE_URL=http://llama-cpp:8080/v1
       - OPENAI_API_KEY=llama-cpp
       # No Ollama in the stack; left on, this probes localhost:11434 on every
       # start and on the model list of every page load.
       - ENABLE_OLLAMA_API=false
-      # Interface language for anyone who has not picked one themselves. Same
-      # BCP 47 tag as the rest of the stack; per-user choices override it.
       - DEFAULT_LOCALE=${DEFAULT_LANGUAGE:-en-US}
-      # Speech-to-text on the parakeet sidecar rather than the faster-whisper
-      # that ships inside this container - see that service for the numbers.
-      # These are PersistentConfig, so they only take on an instance that has
-      # never started: they are what makes a fresh install come up dictating
-      # correctly, and scripts/open-webui-bootstrap.sh carries the same values
-      # to instances whose database already holds Open WebUI's own defaults.
+      # Speech-to-text on the parakeet sidecar rather than the faster-whisper that
+      # ships inside this container - see that service for the numbers. These are
+      # PersistentConfig, so they only take on an instance that has never started;
+      # scripts/open-webui-bootstrap.sh carries the same values to one whose
+      # database already exists.
       #
-      # The base URL is not optional. Open WebUI defaults it to
-      # OPENAI_API_BASE_URL, which here is llama-cpp - so leaving it out would
+      # The base URL is not optional: Open WebUI defaults it to
+      # OPENAI_API_BASE_URL, which here is llama-cpp, so leaving it out would
       # point the microphone at the chat model.
       - AUDIO_STT_ENGINE=openai
       - AUDIO_STT_OPENAI_API_BASE_URL=http://parakeet:8000/v1
       - AUDIO_STT_MODEL=parakeet-tdt-0.6b-v3
-      # Required by the client, ignored by the facade: the ai network is
-      # internal and parakeet authenticates nobody, same as llama-cpp and piper.
       - AUDIO_STT_OPENAI_API_KEY=parakeet
     volumes:
       - open_webui_data:/app/backend/data

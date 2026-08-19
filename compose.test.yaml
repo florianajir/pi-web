@@ -1,5 +1,4 @@
-# Test-specific Docker Compose configuration
-# This file extends compose.yaml and overrides only the parts needed for CI/testing.
+# Overrides only the parts of compose.yaml that cannot work on a CI runner.
 # Usage: docker compose -f compose.yaml -f compose.test.yaml up -d
 
 services:
@@ -69,19 +68,15 @@ services:
     depends_on: !override
       postgres:
         condition: service_healthy
-    # Merged into the list from compose.yaml, so nothing else is lost. Without
-    # it open-webui blocks on an unreachable http://llama-cpp:8080/v1 whenever
-    # it builds a model list.
+    # Without this open-webui blocks on an unreachable http://llama-cpp:8080/v1
+    # every time it builds a model list.
     environment:
       - ENABLE_OPENAI_API=false
 
   # --- nextcloud: replace host bind mounts with named volumes for CI ---
-  # In CI the host directories (./data/nextcloud-config, ./data/nextcloud) do not
-  # pre-exist, so Docker creates them as root:root.  Nextcloud runs as www-data
-  # (uid 33) and cannot write to those directories, which prevents first-run
-  # initialisation and makes the health check fail.  Named Docker volumes are
-  # initialised with the correct ownership by the container runtime.
-  # start_period is extended because the initial DB installation takes >30s.
+  # The host directories do not pre-exist in CI, so Docker creates them root:root
+  # and www-data (uid 33) cannot write to them; named volumes get the ownership
+  # right. start_period is extended because the first DB install takes >30s.
   nextcloud:
     volumes: !override
       - nextcloud_html:/var/www/html
@@ -103,10 +98,8 @@ services:
       start_period: 60s
 
   # --- postgres: replace host bind mount with a named volume for CI ---
-  # The host ./data/postgres directory may contain production data initialised with
-  # a different PASSWORD.  Using a named volume guarantees a fresh database is
-  # created with the CI PASSWORD so lldap/authelia/immich/nextcloud can all
-  # authenticate successfully.
+  # ./data/postgres may hold production data initialised with a different
+  # PASSWORD; a named volume guarantees a fresh database on the CI one.
   postgres:
     volumes: !override
       - postgres_ci_data:/var/lib/postgresql/data
@@ -124,10 +117,8 @@ services:
       - ${DATA_LOCATION:-./data}/authelia-config:/config/data
 
   # --- lldap: set JWT secret inline for CI ---
-  # compose.yaml loads lldap.env from ./config/lldap/lldap.env.
-  # Docker Compose's `required: false` only suppresses ENOENT, not EACCES, so a
-  # root-owned or unreadable file still causes a failure. Reset env_file to empty
-  # and provide the JWT secret inline instead for deterministic CI.
+  # `required: false` on compose.yaml's lldap.env only suppresses ENOENT, not
+  # EACCES, so a root-owned or unreadable file there still fails the run.
   lldap:
     environment:
       LLDAP_JWT_SECRET: ci-jwt-secret-for-testing-placeholder
@@ -150,8 +141,7 @@ services:
 
   # --- pihole: disable host port bindings, fix static IP for CI bridge network ---
   pihole:
-    # Port 53 is occupied by systemd-resolved in CI; drop host port bindings.
-    # Use !reset so Docker Compose does not inherit 53:53 bindings from compose.yaml.
+    # systemd-resolved already holds port 53 on the runner.
     ports: !reset []
     expose:
       - 53
@@ -168,9 +158,8 @@ services:
         # Must be within the CI bridge subnet defined below (192.168.88.0/24).
         ipv4_address: "192.168.88.250"
 
-# Replace the macvlan LAN network with a plain bridge for CI compatibility.
-# macvlan requires a real physical parent interface (e.g. eth0) and promiscuous
-# mode support that is unavailable in GitHub Actions VM runners.
+# macvlan needs a real physical parent interface and promiscuous mode, neither of
+# which a GitHub Actions VM runner has.
 networks:
   lan:
     driver: bridge
@@ -181,7 +170,6 @@ networks:
         - subnet: 192.168.88.0/24
           gateway: 192.168.88.1
 
-# Named volumes used by the postgres and nextcloud CI overrides above.
 volumes:
   postgres_ci_data:
   nextcloud_ci_data:

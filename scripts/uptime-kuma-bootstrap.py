@@ -282,7 +282,6 @@ class UptimeKumaBootstrap:
         self._need_setup = threading.Event()
         self._ready = threading.Event()
 
-        # Data received via events after login
         self.docker_hosts = []
         self.notifications = []
         self.monitors = {}
@@ -331,7 +330,7 @@ class UptimeKumaBootstrap:
             try:
                 self.sio.connect(self.url, transports=["websocket"], wait_timeout=self.timeout)
                 self._connected.wait(timeout=self.timeout)
-                # Wait for autoLogin or setup events
+                # Give the server time to emit autoLogin or setup.
                 time.sleep(2)
                 return
             except Exception as e:
@@ -411,7 +410,6 @@ class UptimeKumaBootstrap:
             self.wait_ready()
             return
 
-        # Try login (instance already set up, auth enabled)
         try:
             self.login(username, password)
             self.wait_ready()
@@ -941,16 +939,14 @@ def main():
     api.connect()
 
     try:
-        # Setup or login
         api.setup_or_login(username, password)
 
-        # Disable built-in auth (Authelia handles it via reverse proxy)
+        # Authelia handles authentication at the reverse proxy.
         if password:
             api.disable_auth(password)
 
         api.set_retention(KEEP_DATA_PERIOD_DAYS, password)
 
-        # Ensure Docker host
         docker_host_id = api.ensure_docker_host()
 
         # Ensure one ntfy notification per alert tier. Without the password the
@@ -971,7 +967,6 @@ def main():
         # redundant push for the same outage.
         root_id = api.ensure_group_monitor(ROOT_GROUP, None, None)
 
-        # One group monitor per blast-radius tier
         group_ids = {}
         for group in GROUPS:
             notification_id = tier_ids.get(group["tier"]) if group["notify"] == "group" else None
@@ -979,7 +974,6 @@ def main():
                 group["name"], root_id, notification_id, resend=group["resend"],
             )
 
-        # Container monitors, each in its group and on its group's alert tier
         container_map = build_container_map()
         default_group = fallback_group()
         container_names = get_container_names_from_compose(project_dir)

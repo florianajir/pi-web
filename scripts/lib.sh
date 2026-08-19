@@ -21,7 +21,6 @@ die() {
 
 # --- Environment helpers ---
 
-# Read a KEY=value from a dotenv-style file.
 read_env_value_from_file() {
     local file="$1"
     local key="$2"
@@ -33,7 +32,6 @@ read_env_value_from_file() {
     grep "^$key=" "$file" 2>/dev/null | tail -n1 | cut -d'=' -f2-
 }
 
-# Read a value from the project .env file.
 get_env_value() {
     read_env_value_from_file "$ENV_FILE" "$1"
 }
@@ -100,7 +98,6 @@ print(f'\$pbkdf2-sha512\$310000\${s}\${d}')
 
 # --- Container helpers ---
 
-# Wait for a Docker container to appear by name.
 # Usage: wait_for_container <name> [max_retries] [interval_seconds]
 wait_for_container() {
     local name="$1"
@@ -119,7 +116,6 @@ wait_for_container() {
     return 1
 }
 
-# Wait for a Docker container to report healthy status.
 # Usage: wait_for_health <name> [max_retries] [interval_seconds]
 wait_for_health() {
     local name="$1"
@@ -145,7 +141,7 @@ container_is_running() {
     docker ps --format '{{.Names}}' | grep -q "^${name}$"
 }
 
-# Wait for a Docker container health status, but warn instead of hard-failing logs.
+# Like wait_for_health, but a timeout is a warning rather than an error.
 # Usage: wait_for_health_warning <name> [max_retries] [interval_seconds]
 wait_for_health_warning() {
     local name="$1"
@@ -176,7 +172,6 @@ authelia_container_has_oidc_materials() {
     (cd "$PROJECT_DIR" && docker compose exec -T authelia sh -ec "[ -r /config/secrets/oidc_${client_id}_secret.txt ] && grep -q \"client_id: ${client_id}\" /config/configuration.yml" >/dev/null 2>&1)
 }
 
-# Ensure Authelia OIDC secret + client stanza exist for a client.
 # Usage: ensure_authelia_oidc_materials <client_id> <display_name> [max_retries] [interval_seconds]
 ensure_authelia_oidc_materials() {
     local client_id="$1"
@@ -239,17 +234,14 @@ ensure_authelia_oidc_materials() {
 
 # --- OIDC secret retrieval ---
 
-# Retrieve an OIDC client secret with 3-method fallback:
-#   1. Explicit env var (if env_var_name provided)
-#   2. Plaintext file on disk at authelia-config/secrets/
-#   3. Docker exec into Authelia container
+# Falls back from the env var to the secret file on disk to a docker exec, so it
+# works before the file exists on a fresh install and after the stack is up.
 # Usage: get_oidc_secret <client_name> [env_var_name]
 get_oidc_secret() {
     local client_name="$1"
     local env_var_name="${2:-}"
     local secret_value data_root secret_file
 
-    # 1. Explicit env var override
     if [ -n "$env_var_name" ]; then
         secret_value="$(eval "printf '%s' \"\${$env_var_name:-}\"")"
         [ -z "$secret_value" ] && secret_value="$(get_env_value "$env_var_name")"
@@ -259,7 +251,6 @@ get_oidc_secret() {
         fi
     fi
 
-    # 2. File on disk
     data_root="$(resolve_data_location_path)"
     secret_file="$data_root/authelia-config/secrets/oidc_${client_name}_secret.txt"
     if [ -r "$secret_file" ]; then
@@ -267,7 +258,6 @@ get_oidc_secret() {
         return 0
     fi
 
-    # 3. Docker container fallback
     secret_value="$(cd "$PROJECT_DIR" && docker compose exec -T authelia sh -ec "cat /config/secrets/oidc_${client_name}_secret.txt" 2>/dev/null | tr -d '\r\n')"
     if [ -n "$secret_value" ]; then
         printf '%s' "$secret_value"
@@ -279,13 +269,12 @@ get_oidc_secret() {
 
 # --- Docker API helpers ---
 
-# Run curl via a temporary Docker container on the frontend network.
+# A throwaway container, so no service needs curl installed to be probed.
 docker_curl() {
     local curl_image="${CURL_IMAGE:-curlimages/curl:8.12.1}"
     docker run --rm --network frontend "$curl_image" -fsS "$@"
 }
 
-# Wait for an HTTP endpoint reachable from the frontend Docker network.
 # Usage: wait_for_http_endpoint <url> <name> [max_retries] [interval_seconds]
 wait_for_http_endpoint() {
     local url="$1"
@@ -308,7 +297,6 @@ wait_for_http_endpoint() {
     return 1
 }
 
-# API helpers for endpoints using cookie-based auth.
 # Usage: api_get_with_cookie <base_url> <path> [cookie]
 api_get_with_cookie() {
     local base_url="$1"
@@ -377,9 +365,7 @@ sql_escape() {
     printf '%s' "$1" | sed "s/'/''/g"
 }
 
-# Build a deduped, space-separated list of candidate usernames to try
-# authenticating with, in the given priority order, always ending with
-# "admin" as a fallback if it isn't already present.
+# Deduped, in the given priority order, always ending with "admin".
 # Usage: build_candidate_usernames "$EMAIL" "$ADMIN_USER"
 build_candidate_usernames() {
     local result="" candidate

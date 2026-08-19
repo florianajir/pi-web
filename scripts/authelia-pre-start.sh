@@ -58,14 +58,12 @@ ensure_config_target_is_file() {
 }
 
 main() {
-    # Load .env if variables are not already set
     HOST_NAME="${HOST_NAME:-$(get_env_value HOST_NAME)}"
     DATA_LOCATION="${DATA_LOCATION:-$(get_env_value DATA_LOCATION)}"
     PASSWORD="${PASSWORD:-$(get_env_value PASSWORD)}"
 
     HOST_NAME="${HOST_NAME:-pi.lan}"
     DATA_LOCATION="${DATA_LOCATION:-./data}"
-    # Resolve DATA_LOCATION relative to PROJECT_DIR
     case "$DATA_LOCATION" in
         /*) : ;;
         *)  DATA_LOCATION="$PROJECT_DIR/$DATA_LOCATION" ;;
@@ -82,7 +80,6 @@ main() {
     mkdir -p "$SECRETS_DIR"
     safe_chmod 700 "$SECRETS_DIR"
 
-    # Generate Authelia secrets (idempotent: skip if file already exists)
     for secret in jwt_secret session_secret storage_encryption_key oidc_hmac_secret; do
         if [ ! -f "$SECRETS_DIR/$secret" ]; then
             generate_secret > "$SECRETS_DIR/$secret"
@@ -91,33 +88,32 @@ main() {
         fi
     done
 
-    # LDAP bind password = lldap admin password = PASSWORD
+    # Authelia binds to lldap as its admin, whose password is PASSWORD.
     if [ ! -f "$SECRETS_DIR/ldap_password" ]; then
         printf '%s' "$PASSWORD" > "$SECRETS_DIR/ldap_password"
         safe_chmod 600 "$SECRETS_DIR/ldap_password"
         log "Written ldap_password"
     fi
 
-    # Authelia postgres password = PASSWORD
+    # The credential Authelia actually reads; AUTHELIA_DB_PASSWORD in compose.yaml
+    # is not.
     if [ ! -f "$SECRETS_DIR/db_password" ]; then
         printf '%s' "$PASSWORD" > "$SECRETS_DIR/db_password"
         safe_chmod 600 "$SECRETS_DIR/db_password"
         log "Written db_password"
     fi
 
-    # Generate OIDC RSA private key
     if [ ! -f "$SECRETS_DIR/oidc_private_key.pem" ]; then
         generate_rsa_key "$SECRETS_DIR/oidc_private_key.pem"
         safe_chmod 600 "$SECRETS_DIR/oidc_private_key.pem"
     fi
 
-    # Generate OIDC client secrets (plaintext + PBKDF2 hash)
+    # Add a client here when declaring one in configuration.yml.template.
     for client in nextcloud immich beszel dockhand headplane headscale open-webui kavita vaultwarden; do
         generate_oidc_secret "oidc_${client}_secret"
     done
 
-    # Generate lldap JWT secret (stored in config dir for lldap service)
-    # Allow overriding LLDAP_CONFIG_DIR for CI/helper containers with read-only project mounts.
+    # Overridable for CI and helper containers, which mount the project read-only.
     LLDAP_CONFIG_DIR="${LLDAP_CONFIG_DIR:-$PROJECT_DIR/config/lldap}"
     mkdir -p "$LLDAP_CONFIG_DIR"
     LLDAP_ENV_FILE="$LLDAP_CONFIG_DIR/lldap.env"
@@ -129,7 +125,7 @@ main() {
         log "Generated lldap JWT secret at $LLDAP_ENV_FILE"
     fi
 
-    # Ensure lldap config silences key_seed/key_file warning
+    # Silences lldap's key_seed/key_file warning on every start.
     LLDAP_DATA_DIR="$DATA_LOCATION/lldap"
     LLDAP_CONFIG="$LLDAP_DATA_DIR/lldap_config.toml"
     if [ -f "$LLDAP_CONFIG" ] && ! grep -q '^key_file' "$LLDAP_CONFIG"; then
@@ -137,7 +133,6 @@ main() {
         log "Added key_file override to lldap_config.toml"
     fi
 
-    # Render configuration.yml from template
     if [ ! -f "$CONFIG_TEMPLATE" ]; then
         die "Authelia config template not found at $CONFIG_TEMPLATE"
     fi

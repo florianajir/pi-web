@@ -48,8 +48,7 @@ credentials_configured() {
     return 0
 }
 
-# Set credentials via the API without authentication.
-# Works because the config template enables auth bypass for 127.0.0.1.
+# Unauthenticated: the config template enables auth bypass for 127.0.0.1.
 set_credentials() {
     local username="$1"
     local password="$2"
@@ -68,9 +67,8 @@ set_credentials() {
         --data @- \
         "$QB_API/app/setPreferences" < "$prefs_file")
     rm -f "$prefs_file"
-    # Non-fatal: qBittorrent 5.x rejects usernames < 3 chars, so a short .env ADMIN_USER (e.g.
-    # "pi") leaves the WebUI on its default login. Don't abort — notifications must still
-    # get configured. qBittorrent stays reachable behind the VPN + Authelia regardless.
+    # Non-fatal: the notifications below must still get configured, and the WebUI
+    # stays reachable behind the VPN + Authelia either way.
     if [ "$http_code" != "200" ]; then
         log "WARNING: credentials setPreferences returned HTTP $http_code (WebUI login left unchanged)"
         return 1
@@ -115,8 +113,7 @@ main() {
     password="$(get_env_value PASSWORD)"
     [ -n "$username" ] && [ -n "$password" ] || die "ADMIN_USER or PASSWORD not set in .env"
 
-    # Credentials (fast path if already persisted from a previous run). Best-effort:
-    # a failure here must not stop the notification setup below.
+    # Best-effort: a failure here must not stop the notification setup below.
     if credentials_configured "$username"; then
         log "Credentials already configured, skipping"
     elif [ "${#username}" -lt 3 ]; then

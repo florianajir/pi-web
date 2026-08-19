@@ -1,17 +1,9 @@
 # Parakeet TDT 0.6B v3 (NVIDIA) behind an OpenAI-compatible facade.
 #
-# Speech-to-text for open-webui's microphone button. Open WebUI ships its own
-# faster-whisper, but it runs inside the open-webui container - which is capped
-# at 1g and already sits at ~730MB - so any model worth the upgrade OOMs the web
-# UI along with it. Splitting it out is the same move piper made for TTS, and it
-# lets the model be sized against its own limit.
-#
-# Whisper was measured and dropped: on 113s of read French (FLEURS fr_fr), on
-# this Pi's three cores, faster-whisper scored 20.2% WER at 0.95x realtime for
-# base, 12.5% at 1.25x for small and 4.9% at 3.99x for medium. Parakeet is a TDT
-# model - the decoder is a small joint network stepped once per frame, not an
-# autoregressive LM - so it gets whisper-medium's accuracy at a fraction of the
-# cost: 4.5% WER at 0.30x realtime in fp32, 8.7% at 0.17x in int8.
+# Speech-to-text for open-webui's microphone button, split out of the open-webui
+# container so the model is sized against its own limit rather than that
+# container's 1g - see the parakeet service in compose.yaml for the numbers that
+# ruled out the bundled faster-whisper.
 FROM python:3.12-slim
 
 # int8 by default: 8.7% WER against fp32's 4.5%, but 1.2GB resident instead of

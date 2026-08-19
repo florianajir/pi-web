@@ -337,7 +337,6 @@ sync_system_user_access() {
         return 0
     fi
 
-    # Collect all known user IDs so every system is visible to every user.
     users_response=$(beszel_api_get "$auth_token" "/api/collections/users/records" \
         --data-urlencode "page=1" \
         --data-urlencode "perPage=500" \
@@ -903,7 +902,6 @@ if smtp_host:
     smtp["tls"] = smtp_port == "465"
     payload["smtp"] = smtp
 
-    # sender info in meta
     email = env("EMAIL")
     host_name = env("HOST_NAME") or "pi.lan"
     if email:
@@ -934,7 +932,6 @@ if backup_cron:
         "cron": backup_cron,
         "cronMaxKeep": int(env("BESZEL_BACKUP_MAX_KEEP") or "7"),
     }
-    # Use the same S3 config for backup storage if available
     if s3_endpoint and s3_bucket:
         backups["s3"] = {
             "enabled": True,
@@ -978,7 +975,7 @@ configure_pocketbase_settings() {
         return 1
     }
 
-    # Export env vars so the python helper can read them
+    # The python helper below reads these from the environment.
     export SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD EMAIL HOST_NAME
     export S3_ENDPOINT S3_BUCKET S3_REGION S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY BESZEL_S3_FORCE_PATH_STYLE
     export BESZEL_BACKUP_CRON BESZEL_BACKUP_MAX_KEEP
@@ -1098,7 +1095,6 @@ main() {
         die "EMAIL and PASSWORD must be set in .env"
     fi
 
-    # Load env vars used by configure_pocketbase_settings
     HOST_NAME=$(get_env_value HOST_NAME)
     SMTP_HOST=$(get_env_value SMTP_HOST)
     SMTP_PORT=$(get_env_value SMTP_PORT)
@@ -1158,9 +1154,8 @@ main() {
             die "Failed to bootstrap TOKEN/KEY using superuser fallback"
         fi
 
-        # Preserve the existing agent token when an active system already exists to
-        # prevent the agent from reconnecting with a new identity and creating a
-        # duplicate system record.
+        # Reusing the existing token keeps the agent from reconnecting under a new
+        # identity and registering a duplicate system.
         EXISTING_AGENT_TOKEN=$(get_agent_env_value TOKEN)
         if [ -n "$EXISTING_AGENT_TOKEN" ] && [ "$EXISTING_AGENT_TOKEN" != "$UNIVERSAL_TOKEN" ]; then
             if agent_has_active_system "$AUTH_TOKEN"; then
@@ -1191,9 +1186,8 @@ main() {
         die "Could not obtain Beszel hub public key"
     fi
 
-    # Preserve the existing agent token when an active system already exists to
-    # prevent the agent from reconnecting with a new identity and creating a
-    # duplicate system record.
+    # Reusing the existing token keeps the agent from reconnecting under a new
+    # identity and registering a duplicate system.
     EXISTING_AGENT_TOKEN=$(get_agent_env_value TOKEN)
     if [ -n "$EXISTING_AGENT_TOKEN" ] && [ "$EXISTING_AGENT_TOKEN" != "$UNIVERSAL_TOKEN" ]; then
         if agent_has_active_system "$AUTH_TOKEN"; then
