@@ -24,3 +24,9 @@ Authelia is the OIDC provider. `data/authelia-config/configuration.yml` is RENDE
 4. Wire it as `ExecStartPost=-/bin/sh __PROJECT_PATH__/scripts/<service>-oidc-bootstrap.sh` in `config/systemd/system/pi-pcloud.service` (and mirror into the deployed unit, then `systemctl daemon-reload`).
 5. If the service must reach Authelia's discovery endpoint from inside Docker, add `extra_hosts: ["auth.${HOST_NAME:-pi.lan}:172.30.11.250"]` to its compose service.
 6. Traefik middleware: services with their own account system (Immich, Kavita) use `lan@docker` only — do NOT stack `authelia@docker` forward-auth on top.
+
+## Adding a new service to the compose stack
+
+Use the `add-service` skill (`.claude/skills/add-service/SKILL.md`): it walks through the
+standard integrations — Traefik, Authelia OIDC, shared Postgres/Redis, ntfy, Uptime Kuma,
+Backrest, Homepage labels, and the systemd bootstrap script.
