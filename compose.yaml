@@ -30,13 +30,11 @@ x-cpu-request-xlarge: &cpu-request-xlarge
     reservations:
       cpus: "0.60"
 
-# OOM score adjustments: lower value = less likely to be killed
-# Range: -1000 (never kill) to +1000 (kill first). Default is 0.
+# Lower = less likely to be OOM-killed. Range -1000 (never) to +1000 (first).
 x-oom-score-critical: &oom-score-critical -1000
 x-oom-score-important: &oom-score-important -500
 x-oom-score-deprioritize: &oom-score-deprioritize 500
 
-# Healthcheck timing presets (override individual fields as needed)
 x-healthcheck-default: &healthcheck-default
   interval: 60s
   timeout: 10s
@@ -198,7 +196,6 @@ services:
       - "--log.level=INFO"
       - "--api.dashboard=true"
       - "--ping=true"
-      # Entry Points
       - "--entrypoints.web.address=:80/tcp"
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
@@ -210,12 +207,10 @@ services:
       - "--entrypoints.websecure.transport.respondingTimeouts.readTimeout=0"
       - "--entrypoints.websecure.transport.respondingTimeouts.writeTimeout=0"
       - "--entrypoints.websecure.transport.respondingTimeouts.idleTimeout=0"
-      # Providers
       - "--providers.docker=true"
       - "--providers.docker.watch=true"
       - "--providers.docker.network=frontend"
       - "--providers.docker.exposedbydefault=false"
-      # ACME (Cloudflare DNS-01)
       - "--certificatesresolvers.cloudflare.acme.email=${EMAIL}"
       - "--certificatesresolvers.cloudflare.acme.storage=/letsencrypt/acme.json"
       - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
@@ -249,10 +244,8 @@ services:
       - "traefik.http.routers.traefik.tls.domains[0].main=${HOST_NAME:-pi.lan}"
       - "traefik.http.routers.traefik.tls.domains[0].sans=*.${HOST_NAME:-pi.lan}"
       - "traefik.http.services.traefik.loadbalancer.server.port=8080"
-      # Traefik auto-creates a default "traefik" entrypoint on :8080 (used by
-      # --ping); attach api@internal to it too so Homepage can read the API
-      # from inside the "frontend" network without going through the
-      # Authelia-protected public dashboard router.
+      # Traefik's implicit :8080 "traefik" entrypoint, so Homepage can read the
+      # API from inside frontend without the Authelia-protected dashboard router.
       - "traefik.http.routers.internalapi.rule=PathPrefix(`/api`)"
       - "traefik.http.routers.internalapi.entrypoints=traefik"
       - "traefik.http.routers.internalapi.service=api@internal"
@@ -545,7 +538,6 @@ services:
       - N8N_SMTP_PASS=${SMTP_PASSWORD:-}
       - N8N_SMTP_SENDER=${EMAIL:-noreply@localhost}
       - N8N_SMTP_SSL=${SMTP_SSL:-false}
-      # Task runners (Python + JS via external sidecar)
       - N8N_RUNNERS_MODE=external
       - N8N_RUNNERS_BROKER_LISTEN_ADDRESS=0.0.0.0
       - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN:-n8n-runner-secret}
@@ -560,7 +552,7 @@ services:
       - traefik
     healthcheck:
       <<: *healthcheck-default
-      # n8n listens internally on plain HTTP. Use explicit IPv4 loopback to avoid IPv6 (::1) resolution issues.
+      # Explicit IPv4 loopback: localhost resolves to ::1 here and the dial fails.
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5678/healthz"]
     deploy: *cpu-request-large
     mem_limit: 768m
@@ -919,47 +911,33 @@ services:
     environment:
       - TZ=${TIMEZONE:-Europe/Paris}
       - HOMEPAGE_ALLOWED_HOSTS=homepage.${HOST_NAME:-pi.lan}
-      # Reused by widget labels as {{HOMEPAGE_VAR_x}} for services whose widget
-      # accepts the same admin credentials already used stack-wide (.env).
+      # Read by widget labels as {{HOMEPAGE_VAR_x}}.
       - HOMEPAGE_VAR_ADMIN_USER=${ADMIN_USER:-admin}
       - HOMEPAGE_VAR_ADMIN_PASSWORD=${PASSWORD}
-      # Nextcloud's actual admin account was provisioned with $EMAIL as the
-      # username (NEXTCLOUD_ADMIN_USER only applies at first install; that's
-      # what it resolved to back then), not the current $ADMIN_USER value.
+      # NEXTCLOUD_ADMIN_USER only applies at first install, where it resolved to
+      # $EMAIL - so that, not the current $ADMIN_USER, is the account that exists.
       - HOMEPAGE_VAR_NEXTCLOUD_USER=${EMAIL}
-      # Read by widget labels as {{HOMEPAGE_FILE_x}}; files are written by
-      # scripts/homepage-widgets-bootstrap.sh into config/homepage/secrets/,
-      # which is already visible here under /app/config/secrets.
+      # Read by widget labels as {{HOMEPAGE_FILE_x}}; written by
+      # scripts/homepage-widgets-bootstrap.sh into the mounted config dir.
       - HOMEPAGE_FILE_PROWLARR_API_KEY=/app/config/secrets/prowlarr_api_key
       - HOMEPAGE_FILE_HEADSCALE_API_KEY=/app/config/secrets/headscale_api_key
       - HOMEPAGE_FILE_HEADSCALE_NODE_ID=/app/config/secrets/headscale_node_id
-    # No auto-provisioning for Immich/Kavita (neither exposes a way to create
-    # an API key without an already-logged-in admin session) - fill in
-    # config/homepage/homepage.env yourself, see homepage.env.example.
-    # Left empty, the widget just shows an error icon instead of live stats.
+    # Immich/Kavita cannot mint an API key without a logged-in admin session, so
+    # their keys go here by hand (see homepage.env.example) or the widget errors.
     env_file:
       - path: ./config/homepage/homepage.env
         required: false
     extra_hosts:
-      # So the Nextcloud widget's https:// call passes its NEXTCLOUD_TRUSTED_DOMAINS
-      # check (same trick used for auth.${HOST_NAME} elsewhere in this compose file).
+      # So the widget's https:// call passes Nextcloud's trusted-domains check.
       - "nextcloud.${HOST_NAME:-pi.lan}:172.30.11.250"
     volumes:
       - ./config/homepage:/app/config
-      # Serves config/homepage/icons/ at /icons/, so `homepage.icon` labels can
-      # reference local images. Nothing in /app/config is reachable over HTTP -
-      # /api/config/<file> is hardcoded to custom.css and custom.js only - so
-      # /app/public is the only way to hand homepage its own image files.
+      # /app/public is the only path homepage serves over HTTP (/api/config is
+      # hardcoded to custom.css and custom.js), so local icons have to live here.
       - ./config/homepage/icons:/app/public/icons:ro
-      # The pi favicon, overriding homepage's stock icons. Done this way rather
-      # than with `favicon:` in settings.yaml because that setting is only applied
-      # after hydration, which left the tab flickering from pi to the browser's
-      # generic fallback (see the note in settings.yaml). These files are what the
-      # server-rendered HTML points at, so the glyph is right from the first byte
-      # and nothing replaces it. /favicon.ico is not referenced by that HTML but
-      # browsers request it as a last resort, so it is covered too.
-      # Regenerate all of them with scripts/homepage-favicon.sh after editing
-      # config/homepage/icons/pi.svg.
+      # Overriding the files the server-rendered HTML points at, rather than
+      # `favicon:` in settings.yaml, which only applies after hydration and left
+      # the tab flickering. Regenerate with scripts/homepage-favicon.sh.
       - ./config/homepage/icons/favicon.ico:/app/public/favicon.ico:ro
       - ./config/homepage/icons/favicon-16x16.png:/app/public/favicon-16x16.png:ro
       - ./config/homepage/icons/favicon-32x32.png:/app/public/favicon-32x32.png:ro
@@ -1166,12 +1144,12 @@ services:
       # these passwords gate Comet's own admin dashboard and configuration page.
       - ADMIN_DASHBOARD_PASSWORD=${PASSWORD:-admin}
       - CONFIGURE_PAGE_PASSWORD=${PASSWORD:-admin}
-      # CONFIGURE_PAGE_PASSWORD makes Comet prefix addon URLs with /s/<PUBLIC_API_TOKEN>/. The token
-      # auto-generates into this file; keep it on the /data volume so it survives recreates (default is
-      # the ephemeral /app/data), otherwise every recreate mints a new token and breaks installed addons.
+      # CONFIGURE_PAGE_PASSWORD prefixes addon URLs with /s/<PUBLIC_API_TOKEN>/, so the
+      # token must outlive recreates - the default /app/data is ephemeral and every
+      # recreate would mint a new one, breaking already-installed addons.
       - PUBLIC_API_TOKEN_FILE=/data/public_api_token.txt
-      # Torrent SOURCES. TorBox is only the debrid (it checks/streams hashes) — it does not find torrents.
-      # Without at least one scraper enabled, Comet returns zero results. These use public default instances.
+      # TorBox is only the debrid — it checks and streams hashes, it does not find
+      # torrents. With no scraper enabled Comet returns zero results.
       - SCRAPE_TORRENTIO=True
       - SCRAPE_MEDIAFUSION=True
       - SCRAPE_ZILEAN=True
@@ -1194,8 +1172,7 @@ services:
       - "traefik.http.services.comet.loadbalancer.server.port=8000"
     healthcheck:
       <<: *healthcheck-default
-      # The image ships neither wget nor curl (it moved off its Alpine base and
-      # now carries only the application venv), so probe with that interpreter.
+      # The image left its Alpine base and ships neither wget nor curl.
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
       # First boot blocks ~2-3 min downloading anime mappings before the API serves.
       start_period: 180s
@@ -1421,7 +1398,6 @@ services:
 
   vaultwarden:
     <<: *service-defaults
-    # Lightweight, Bitwarden-compatible server with multi-architecture images.
     image: vaultwarden/server:1.37.1
     container_name: pi-vaultwarden
     networks:
@@ -1429,42 +1405,32 @@ services:
       - vault
     expose:
       - 80
-    # So the SSO_AUTHORITY discovery call resolves auth.${HOST_NAME} to Traefik
-    # from inside the frontend network (same as nextcloud and kavita).
+    # So the SSO_AUTHORITY discovery call resolves to Traefik from inside frontend.
     extra_hosts:
       - "auth.${HOST_NAME:-pi.lan}:172.30.11.250"
-    # Vaultwarden only reads SSO_CLIENT_SECRET from the environment - it has no
-    # *_FILE variant - so the plaintext Authelia secret is exported from its
-    # mounted file before handing over to the image's own /start.sh. Same trick
-    # as open-webui above.
+    # SSO_CLIENT_SECRET has no *_FILE variant, so the mounted secret is exported
+    # before handing over to the image's own /start.sh. Same trick as open-webui.
     entrypoint: ["sh", "-c", "export SSO_CLIENT_SECRET=$(cat /run/secrets/oidc_vaultwarden_secret) && exec /start.sh"]
     environment:
       - DOMAIN=https://vault.${HOST_NAME:-pi.lan}
       - DATABASE_URL=postgresql://vaultwarden:${PASSWORD}@postgres/vaultwarden
-      # Closed by default: this router is only behind the LAN allowlist, so open
-      # registration would let anyone on the LAN or tailnet create a vault.
-      # Invitations still work with signups closed - invite from /admin or by
-      # organisation, rather than flipping this back on.
+      # This router is only behind the LAN allowlist, so open registration would
+      # let anyone on the tailnet create a vault. Invite from /admin instead.
       - SIGNUPS_ALLOWED=false
       - INVITATIONS_ALLOWED=true
-      # Authelia SSO. Note this does NOT remove the master password: that key
-      # encrypts the vault itself and never reaches the identity provider. What
-      # it buys is login and user management centralised on LLDAP/Authelia.
+      # This does NOT remove the master password: that key encrypts the vault
+      # itself and never reaches the identity provider.
       - SSO_ENABLED=true
       - SSO_AUTHORITY=https://auth.${HOST_NAME:-pi.lan}
       - SSO_CLIENT_ID=vaultwarden
       - SSO_SCOPES=profile email offline_access
-      # Every login must go through Authelia: email+master-password auth is off.
-      # Consequence to keep in mind - anyone who needs to sign in, including an
-      # emergency-access contact, must exist in LLDAP. An invitation only creates
-      # a stub account; it is claimed by signing in through Authelia.
+      # Native email+password login is off, so everyone who signs in - including
+      # an emergency-access contact - must exist in LLDAP. An invitation only
+      # creates a stub account, claimed by signing in through Authelia.
       - SSO_ONLY=true
-      # Emergency access ("trusted contact") is on by default; set explicitly
-      # because it is a deliberate feature here, and it needs working SMTP below
-      # to deliver its invite, grant and takeover-notification mails.
+      # Deliberate, not just the default: needs the SMTP below to deliver its
+      # invite, grant and takeover-notification mails.
       - EMERGENCY_ACCESS_ALLOWED=true
-      # Shared SMTP relay from .env, same source as lldap and ntfy. Vaultwarden's
-      # own variable names happen to match the shared ones, except SMTP_SECURITY:
       # starttls suits the default port 587; use force_tls on 465.
       - SMTP_HOST=${SMTP_HOST:-localhost}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -1481,9 +1447,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      # The image ships /healthcheck.sh, which curls /alive and already handles
-      # ROCKET_PORT and DOMAIN base paths; only the timings are aligned with the
-      # other services here.
+      # The bundled /healthcheck.sh already handles ROCKET_PORT and base paths.
       <<: *healthcheck-light
       test: ["CMD", "/healthcheck.sh"]
     labels:
@@ -1494,11 +1458,9 @@ services:
       - "homepage.description=Bitwarden-compatible password manager"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
-      # LAN allowlist only, deliberately no authelia@docker: forward-auth would
-      # break the Bitwarden browser extension and mobile clients, which cannot
-      # complete Authelia's interactive portal. Authentication is federated to
-      # Authelia through OIDC instead (see SSO_* above) - a different mechanism
-      # that those clients do support.
+      # Deliberately no authelia@docker: forward-auth breaks the browser extension
+      # and mobile clients, which cannot complete the interactive portal. They are
+      # authenticated through OIDC instead (see SSO_* above).
       - "traefik.http.routers.vaultwarden.rule=Host(`vault.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.vaultwarden.entrypoints=websecure"
       - "traefik.http.routers.vaultwarden.middlewares=lan@docker"
@@ -1543,8 +1505,8 @@ services:
       - postgres
     healthcheck:
       <<: *healthcheck-default
-      # Verify the lldap HTTP API is responding (confirms full initialisation,
-      # including the LDAP port) before authelia attempts its startup dial.
+      # A responding HTTP API confirms the LDAP port is up too, which is what
+      # authelia dials at startup.
       test: ["CMD", "curl", "-sf", "http://localhost:17170/"]
       start_period: 30s
     labels:
@@ -1624,12 +1586,10 @@ services:
   # AI
   # Inference backend for open-webui, serving Gemma 4 E2B on the Pi's CPU.
   #
-  # llama.cpp's own server rather than Ollama: Ollama wraps this exact engine,
-  # and what it adds - a model registry, per-request runner processes, model
-  # swapping - is dead weight on a box with room for one resident model. Going
-  # direct is measurably faster on ARM CPU inference (llama-server repacks Q4_0
-  # weights into the Cortex-A76's i8mm/dotprod kernels), starts one process
-  # instead of two, and speaks the OpenAI API open-webui already talks.
+  # llama.cpp's own server rather than Ollama, which wraps this exact engine and
+  # adds a model registry and per-request runners - dead weight on a box with
+  # room for one resident model. Going direct runs one process instead of two and
+  # already speaks the OpenAI API open-webui calls.
   llama-cpp:
     <<: *service-defaults
     image: ghcr.io/ggml-org/llama.cpp:server-b10481
@@ -1639,51 +1599,38 @@ services:
     expose:
       - 8080
     environment:
-      # The ai network is internal, so the server can never fetch weights
-      # itself - scripts/llama-cpp-pre-start.sh seeds the volume beforehand and
-      # LLAMA_ARG_OFFLINE stops llama-server from even trying.
+      # The ai network is internal: scripts/llama-cpp-pre-start.sh seeds the
+      # volume beforehand and OFFLINE stops the server from trying to fetch.
       - LLAMA_ARG_MODEL=/models/gemma-4-E2B-it-qat-Q4_0.gguf
       - LLAMA_ARG_MMPROJ=/models/mmproj-gemma-4-E2B-it.gguf
       - LLAMA_ARG_OFFLINE=1
-      # Speculative decoding off Gemma 4's multi-token-prediction head. Token
-      # generation on CPU is bandwidth bound, so verifying several drafted
-      # tokens in one pass over the weights is close to free: measured 5.3 ->
-      # 10.6 tok/s on this Pi. Output is unchanged, rejected drafts are dropped.
+      # Speculative decoding off Gemma 4's multi-token-prediction head. CPU
+      # generation is bandwidth bound, so verifying several drafted tokens in one
+      # pass is nearly free: 5.3 -> 10.6 tok/s here, with identical output.
       - LLAMA_ARG_SPEC_DRAFT_MODEL=/models/mtp-gemma-4-E2B-it-Q4_0.gguf
       - LLAMA_ARG_SPEC_TYPE=draft-mtp
       # Name open-webui shows in its model picker.
       - LLAMA_ARG_ALIAS=gemma-4-e2b-it
       - LLAMA_ARG_PORT=8080
-      # Three threads on cores 1-3 (see cpuset): generation is bandwidth bound,
-      # so the fourth thread measured no faster, and leaving core 0 alone keeps
-      # traefik, pihole and unbound responsive while a chat is running.
+      # A fourth thread measured no faster (bandwidth bound), and leaving core 0
+      # alone keeps traefik, pihole and unbound responsive during a chat.
       - LLAMA_ARG_THREADS=3
       - LLAMA_ARG_FLASH_ATTN=on
-      # Gemma 4 E2B goes to 128k, which no Pi has the RAM or the patience for.
-      # 16k covers a long chat. Left at f16: Gemma's sliding-window attention
-      # keeps the cache small, and quantising it cost ~10% generation speed
-      # here for no memory worth having.
+      # The model goes to 128k, which no Pi has the RAM or the patience for. Left
+      # at f16: sliding-window attention keeps the cache small anyway, and
+      # quantising it cost ~10% generation speed for no memory worth having.
       - LLAMA_ARG_CTX_SIZE=16384
-      # Note: prompt caching (the KV prefix a chat re-sends every turn) is on by
-      # default, but --cache-reuse cannot be added on top - llama-server
-      # disables it whenever a multimodal projector is loaded.
-      #
-      # Thinking off. Gemma 4 reasons before answering, which on a 10 tok/s CPU
-      # meant ~500 tokens - a minute of an empty chat window - before the first
-      # word of the answer to "how are you"; with it off the same question
-      # answers in 25 tokens. This is the switch the chat template actually
-      # reads. Note --reasoning-budget 0 is NOT equivalent: it closes the
-      # thinking channel without telling the model, which then writes its
-      # reasoning into the visible answer instead. Delete this line to restore
-      # thinking, or send "chat_template_kwargs" per request to override it.
+      # Thinking off: at 10 tok/s, reasoning meant ~500 tokens - a minute of empty
+      # chat window - before the first word of an answer. This is the switch the
+      # chat template reads; --reasoning-budget 0 is NOT equivalent, it closes the
+      # channel without telling the model, which then reasons in the visible
+      # answer. Drop this line to restore thinking.
       - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking":false}'
-      # One slot, so concurrent requests queue instead of splitting the three
-      # threads between them. llama-server otherwise defaults to several slots
-      # and runs them at once: two requests in parallel each generated at
-      # ~5 tok/s here rather than one at ~10, so everything felt twice as slow.
+      # Concurrent requests queue instead of splitting the three threads: the
+      # default runs several slots at once, and two parallel requests each
+      # generated at ~5 tok/s here rather than one at ~10.
       - LLAMA_ARG_N_PARALLEL=1
-      # llama.cpp ships its own chat UI; open-webui is the one that is routed,
-      # so keep the surface down to the API.
+      # open-webui is the routed frontend; keep the surface down to the API.
       - LLAMA_ARG_UI=false
     volumes:
       - llama_models:/models
@@ -1708,11 +1655,9 @@ services:
 
   # Text-to-speech for open-webui's read-aloud button, with real French voices.
   #
-  # Built here because upstream (OHF-Voice/piper1-gpl) publishes no image, and
-  # its own HTTP server speaks its own protocol rather than the OpenAI shape
-  # open-webui calls - see config/piper/openai_api.py for that translation.
-  # Piper is tiny next to the LLM: ~215MB resident, and it synthesises about
-  # five seconds of speech per second of CPU on this Pi.
+  # Built here because upstream (OHF-Voice/piper1-gpl) publishes no image, and its
+  # own server speaks its own protocol rather than the OpenAI shape open-webui
+  # calls - see config/piper/openai_api.py for that translation.
   piper:
     <<: *service-defaults
     build:
@@ -1734,9 +1679,8 @@ services:
       test: ["CMD", "python3", "-c", "import urllib.request as r; r.urlopen('http://localhost:8000/health').read()"]
       start_period: 30s
     labels:
-      # No homepage.href: this is an API for open-webui, there is no page to
-      # open. The card still reports the container's health. mdi- icons because
-      # dashboard-icons has nothing for piper.
+      # No homepage.href: an API for open-webui, no page to open. mdi- icon
+      # because dashboard-icons has nothing for piper.
       - "homepage.group=AI"
       - "homepage.name=Piper"
       - "homepage.description=French text-to-speech"
@@ -1770,14 +1714,13 @@ services:
       - OAUTH_SCOPES=openid profile email
       - OAUTH_USERNAME_CLAIM=preferred_username
       - DATABASE_URL=postgresql://open-webui:${PASSWORD}@postgres/open-webui
-      # Local inference through llama-cpp's OpenAI-compatible endpoint. The key
-      # is required by the client but ignored by llama-server, which runs
+      # The key is required by the client but ignored by llama-server, which runs
       # unauthenticated on the internal ai network.
       - ENABLE_OPENAI_API=true
       - OPENAI_API_BASE_URL=http://llama-cpp:8080/v1
       - OPENAI_API_KEY=llama-cpp
-      # No Ollama in the stack; left on, open-webui probes localhost:11434 on
-      # every start and on the model list of every page load.
+      # No Ollama in the stack; left on, this probes localhost:11434 on every
+      # start and on the model list of every page load.
       - ENABLE_OLLAMA_API=false
     volumes:
       - open_webui_data:/app/backend/data
@@ -1817,8 +1760,6 @@ services:
     environment:
       POSTGRES_PASSWORD: ${PASSWORD}
       POSTGRES_INITDB_ARGS: "--data-checksums"
-      # Uncomment the DB_STORAGE_TYPE: 'HDD' var if your database isn't stored on SSDs
-      # DB_STORAGE_TYPE: 'HDD'
     volumes:
       - ${DATA_LOCATION:-./data}/postgres:/var/lib/postgresql/data
       - ./config/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh
@@ -1861,9 +1802,8 @@ services:
     oom_score_adj: *oom-score-critical
 
 volumes:
-  # Seeded by scripts/llama-cpp-pre-start.sh before compose runs. A volume, not
-  # a DATA_LOCATION bind mount, so the weights live on the NVMe root rather
-  # than the rotational USB drive - they are mmap'd on every model load.
+  # Seeded by scripts/llama-cpp-pre-start.sh. A volume rather than a
+  # DATA_LOCATION bind mount so the mmap'd weights sit on the NVMe, not the USB.
   llama_models:
   open_webui_data:
   ddns_data:
@@ -1939,9 +1879,8 @@ networks:
     driver: bridge
     name: ai
     internal: true
-  # Vaultwarden <-> postgres only. A dedicated segment rather than reusing "auth"
-  # so the vault has no path to lldap, matching the one-network-per-database-
-  # consumer split already used for immich, nextcloud and ai.
+  # A dedicated segment rather than reusing "auth" so the vault has no path to
+  # lldap, matching the split already used for immich, nextcloud and ai.
   vault:
     driver: bridge
     name: vault

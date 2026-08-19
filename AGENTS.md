@@ -13,6 +13,7 @@ Pi Pcloud is a self-hosted web application stack designed for Raspberry Pi devic
 - Avoid creating new env vars in .env and .env.dist, use the provided configuration files and scripts to manage environment variables. For authentication, use ADMIN_USER and PASSWORD env vars. Never name a `.env` key `USER` (bare, no prefix) — it's a POSIX-reserved shell variable that Docker Compose's shell environment silently takes precedence over the `.env` file for, so any manual `docker compose` invocation from an interactive shell (where `$USER` is the OS login) shadows the intended value.
 - Avoid adding new docker containers for running scripts that can be written in scripts directory and run in systemd service ExecStartPre and ExecStartPost
 - Never print sensitive information like .env content, passwords, or tokens in logs or stdout, use environment variables for handling sensitive data but keep it hidden.
+- Write self-explanatory code instead of comments: explicit names, small functions, no commented-out code, no comments restating what the line already says. Keep a comment only when it explains a non-obvious *why* (workaround, upstream bug, ordering constraint, security implication). Before committing, re-read the diff and trim the comments you added down to that bar.
 
 ## Adding OIDC (Authelia SSO) to a service
 
