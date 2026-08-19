@@ -1757,6 +1757,7 @@ services:
     # measured). The headroom is what stops a long upload from being an OOM:
     # before openai_api.py windowed them, a 120s pass went past 2GB.
     mem_limit: 2560m
+    oom_score_adj: *oom-score-deprioritize
 
   # Serves the host's status to the local model as an OpenAPI tool; see
   # config/system-tools/app.py. / is mounted at /hostfs because statvfs cannot
