@@ -98,15 +98,21 @@ sequenceDiagram
     S-->>B: Authenticated session
 ```
 
-**Registered OIDC clients:**
+**Registered OIDC clients** (all `consent_mode: implicit`; see `config/authelia/configuration.yml.template`):
 
-| Client | Scopes | Auth Method | Consent | Policy | Notes |
-|--------|--------|-------------|---------|--------|-------|
-| **Nextcloud** | openid profile email groups offline_access | client_secret_post | implicit | one_factor | Group provisioning enabled |
-| **Immich** | openid profile email | client_secret_post | implicit | one_factor | Mobile app callback |
-| **Beszel** | openid profile email | client_secret_basic | implicit | one_factor | PKCE (S256) enabled |
-| **Dockhand** | openid profile email groups | client_secret_post | implicit | admin_only | Callback `/api/auth/oidc/callback` |
-| **Headplane** | openid profile email | client_secret_basic | implicit | **two_factor** | VPN admin (stricter) |
+| Client | Scopes | Auth Method | Policy | Notes |
+|--------|--------|-------------|--------|-------|
+| **Nextcloud** | openid profile email groups offline_access | client_secret_post | one_factor | Group provisioning enabled |
+| **Immich** | openid profile email | client_secret_post | one_factor | Mobile app callback |
+| **Beszel** | openid profile email | client_secret_basic | one_factor | PKCE (S256) required |
+| **Dockhand** | openid profile email groups | client_secret_post | **admin_only** | 2FA + `admin` group |
+| **Headplane** | openid profile email offline_access | client_secret_basic | **admin_only** | 2FA + `admin` group |
+| **Headscale** | openid profile email | client_secret_basic | one_factor | VPN device registration |
+| **Open WebUI** | openid profile email | client_secret_basic | one_factor | — |
+| **Vaultwarden** | openid profile email offline_access | client_secret_basic | one_factor | Master password still required |
+| **Kavita** | openid profile email groups offline_access | client_secret_post | one_factor | Roles from `groups` claim |
+
+`admin_only` is a named authorization policy in the template: default deny, `two_factor` for members of the `admin` group.
 
 ## Request Middleware Chain
 
@@ -124,12 +130,12 @@ flowchart LR
     Auth -->|Valid session| Backend["Backend service"]
 ```
 
-**Security headers applied:**
+**Security headers applied** (the `security-headers` middleware, attached to the `websecure` entrypoint):
 
-- `Strict-Transport-Security: max-age=31536000` — Force HTTPS for 1 year
+- `Strict-Transport-Security: max-age=15552000; includeSubDomains` — Force HTTPS for 180 days
 - `X-Frame-Options: DENY` — Prevent clickjacking
 - `X-Content-Type-Options: nosniff` — Prevent MIME type sniffing
-- `Referrer-Policy: strict-origin-when-cross-origin` — Limit referrer leakage
+- `Referrer-Policy: same-origin` — Limit referrer leakage
 
 **Rate limiting on auth routes:**
 
@@ -151,25 +157,30 @@ The `authelia` forward-auth middleware is configured with `authRequestHeaders=Ac
 
 ## Per-Service Protection
 
-| Service | `lan` Middleware | `authelia` Middleware | `rate-limit-auth` Middleware | Own OIDC | Protection |
-|---------|:---:|:---:|:---:|:---:|----------|
-| Authelia portal | — | — | — | — | Public login entry point — Authelia's `regulation` handles brute-force; no IP restriction so OIDC clients can reach it server-side |
-| Nextcloud | — | — | — | ✓ | OIDC + LAN implicit |
-| Immich | ✓ | — | — | ✓ | LAN-only + OIDC |
-| Beszel | ✓ | — | — | ✓ | LAN-only + OIDC |
-| n8n | ✓ | — | — | — | LAN-only + own auth |
-| Ntfy | ✓ | — | — | — | LAN-only + own auth |
-| Homepage | ✓ | ✓ | — | — | LAN-only + SSO |
-| Uptime Kuma | ✓ | ✓ | — | — | LAN-only + SSO |
-| Traefik dashboard | ✓ | ✓ | — | — | LAN-only + admin + 2FA |
-| Pi-hole | ✓ | ✓ | — | — | LAN-only + admin + 2FA |
-| Backrest | ✓ | ✓ | — | — | LAN-only + admin + 2FA |
-| LLDAP | ✓ | ✓ | ✓ | — | LAN-only + admin + 2FA + own auth + rate-limited |
-| Open WebUI | ✓ | — | — | ✓ | LAN-only + OIDC |
-| qBittorrent | ✓ | ✓ | — | — | LAN-only + SSO |
-| Headplane | ✓ | ✓ | — | ✓ | LAN-only + SSO + OIDC + admin + 2FA |
-| Dockhand | ✓ | — | — | ✓ | LAN-only + OIDC + admin + 2FA |
-| Vaultwarden | ✓ | — | — | ✓ | LAN-only + OIDC + master password |
+| Service | `lan` Middleware | `authelia` Middleware | Own OIDC | Protection |
+|---------|:---:|:---:|:---:|----------|
+| Authelia portal | — | — | — | Public login entry point — Authelia's `regulation` handles brute-force; no IP restriction so OIDC clients can reach it server-side |
+| Headscale | — | — | ✓ | Public by necessity: VPN clients register from anywhere; device auth is OIDC. The `/admin` path (Headplane) is separately LAN-only + SSO + 2FA |
+| Nextcloud | ✓ | — | ✓ | LAN-only + OIDC; a second router leaves the public share paths (`/s/`, `/public.php`, …) open |
+| Immich | ✓ | — | ✓ | LAN-only + OIDC; second router leaves share paths (`/share`, `/s/`, `/api`) open |
+| Beszel | ✓ | — | ✓ | LAN-only + OIDC (password login disabled) |
+| n8n | ✓ | — | — | LAN-only + own auth |
+| Ntfy | ✓ | — | — | LAN-only + own accounts/ACLs (`deny-all` default) |
+| Homepage | ✓ | ✓ | — | LAN-only + SSO |
+| Uptime Kuma | ✓ | ✓ | — | LAN-only + SSO |
+| Traefik dashboard | ✓ | ✓ | — | LAN-only + admin + 2FA |
+| Pi-hole | ✓ | ✓ | — | LAN-only + admin + 2FA |
+| Backrest | ✓ | ✓ | — | LAN-only + admin + 2FA |
+| LLDAP | ✓ | ✓ | — | LAN-only + 2FA + own auth + `rate-limit-auth` |
+| Open WebUI | ✓ | — | ✓ | LAN-only + OIDC |
+| qBittorrent | ✓ | ✓ | — | LAN-only + SSO |
+| Prowlarr / Kapowarr | ✓ | ✓ | — | LAN-only + SSO |
+| Stremio | ✓ | ✓ | — | LAN-only + SSO; a higher-priority router bypasses SSO for LAN source IPs (streaming clients can't do the portal) |
+| Comet | ✓ | — | — | LAN-only; Stremio clients fetch manifests programmatically and can't pass interactive SSO |
+| Kavita | ✓ | — | ✓ | LAN-only + own accounts/OIDC (OPDS clients can't pass interactive SSO) |
+| Headplane | ✓ | ✓ | ✓ | LAN-only + SSO + OIDC + admin + 2FA |
+| Dockhand | ✓ | — | ✓ | LAN-only + OIDC + admin + 2FA (local login disabled) |
+| Vaultwarden | ✓ | — | ✓ | LAN-only + OIDC + master password |
 
 ## Vaultwarden account setup
 
@@ -216,27 +227,22 @@ through LLDAP and organisation invitations rather than the admin UI.
 
 ## Access Control Policies
 
-Authelia enforces group-based rules per domain:
+Authelia's rules, in evaluation order (`config/authelia/configuration.yml.template`, default policy **deny**):
 
-| Domain Pattern | Required Group | Policy | Description |
-|---|---|---|---|
-| `auth.*` | — | bypass | SSO portal itself |
-| `homepage.*`, `uptime.*` | users | one_factor | General services (login only) |
-| `backrest.*`, `pihole.*`, `traefik.*` | admin or lldap_admin | two_factor | Admin tools |
-| `lldap.*` | users, admin, or lldap_admin | two_factor | Directory itself |
-| `*.*` (catch-all) | users | **deny** | All others blocked by default |
+| Domain | Subject | Policy |
+|---|---|---|
+| `auth.*` | — | bypass (the portal itself) |
+| `uptime.*`, `homepage.*`, `qbittorrent.*`, `prowlarr.*`, `kapowarr.*`, `ai.*` | any user | one_factor |
+| `headscale.*` path `/admin` | `admin` group | two_factor |
+| `backrest.*`, `pihole.*`, `traefik.*`, `lldap.*` | `admin` group | two_factor |
+| `lldap.*` (fallback) | any user | two_factor |
+| anything else | — | **deny** |
 
-**Group management:**
-
-- **users** — Standard users (can log in to general services)
-- **admin** — Full admin access (requires 2FA)
-- **lldap_admin** — LDAP directory admins (requires 2FA)
-
-Create/manage groups in LLDAP admin UI, assign users to groups.
+The only group with meaning here is **admin** — create it in the LLDAP UI and add your admin accounts. Any authenticated user can reach the one_factor services; there is no required "users" group. (Note the deny catch-all only applies to routers carrying the `authelia` middleware; OIDC services enforce their own policy from the client table above.)
 
 ## Two-Factor Authentication
 
-2FA is enforced for admin interfaces (Traefik, Pi-hole, Dockhand, Backrest, LLDAP) and Headplane (VPN admin).
+2FA is enforced for the admin surfaces: Traefik, Pi-hole, Backrest and LLDAP (forward-auth rules), plus Dockhand and Headplane (`admin_only` OIDC policy).
 
 **Supported 2FA methods:**
 
@@ -258,12 +264,12 @@ ${DATA_LOCATION}/authelia-config/secrets/
 ├── session_secret                      # Session cookie signing
 ├── storage_encryption_key              # Database credential encryption
 ├── oidc_hmac_secret                    # OIDC token HMAC signing
-├── oidc_private_key.pem                # RSA-2048 for JWT RS256
-├── oidc_nextcloud_secret.txt           # Per-client shared secrets
-├── oidc_immich_secret.txt
-├── oidc_beszel_secret.txt
-├── oidc_dockhand_secret.txt
-├── oidc_headplane_secret.txt
+├── oidc_private_key.pem                # RSA for JWT RS256
+├── oidc_<client>_secret.txt            # Per-client shared secrets (plaintext, mounted
+│                                       #   into the client) + _hash (PBKDF2, for Authelia)
+│                                       #   for: nextcloud, immich, beszel, dockhand,
+│                                       #   headplane, headscale, open-webui, vaultwarden, kavita
+├── db_password                         # Authelia's Postgres password
 └── ldap_password                       # LLDAP bind password
 ```
 
@@ -275,16 +281,13 @@ OIDC client secrets are injected into services via read-only Docker volumes — 
 
 ## Session & Cookie Management
 
-**Session storage:**
-- Medium: Redis (fast, volatile)
-- Fallback: PostgreSQL (persistent)
+Sessions live in Redis; persistent state (user preferences, TOTP/WebAuthn credentials) lives in PostgreSQL.
 
-**Cookie settings:**
-- **Secure flag** — HTTPS only
-- **SameSite=Lax** — CSRF protection
-- **HttpOnly** — JavaScript cannot access
-- **Inactivity timeout** — Default 1 hour (configurable)
-- **Absolute timeout** — Default 24 hours (configurable)
+**Cookie settings** (from the template's `session` block):
+- **Secure + HttpOnly**, **SameSite=Lax**
+- **Inactivity timeout** — 45 minutes
+- **Absolute expiration** — 12 hours
+- **Remember me** — 1 month
 
 Idle sessions expire automatically; users must re-authenticate.
 
@@ -316,30 +319,8 @@ flowchart LR
 4. **No default route** — DNS network has no internet gateway
 5. **Read-only volumes** — Backrest accesses app data read-only
 
-## Best Practices
+## Operational Notes
 
-1. **Set strong passwords** — LLDAP admin & Authelia system account
-2. **Enable 2FA** — Especially for admin users
-3. **Use WebAuthn** — More secure than TOTP (resistant to phishing)
-4. **Rotate credentials** — After a compromise, run `make rotate-password` (LLDAP admin + Authelia, the actual SSO master credential) or `make rotate-password-full` (also every Postgres role and every other service using `PASSWORD`) — see `scripts/rotate-password.sh` and `docs/CONFIGURATION.md`'s "Changing Passwords" section
-5. **Monitor logs** — Check Authelia logs for brute-force attempts
-6. **Keep secrets secure** — Never share `.env`, `authelia-config/secrets/`, API tokens
-7. **Backup verification** — Test restores from backups periodically
-8. **Update regularly** — Pull latest images, rebuild stack
-
-## Compliance & Encryption
-
-- **TLS 1.2+** — All HTTPS connections
-- **Certificate** — Auto-provisioned by Traefik + Cloudflare DNS challenge
-- **LDAP encryption** — STARTTLS supported for external LDAP
-- **Database encryption** — Authelia credentials encrypted at rest
-- **Backup encryption** — Backrest uses restic encryption (optional passphrase)
-- **VPN encryption** — WireGuard 256-bit cipher by Tailscale/Headscale
-- **Session encryption** — Redis & PostgreSQL (unencrypted by default, add your own)
-
-**Note:** Redis and local PostgreSQL are not encrypted at rest by default. To add encryption, either:
-- Mount on encrypted filesystem (LUKS)
-- Use external managed PostgreSQL/Redis with encryption at rest
-- Add encryption layer (e.g., Nextcloud full-disk encryption for file contents)
-
-See [Configuration](CONFIGURATION.md) for detailed security settings and overrides.
+- **Rotate credentials after a leak** — `make rotate-password` (LLDAP admin + Authelia, the actual SSO master credential) or `make rotate-password-full` (also every Postgres role and every other service using `PASSWORD`). See the "Changing Passwords" section in [Configuration](CONFIGURATION.md#changing-passwords).
+- **Failed logins are pushed to your phone** — the Authelia log watcher publishes them to the ntfy `security` topic; see [Monitoring](MONITORING.md#authelia-failed-login-alerts).
+- **Encryption at rest is not the default** — TLS covers transport (Traefik + Cloudflare DNS challenge certificates) and restic encrypts backups, but Postgres/Redis data on disk is plain. Put `DATA_LOCATION` on an encrypted filesystem (LUKS) if that matters to you.

@@ -1,363 +1,81 @@
 # Email & Notifications
 
-The stack supports outbound email for notifications, password resets, and workflow automation. All services share SMTP credentials configured in `.env`.
+The stack sends outbound email for password resets, alerts and sharing notifications. All services share the SMTP credentials configured in `.env`. For push notifications, the primary channel is [ntfy](MONITORING.md#ntfy-topics), not email.
 
 ## SMTP Configuration
 
-All SMTP settings are defined in `.env`:
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `SMTP_HOST` | SMTP server | `localhost` |
+| `SMTP_PORT` | SMTP port | `587` |
+| `SMTP_USERNAME` | Username | *(empty)* |
+| `SMTP_PASSWORD` | Password / app password / API token | *(empty)* |
+| `EMAIL` | Sender address (also the admin/ACME address) | — |
 
-| Variable | Purpose | Default | Example |
-|----------|---------|---------|---------|
-| `SMTP_HOST` | SMTP server | `localhost` | `smtp.gmail.com` |
-| `SMTP_PORT` | SMTP port | `587` | 587 (TLS), 465 (SSL), 25 (plain) |
-| `SMTP_USERNAME` | Username | *(empty)* | `your-email@gmail.com` |
-| `SMTP_PASSWORD` | Password/token | *(empty)* | App password (Gmail) or token |
-| `EMAIL` | Sender address | `noreply@localhost` | `noreply@example.com` |
-| `SMTP_SECURE` | Nextcloud security | `tls` | `tls`, `ssl`, or empty |
-| `SMTP_AUTHTYPE` | Nextcloud auth | `LOGIN` | `LOGIN`, `PLAIN`, etc. |
-| `SMTP_ENCRYPTION` | LLDAP encryption | `STARTTLS` | `STARTTLS`, `NONE` |
-| `SMTP_SSL` | n8n SSL | `false` | `true` or `false` |
-| `MAIL_FROM_ADDRESS` | Nextcloud sender local | `nextcloud` | Local part of address |
-| `MAIL_DOMAIN` | Nextcloud sender domain | `${HOST_NAME}` | Combined: `${MAIL_FROM_ADDRESS}@${MAIL_DOMAIN}` |
+Per-service overrides, all optional (compose defaults suit port 587 + STARTTLS):
 
-## Quick Setup by Provider
+| Variable | Used by | Default |
+|----------|---------|---------|
+| `SMTP_SECURE` | Nextcloud | `tls` |
+| `SMTP_AUTHTYPE` | Nextcloud | `LOGIN` |
+| `SMTP_ENCRYPTION` | Authelia, LLDAP | `STARTTLS` |
+| `SMTP_SSL` | n8n | `false` |
+| `MAIL_FROM_ADDRESS` | Nextcloud sender local part | `nextcloud` |
 
-### Gmail
+Nextcloud's sender domain is always `HOST_NAME` (so the address is `${MAIL_FROM_ADDRESS}@${HOST_NAME}`). Vaultwarden pins `SMTP_SECURITY=starttls` in `compose.yaml`; switch it to `force_tls` there if you move to port 465.
+
+**Gmail example** (requires an [app password](https://myaccount.google.com/apppasswords), not your account password):
 
 ```env
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USERNAME=your-email@gmail.com
-SMTP_PASSWORD=abcd efgh ijkl mnop             # 16-char app password
-SMTP_SECURE=tls
-SMTP_AUTHTYPE=LOGIN
+SMTP_PASSWORD=your-app-password
 EMAIL=your-email@gmail.com
 ```
 
-**To generate app password:**
-1. Enable 2FA on Google Account
-2. Go to https://myaccount.google.com/apppasswords
-3. Select **Mail** and **Windows Computer** (or other device)
-4. Copy 16-character password
-5. Paste into `SMTP_PASSWORD` (spaces ignored)
+**Disable email:** leave `SMTP_HOST` empty or `localhost`. The stack starts normally (Authelia has `disable_startup_check` enabled); delivery just fails silently.
 
-### Outlook/Microsoft
+Apply changes with `make restart`.
 
-```env
-SMTP_HOST=smtp.office365.com
-SMTP_PORT=587
-SMTP_USERNAME=your-email@outlook.com
-SMTP_PASSWORD=your-app-password
-SMTP_SECURE=tls
-SMTP_AUTHTYPE=LOGIN
-EMAIL=your-email@outlook.com
-```
+## Who Sends What
 
-### Postmark, SendGrid, Mailgun
+Auto-configured from `.env` — no manual setup:
 
-```env
-SMTP_HOST=smtp.postmarkapp.com              # (for Postmark)
-SMTP_PORT=587
-SMTP_USERNAME=your-api-token
-SMTP_PASSWORD=your-api-token
-SMTP_SECURE=tls
-EMAIL=your-verified-sender@example.com
-```
+| Service | Sends |
+|---------|-------|
+| **Authelia** | 2FA enrollment, password reset, identity verification |
+| **Nextcloud** | Share notifications, activity digests, password resets |
+| **LLDAP** | Self-service password reset links |
+| **Vaultwarden** | Invitations and the whole emergency-access flow (invite, grant, takeover notice). Emergency access is useless without working SMTP — and since `SSO_ONLY` is on, the trusted contact also needs an LLDAP account (see [Security](SECURITY.md#vaultwarden-account-setup)) |
+| **n8n** | Workflow **Send Email** nodes, error notifications (`N8N_SMTP_*`) |
+| **ntfy** | Email delivery for topics, when a subscriber requests it |
+| **Beszel** | Alert emails (configured via its API by `scripts/beszel-agent-bootstrap.sh`) |
 
-### Self-hosted Postfix/Sendmail
+Configured through their own UI (they don't read `.env`):
 
-```env
-SMTP_HOST=localhost                         # On Pi, local relay
-SMTP_PORT=25
-SMTP_USERNAME=                              # Often empty
-SMTP_PASSWORD=                              # Often empty
-SMTP_SECURE=
-SMTP_AUTHTYPE=
-EMAIL=noreply@example.com
-```
+| Service | Where |
+|---------|-------|
+| **Uptime Kuma** | Settings → Notifications → SMTP. Optional: its ntfy notifications are already bootstrapped, so email is a second channel, not a requirement |
+| **Immich** | Admin → Settings → Notification settings (SMTP). Fill in the same `SMTP_*` values |
+| **Kavita** | Settings → Email — usually unnecessary, see [Installation](INSTALLATION.md#email-optional) |
+| **Dockhand** | Nothing to do: alerts go to ntfy via `scripts/dockhand-oidc-bootstrap.sh`. Manual SMTP exists in its UI but isn't the stack default |
 
-## Services Using Email
+## Testing
 
-### Auto-configured Services
+- **Authelia:** `https://auth.<HOST_NAME>` → Settings → add/verify an email or reset a password
+- **Nextcloud:** Administration → Basic settings → Send test email
+- **Beszel / Uptime Kuma:** trigger or test a notification from their settings
 
-These read SMTP settings directly from `.env` at startup — **no manual setup needed:**
-
-#### Authelia
-
-**Purpose:** 2FA enrollment, password reset, identity verification
-
-**Configuration:** Auto-configured from `.env`
-
-**Example email:**
-- Subject: "Verify your new email address"
-- Body: Verification link + 5-minute expiry
-
-**Note:** Has `disable_startup_check` enabled — stack starts even without valid SMTP
-
-#### Nextcloud
-
-**Purpose:** Sharing notifications, activity digests, password resets
-
-**Configuration:** Auto-configured from `.env` variables:
-- `MAIL_FROM_ADDRESS` + `MAIL_DOMAIN` = sender address
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`
-- `SMTP_SECURE`, `SMTP_AUTHTYPE` (per-service overrides)
-
-**Example email:**
-- Sharing: "John shared a folder with you"
-- Digest: Daily activity summary
-- Reset: Password reset link
-
-**Features:**
-- Can be disabled per-user in Nextcloud settings
-- Digest frequency configurable in admin panel
-- Replies to emails are **not** processed
-
-#### LLDAP
-
-**Purpose:** Self-service password reset emails
-
-**Configuration:** Auto-configured from `.env`
-
-**Example email:**
-- Subject: "Password reset for LLDAP"
-- Body: Reset link + instructions
-
-#### n8n
-
-**Purpose:** Workflow email nodes, error notifications
-
-**Configuration:** Auto-configured from `.env`, mapped to `N8N_SMTP_*` variables
-
-**Example:**
-- Nodes: **Send Email** action in workflows
-- Errors: Notifications on workflow failures
-
-#### Ntfy
-
-**Purpose:** Outbound email notifications for push topics
-
-**Configuration:** Auto-configured from `.env`
-
-**Example:**
-- Alert triggers Ntfy topic
-- Ntfy sends email via `SMTP_HOST:SMTP_PORT`
-
-#### Vaultwarden
-
-**Purpose:** Emergency access (trusted contact) invites, grants and takeover
-notices; organisation and user invitations
-
-**Configuration:** Auto-configured from `.env`. Vaultwarden's own variable names
-match the shared ones, except `SMTP_SECURITY`, which is pinned to `starttls` for
-the default port 587 — switch it to `force_tls` if you move to port 465.
-
-**Example emails:**
-- "You have been invited to be an emergency contact"
-- "Emergency access has been granted"
-- "Emergency access takeover requested" (starts the waiting period)
-
-**Note:** Emergency access is useless without working SMTP — the whole flow is
-driven by these mails. Since `SSO_ONLY` is enabled, the contact must also be
-able to sign in through Authelia, so they need an LLDAP account: an invitation
-alone only creates a stub for them to claim.
-
-#### Beszel
-
-**Purpose:** Host monitoring alerts, threshold breaches, offline alerts
-
-**Configuration:** Auto-configured via PocketBase settings API (bootstrap script)
-
-**Example emails:**
-- "CPU usage exceeded 85%"
-- "System went offline"
-- "Disk usage is critical (>90%)"
-
-### Manual Setup Services
-
-These support email but must be configured through their web UI:
-
-#### Uptime Kuma
-
-**Location:** *Settings* → *Notifications* → *Add*
-
-**Steps:**
-1. Log in to `https://uptime.<HOST_NAME>`
-2. Go to **Settings** → **Notifications**
-3. Click **Add Notification**
-4. Select **SMTP**
-5. Fill in:
-   - Server: `SMTP_HOST`
-   - Port: `SMTP_PORT`
-   - Username: `SMTP_USERNAME`
-   - Password: `SMTP_PASSWORD`
-   - From email: `EMAIL`
-   - Secure: `SMTP_SECURE` choice
-6. Test & save
-
-**Uses for:** Uptime alerts, status changes
-
-#### Immich
-
-**Status:** Not currently supported in Immich
-
-Immich doesn't expose SMTP settings for notifications. Workaround: Use webhooks to external services (n8n, Zapier, IFTTT).
-
-#### Dockhand
-
-**Status:** Auto-configured on startup
-
-Dockhand is bootstrapped by `scripts/dockhand-oidc-bootstrap.sh` to:
-
-- set the app timezone from `TIMEZONE`
-- create/update an Apprise notification channel backed by your local `ntfy` service
-- bind that channel to Dockhand's local environment for container lifecycle alerts
-
-The bootstrap reuses the generated `dockhand` ntfy service account from `config/ntfy/ntfy.env`, so there is no extra UI setup required.
-
-Dockhand still supports manual SMTP notifications in its UI, but the default stack path is `ntfy`, not SMTP.
-
-## Testing Email
-
-### Send Test Email from CLI
+Check for errors:
 
 ```bash
-# Using sendmail command
-echo "Subject: Test\n\nThis is a test." | \
-  sendmail -S smtp.gmail.com:587 \
-  -au your-email@gmail.com \
-  -ap password \
-  recipient@example.com
-```
-
-### Check Service Logs
-
-```bash
-# Authelia
-docker compose logs authelia | grep -i email
-
-# Nextcloud
+docker compose logs authelia | grep -i -E 'smtp|mail'
 docker compose logs nextcloud | grep -i mail
-
-# Check if SMTP credentials work
-docker compose exec authelia curl -v smtp://SMTP_HOST:SMTP_PORT
 ```
-
-### Test via Services
-
-1. **Authelia:** Go to `https://auth.<HOST_NAME>` → **Profile** → **Add email** → verify
-2. **Nextcloud:** Share file with another user → should receive email
-3. **Beszel:** Create alert → should email when triggered
 
 ## Troubleshooting
 
-### Emails not sending
-
-**Check 1: SMTP credentials**
-```bash
-# Verify in .env
-grep SMTP .env | head -5
-```
-
-**Check 2: Firewall**
-- Outbound port `SMTP_PORT` (587/465/25) must be open
-- Check ISP blocks port 25 (common for residential)
-- Try port 587 (TLS, less likely to be blocked)
-
-**Check 3: Service logs**
-```bash
-docker compose logs authelia | tail -20
-docker compose logs nextcloud | tail -20
-```
-
-Look for connection errors:
-- `Connection refused` — Wrong host/port
-- `Authentication failed` — Wrong username/password
-- `Timeout` — Firewall blocking port
-
-**Check 4: SMTP server requirements**
-- Gmail: Requires app password, not your Google password
-- Office 365: May require "less secure apps" enabled (for some accounts)
-- Self-hosted: Check Postfix/Sendmail is running and listening
-
-### Restart to apply changes
-
-After editing `.env`:
-
-```bash
-make stop
-make start
-make logs
-```
-
-Wait 30 seconds for services to fully start.
-
-### Email arriving in spam
-
-**Common causes:**
-1. SPF/DKIM/DMARC not configured for your domain
-2. Sender address doesn't match SMTP account
-3. Low reputation (new domain/account)
-
-**Solutions:**
-1. Configure DNS records:
-   - **SPF:** `v=spf1 include:mail.provider.com ~all`
-   - **DKIM:** Ask provider for record
-   - **DMARC:** `v=DMARC1; p=none;`
-2. Use `MAIL_FROM_ADDRESS=noreply` and `MAIL_DOMAIN=<your-domain>`
-3. Wait 7-14 days for reputation to build
-4. Check provider's spam folder; mark as "Not spam"
-
-### Disable email for testing
-
-To disable email without errors:
-
-```env
-SMTP_HOST=                          # Leave empty
-SMTP_PORT=
-SMTP_USERNAME=
-SMTP_PASSWORD=
-```
-
-Stack starts normally; email delivery fails silently. Authelia's `disable_startup_check` keeps the stack resilient.
-
-## Advanced: Email Rules & Filters
-
-### Nextcloud Mail Settings (Admin)
-
-1. Go to **Settings** → **Administration** → **Mail**
-2. Configure:
-   - Default address: `admin@example.com`
-   - Reply-to address: Optional
-   - Send mode: SMTP (already configured)
-
-### Create Email Workflows in n8n
-
-Example: Trigger email on Nextcloud file upload
-
-1. Create n8n workflow
-2. Add **Nextcloud** trigger: "File uploaded"
-3. Add **Send Email** node with notification
-4. Deploy workflow
-5. Emails now sent automatically on uploads
-
-### Forward to Slack / Discord
-
-Ntfy can bridge to Slack/Discord:
-
-1. Create Slack webhook URL
-2. In Beszel alert, set webhook to Slack endpoint
-3. Alerts now appear in Slack channel
-
-## Best Practices
-
-1. **Use app passwords** — Never use your actual Gmail/Office password
-2. **Test after changes** — Verify with a test email
-3. **Monitor logs** — Check for SMTP errors in service logs
-4. **Use TLS** — Port 587 (TLS) preferred over 25 (plain text)
-5. **SPF/DKIM** — Configure DNS records to improve deliverability
-6. **Reply-to address** — Keep consistent with your domain
-7. **Rate limits** — Most providers limit emails per minute; don't spam
-8. **Privacy** — Sending service has access to email content; use trusted providers
-
-See [Configuration](CONFIGURATION.md#email--smtp) for all SMTP environment variables and examples.
+- **Connection refused** — wrong host/port, or ISP blocks outbound 25 (use 587)
+- **Authentication failed** — for Gmail/Office 365 use an app password, not the account password
+- **Mail lands in spam** — set up SPF/DKIM/DMARC for your domain with your provider, and keep the sender address on a domain you control

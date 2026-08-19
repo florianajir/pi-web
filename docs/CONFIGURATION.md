@@ -13,17 +13,19 @@ All configuration is managed through the `.env` file. Copy `.env.dist` and edit 
 | `ADMIN_USER` | Stack-wide admin username | ✓ | — | `admin` |
 | `PASSWORD` | LLDAP admin & Authelia password | ✓ | — | `MySecurePassword123!` |
 | `EMAIL` | Admin email & sender address | ✓ | — | `admin@example.com` |
+| `DEFAULT_LANGUAGE` | Stack-wide language (BCP 47) for Open WebUI, Piper voice, suggestion tiles | — | `en-US` | `fr-FR` |
 | `DATA_LOCATION` | Path for persistent data | — | `./data` | `/mnt/ssd/pi-pcloud-data` |
 
 ### Network Configuration
 
 | Variable | Description | Default | Notes |
 |----------|-------------|---------|-------|
-| `HOST_LAN_IP` | Pi's static IP on home LAN | Auto-detected | Set if auto-detect fails |
+| `HOST_LAN_IP` | Pi's static IP on home LAN | — (**required**) | Local DNS records point here |
 | `HOST_LAN_PARENT` | Network interface name | `eth0` | Use `ip link` to find |
 | `HOST_LAN_SUBNET` | Home network CIDR | `192.168.1.0/24` | Match your router's subnet |
 | `HOST_LAN_GATEWAY` | Router IP | `192.168.1.1` | Usually `.1` in your subnet |
 | `PIHOLE_IP` | Static IP for Pi-hole | `192.168.1.250` | Must be in subnet, outside DHCP range |
+| `PIHOLE_DNS_UPSTREAMS` | Pi-hole upstream resolvers | `172.30.53.53#5335;1.1.1.1;9.9.9.9` | Unbound first; public resolvers are failover only |
 | `ALLOW_IP_RANGES` | IP ranges allowed to access services | `127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16` | Comma-separated CIDR blocks |
 
 **IP Ranges Explained:**
@@ -72,7 +74,7 @@ For backups and file storage. Compatible with AWS S3, Scaleway, DigitalOcean Spa
 |----------|-------------|---------|-------|
 | `BACKREST_S3_URI` | Restic repository URI | Auto-derived | Set if using non-S3 storage |
 | `BACKREST_S3_REPO_PASSWORD` | Repository encryption key | — | 32+ chars, random recommended |
-| `NEXTCLOUD_SQL_BACKUP_KEEP` | Days of SQL backups to retain | `7` | Separate from full backups |
+| `NEXTCLOUD_SQL_BACKUP_KEEP` | Nextcloud SQL dumps to retain | `30` | Separate from full backups |
 
 **Auto-derived URI format:** `s3:${S3_ENDPOINT}/${S3_BUCKET}/restic`
 
@@ -108,14 +110,13 @@ For backups and file storage. Compatible with AWS S3, Scaleway, DigitalOcean Spa
 | `SMTP_AUTHTYPE` | Auth method | `LOGIN` | Nextcloud: `LOGIN`, `PLAIN`, etc. |
 | `SMTP_ENCRYPTION` | Encryption mode | `STARTTLS` | LLDAP: `STARTTLS`, `NONE` |
 | `SMTP_SSL` | Enable SSL | `false` | n8n: `true` or `false` |
-| `MAIL_FROM_ADDRESS` | Sender local part | `nextcloud` | Nextcloud: `noreply@${MAIL_DOMAIN}` |
-| `MAIL_DOMAIN` | Sender domain | `${HOST_NAME}` | Combined: `nextcloud@pi.example.com` |
+| `MAIL_FROM_ADDRESS` | Nextcloud sender local part | `nextcloud` | Sender domain is always `HOST_NAME` |
 
 **Services auto-configured:**
-- Authelia, Nextcloud, LLDAP, n8n, Ntfy, Beszel, Dockhand (read from `.env` and generated startup config)
+- Authelia, Nextcloud, LLDAP, n8n, Ntfy, Beszel, Vaultwarden (read from `.env` and generated startup config)
 
 **Services needing manual setup:**
-- Uptime Kuma, Immich (configure via their UIs)
+- Uptime Kuma, Immich, Kavita (configure via their UIs) — see [Email & Notifications](EMAIL.md#who-sends-what)
 
 **Quick setup for Gmail:**
 ```env
@@ -681,7 +682,8 @@ parameters will be too slow to chat with on CPU.
 | Variable | Default here | Notes |
 |----------|--------------|-------|
 | `LLAMA_ARG_CTX_SIZE` | `16384` | Context window. The model supports 128k; RAM and prompt-processing time do not. |
-| `LLAMA_ARG_THINK_BUDGET` | `512` | Thinking-token cap. `0` disables reasoning (fastest first token), `-1` lets it run unrestricted. |
+| `LLAMA_ARG_CHAT_TEMPLATE_KWARGS` | `{"enable_thinking":false}` | Thinking off (see above). Drop the line to restore it — `--reasoning-budget 0` is *not* equivalent: it closes the channel without telling the model, which then reasons in the visible answer. |
+| `LLAMA_ARG_N_PARALLEL` | `1` | One server slot; concurrent requests queue instead of splitting the three threads. |
 | `LLAMA_ARG_THREADS` | `3` | Matched to `cpuset: "1-3"`, leaving core 0 for Traefik and DNS. A 4th thread measured no faster. |
 | `LLAMA_ARG_SPEC_TYPE` | `draft-mtp` | Speculative decoding via Gemma 4's multi-token-prediction head; roughly doubles generation speed. Remove it and `LLAMA_ARG_SPEC_DRAFT_MODEL` to disable. |
 | `LLAMA_ARG_MMPROJ` | mmproj file | Vision/audio input. Removing it saves ~1GB of RAM and re-enables `--cache-reuse`. |

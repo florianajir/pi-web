@@ -105,7 +105,19 @@ No extra container just to run a script, and no new `.env` keys — reuse
 
 ## 11. Docs
 
-Update `README.md` and the relevant file in `docs/` when the service is user-visible.
+Every place a service is enumerated, in the same change — these tables are where
+past services silently fell out of the docs:
+
+- `README.md` — Stack Overview table
+- `docs/ARCHITECTURE.md` — Service Roles table
+- `docs/SECURITY.md` — Per-Service Protection table (matching the *actual* Traefik
+  middlewares), and the OIDC client + secrets lists if step 3 added a client
+- `docs/MONITORING.md` — monitor group table if step 7 changed `GROUPS`
+- The topical page (`NETWORKING.md`, `EMAIL.md`, …) if the service touches DNS,
+  ports, mail or VPN
+
+State the URL, auth path and any deliberate exception (e.g. "no forward-auth
+because clients are programmatic") — the *why* is what the compose file can't say.
 
 ## 12. Verify
 

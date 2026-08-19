@@ -14,9 +14,13 @@ Run all commands from the pi-pcloud directory: `/opt/pi-pcloud`
 | `make restart` | Restart all services (after config changes) |
 | `make status` | Show stack status and port bindings |
 | `make logs` | Follow live logs |
+| `make update` | `git pull` + restart |
 | `make doctor` | Report anything outside its threshold: disk, RAM, swap, temperature, load, containers, restarts, backups |
+| `make check-env` | Validate required `.env` variables |
 | `make headscale-register <key>` | Register a device to VPN |
 | `make headscale-reset` | Reset all VPN nodes (**destructive**) |
+| `make rotate-password` | Rotate `PASSWORD` after a leak (LLDAP admin + Authelia) |
+| `make rotate-password-full` | Same, plus every Postgres role and every other service using `PASSWORD` |
 
 ## Quick Workflows
 
@@ -47,15 +51,15 @@ docker compose logs -f <service>        # Follow live
 
 **Add device to VPN:**
 ```bash
-tailscale up --login-server https://headscale.<YOUR_DOMAIN>:443
-# Copy URL from output, then:
-make headscale-register <paste-url-here>
+tailscale up --login-server https://headscale.<YOUR_DOMAIN>
+# Open the printed URL and sign in via Authelia — or register the key manually:
+make headscale-register <key-from-the-url>
 ```
 
-**Update services:**
+**Update the stack:**
 ```bash
-docker compose pull
-make restart
+make update                             # git pull + restart
+docker compose pull && make restart     # only re-pull pinned images
 ```
 
 ## See Also

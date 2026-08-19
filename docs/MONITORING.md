@@ -33,9 +33,8 @@ flowchart LR
 **URL:** `https://beszel.<HOST_NAME>`
 
 **Authentication:**
-- Uses Authelia SSO
-- Users in `users` group can log in
-- No admin role requirement in Beszel itself (but Traefik `lan` middleware restricts to LAN-only)
+- Authelia SSO only — password login is disabled (`DISABLE_PASSWORD_AUTH=true`)
+- Any authenticated user can log in; the Traefik `lan` middleware restricts access to LAN/VPN
 
 ### Auto-configured Settings
 
@@ -129,10 +128,10 @@ BESZEL_TEMP_ALERT_VALUE=70        # Alert when > 70°C
 BESZEL_TEMP_ALERT_MIN=5           # Don't repeat for 5 minutes
 ```
 
-To modify: Edit `.env` and run `make restart`, then re-run the bootstrap script:
+To modify: edit `.env` and run `make restart` (the bootstrap runs as an `ExecStartPost` of the systemd unit). To re-run it by hand on the host:
 
 ```bash
-docker compose exec beszel /opt/beszel/scripts/beszel-agent-bootstrap.sh
+sh scripts/beszel-agent-bootstrap.sh
 ```
 
 ### Monitoring Your Pi
@@ -150,24 +149,12 @@ docker compose exec beszel /opt/beszel/scripts/beszel-agent-bootstrap.sh
 
 ### Storage & Backups
 
-**PocketBase data:**
-- Location: `${DATA_LOCATION}/beszel_data/`
-- Size: Grows slowly (metrics are aggregated)
-- Typical: 50-200 MB per month
+**PocketBase data** lives in the `beszel_data` Docker volume (metrics are aggregated, so it grows slowly).
 
 **Two backup layers:**
 
-1. **PocketBase built-in** — SQLite snapshots on `BESZEL_BACKUP_CRON` schedule
-   - Stored to S3 if configured
-   - Else stored locally: `${DATA_LOCATION}/beszel_backup/`
-   - Retention: `BESZEL_BACKUP_MAX_KEEP` snapshots
-
-2. **Backrest (restic)** — Full application backup
-   - Includes `beszel_data` volume
-   - S3 or local backup
-   - Daily schedule (see [Backup Strategy](#backup-strategy))
-
-Both layers protect against data loss. For disaster recovery, you can restore from either.
+1. **PocketBase built-in** — SQLite snapshots on `BESZEL_BACKUP_CRON`, stored to S3 if configured (else inside the volume's `backups/` directory), keeping `BESZEL_BACKUP_MAX_KEEP` snapshots. Restore via the Beszel admin UI.
+2. **Backrest (restic)** — the `beszel_data` volume is mounted read-only into Backrest and included in the nightly full backup (see [Backup Strategy](#backup-strategy)).
 
 ### Troubleshooting
 
@@ -176,17 +163,7 @@ Both layers protect against data loss. For disaster recovery, you can restore fr
 docker compose logs beszel-agent
 ```
 
-Check if Unix socket exists:
-```bash
-ls -la /var/run/docker.sock
-```
-
-Beszel agent needs access to Docker socket. Verify in compose.yaml:
-```yaml
-beszel-agent:
-  volumes:
-    - /var/run/docker.sock:/var/run/docker.sock:ro
-```
+The hub reads the agent over the shared `beszel_socket` volume, and the agent reads container stats from the Docker socket — both are mounted in `compose.yaml`. If the hub shows the system offline, restarting `beszel-agent` usually reconnects it.
 
 **S3 backup failing:**
 - Verify S3 credentials in `.env`
@@ -413,7 +390,7 @@ Dockhand notification delivery is auto-configured by `scripts/dockhand-oidc-boot
 The bootstrap creates/updates an Apprise notification channel named **Dockhand ntfy** and binds it to the local Docker environment. Credentials and topic are sourced from `config/ntfy/ntfy.env`:
 
 - `NTFY_DOCKHAND_PASSWORD`
-- `NTFY_DOCKHAND_TOPIC` (defaults to `pi`)
+- `NTFY_DOCKHAND_TOPIC` (the `monitoring` topic)
 
 The channel URL format is:
 
@@ -433,20 +410,6 @@ These are the exact event types configured for Dockhand alerts:
 - Verify channel exists in Dockhand: **Settings** → **Notifications** → `Dockhand ntfy`
 - Verify ntfy credentials exist: `config/ntfy/ntfy.env`
 - Verify topic subscriptions in ntfy client for `NTFY_DOCKHAND_TOPIC`
-
-## Alerting Workflow
-
-```mermaid
-flowchart LR
-    Beszel["Beszel\n(threshold exceeded)"]
-    -->|Webhook| Ntfy["Ntfy\n(push notification)"]
-    -->|"Phone alert"| You["You"]
-
-    Beszel -->|Email| SMTP["SMTP"]
-    -->|"Email"| You
-
-    Beszel -->|"In-app"| Dashboard["Beszel Dashboard"]
-```
 
 ## Backup Strategy
 
@@ -512,62 +475,20 @@ S3_SECRET_ACCESS_KEY=...
 
 ### Monitoring Backups
 
-Check backup status in Beszel:
-- **Dashboard** → Select system
-- **Recent backup date** should be today or yesterday
-- Missing backups = alert triggered
+Three independent eyes on the same question:
 
-Or manually:
-```bash
-# List local backups
-ls -lah ${DATA_LOCATION}/beszel_backup/
-
-# Check S3 backups (requires AWS CLI)
-aws s3 ls s3://my-bucket/beszel/
-```
+- **Backrest → ntfy** — pushes when a run *fails*
+- **Uptime Kuma `backup freshness`** — alerts when a run never *started* (see [What is actually checked](#what-is-actually-checked))
+- **`make doctor` / the `backups` chat topic** — reads Backrest's operation log on demand
 
 ## Logging & Log Retention
 
-Logs are managed by systemd journald. View logs:
+Container logs go to systemd journald (the compose `logging` driver), tagged per container:
 
 ```bash
-make logs                          # Follow stack logs (10 containers)
-docker compose logs <service>      # Specific service
-docker compose logs -f traefik     # Follow traefik logs
+make logs                          # Follow all stack logs
+docker compose logs -f <service>   # One service
+journalctl -t pi-traefik           # Same logs via journald, survives container recreation
 ```
 
-**Log retention:**
-- Journald default: 10% of disk or 4GB (whichever is smaller)
-- Change: Edit `/etc/systemd/journald.conf`, set `SystemMaxUse=`
-
-**Cleanup old logs:**
-```bash
-journalctl --vacuum=30d            # Keep 30 days
-journalctl --vacuum=2G             # Keep 2 GB max
-```
-
-## Performance Monitoring
-
-**Key metrics to watch:**
-
-1. **CPU load** — Should stay under `number_of_cores`
-   - High load = services struggling
-   - May need:Increase Nextcloud/Immich workers, reduce background jobs
-
-2. **Memory usage** — Should stay under 70% normally
-   - OOM kills containers
-   - Set swap or upgrade RAM
-
-3. **Disk usage** — Keep under 80% for healthy FS
-   - Above 90% = risky
-   - Clean old photos/videos, reduce backup retention
-
-4. **Temperature** — Raspberry Pi 5 thermal throttles at 80°C
-   - Add cooling (heatsink, fan)
-   - Reduce workload
-
-5. **Network I/O** — Bottleneck for Immich/Nextcloud
-   - Large photo syncs = sustained high I/O
-   - Normal; no action needed unless services timeout
-
-Beszel dashboard shows all these in real-time. Set up alerts if thresholds are exceeded.
+Journald caps itself at 10% of disk or 4GB by default; tune `SystemMaxUse=` in `/etc/systemd/journald.conf` or reclaim space with `journalctl --vacuum-time=30d`.

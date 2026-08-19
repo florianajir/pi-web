@@ -21,12 +21,12 @@ If you're deciding between approaches, here's the short version:
 | Category | Services |
 |----------|----------|
 | **Cloud & Storage** | Nextcloud, Immich, n8n, Ntfy, Vaultwarden (Bitwarden-compatible password manager) |
-| **Network & Security** | Traefik (reverse proxy), Tailscale/Headscale (VPN), Authelia (SSO), LLDAP (user directory) |
+| **Network & Security** | Traefik (reverse proxy), Tailscale/Headscale + Headplane (VPN), Authelia (SSO), LLDAP (user directory) |
 | **DNS & Filtering** | Pi-hole (ad-blocking), Unbound (recursive DNS) |
-| **Download** | qBittorrent (torrent client), Prowlarr (indexer manager), Kapowarr (comics manager), FlareSolverr (Cloudflare solver), Gluetun (VPN kill-switch gateway) |
-| **AI** | Open WebUI (chat interface), llama.cpp (local Gemma 4 E2B inference, CPU-only), Piper (text-to-speech, French voices), Parakeet (multilingual speech-to-text), system status tools |
-| **Monitoring & Backup** | Beszel (monitoring), Backrest (restic backups), Dockhand (container management) |
-| **Infrastructure** | PostgreSQL, Redis, ddns-updater |
+| **Download & Media** | qBittorrent (torrent client), Prowlarr (indexer manager), Kapowarr (comics manager), Kavita (comics/ebook reader), Stremio + Comet (streaming), FlareSolverr (Cloudflare solver), Gluetun (VPN kill-switch gateway) |
+| **AI** | Open WebUI (chat interface), llama.cpp (local Gemma 4 E2B inference, CPU-only), Piper (text-to-speech), Parakeet (multilingual speech-to-text), system status tools |
+| **Monitoring & Backup** | Beszel (metrics & alerts), Uptime Kuma (uptime checks), Homepage (dashboard), Backrest (restic backups), Dockhand (container management) |
+| **Infrastructure** | PostgreSQL, Redis (Valkey), ddns-updater |
 
 ## Requirements
 
@@ -61,7 +61,7 @@ make install                        # Deploy stack
 make logs                           # Follow startup logs
 ```
 
-After first start, visit `https://auth.<YOUR_DOMAIN>` to create your first user in LLDAP, then log in to services with SSO.
+After first start, visit `https://lldap.<YOUR_DOMAIN>` (login `admin` / your `PASSWORD`) to create users, then log in to services through the SSO portal at `https://auth.<YOUR_DOMAIN>`.
 
 ## Usage
 

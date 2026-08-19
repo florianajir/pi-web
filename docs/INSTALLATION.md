@@ -49,14 +49,14 @@ cp .env.dist .env
 | `ADMIN_USER` | Stack-wide admin username | `admin` |
 | `PASSWORD` | LLDAP admin & Authelia password | `strong-password-here` |
 | `EMAIL` | Admin email & sender address | `admin@example.com` |
+| `HOST_LAN_IP` | Your Pi's static LAN IP | `192.168.1.30` |
 | `CLOUDFLARE_DNS_API_TOKEN` | Cloudflare API token | *(from Cloudflare dashboard)* |
 | `CLOUDFLARE_ZONE_ID` | Your domain's zone ID | *(from Cloudflare dashboard)* |
 
-**Network configuration** (usually auto-detected, adjust if needed):
+**Network configuration** (defaults suit a `192.168.1.0/24` LAN, adjust if needed):
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `HOST_LAN_IP` | Auto-detected | Your Pi's static LAN IP |
 | `HOST_LAN_PARENT` | `eth0` | Network interface name |
 | `HOST_LAN_SUBNET` | `192.168.1.0/24` | Your home network CIDR |
 | `HOST_LAN_GATEWAY` | `192.168.1.1` | Your router's IP |
@@ -104,7 +104,7 @@ Watch for any errors. Initial startup takes 2-5 minutes.
 1. Visit `https://lldap.<HOST_NAME>`
 2. Login as `admin` with your `PASSWORD`
 3. Create users in **Admin** → **Users**
-4. Assign groups (e.g., `users`, `admin`) for access control
+4. Create an `admin` group and add your admin accounts to it — it gates the admin tools (Traefik, Pi-hole, Backrest, LLDAP, Dockhand, Headplane) with 2FA. Regular users need no group.
 
 ### SSO Portal
 
@@ -190,13 +190,11 @@ Common issues:
    docker compose logs traefik | tail -50
    ```
 
-### Forgot password
+### Forgot / leaked admin password
 
-Reset LLDAP admin:
-1. Stop stack: `make stop`
-2. Remove LLDAP volume: `docker volume rm pi-pcloud_lldap_data`
-3. Restart: `make start`
-4. LLDAP admin reset to credentials in `.env`
+Set a new `PASSWORD` in `.env` and run `make rotate-password`. Editing `.env` alone does **not** reset the LLDAP admin account — the rotate script performs the actual LDAP password change and updates Authelia's bind secret. See [Configuration: Changing Passwords](CONFIGURATION.md#changing-passwords).
+
+Regular users reset their own password via the Authelia portal or the LLDAP admin UI.
 
 ## Next Steps
 

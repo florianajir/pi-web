@@ -75,6 +75,8 @@ flowchart LR
   Headplane -->|admin API/UI| Headscale
 ```
 
+(The diagram shows a representative subset — every routed service follows the same Traefik path. See the full list below.)
+
 ## Service Roles
 
 | Service | Purpose | Clients |
@@ -94,12 +96,20 @@ flowchart LR
 | **Vaultwarden** | Bitwarden-compatible password manager | Bitwarden clients via Traefik, authenticating through Authelia (OIDC) |
 | **Pi-hole** | Ad blocking, local DNS resolution | LAN & VPN clients |
 | **Unbound** | Recursive DNS resolver | Pi-hole |
+| **Homepage** | Service dashboard with live widgets | Users via Traefik + SSO |
+| **Uptime Kuma** | Uptime monitoring & alerting | Admins via Traefik + SSO |
 | **Backrest** | Automated backups (restic) | S3 storage, scheduled jobs |
-| **PostgreSQL** | Database for Nextcloud, Immich, Authelia, Vaultwarden | App containers |
-| **Redis** | Session store, caching | App containers |
-| **Tailscale** | WireGuard VPN mesh agent | Your VPN devices |
-| **Gluetun** | VPN gateway (WireGuard/OpenVPN); owns the network namespace for qBittorrent | Internet |
-| **qBittorrent** | Torrent client; all traffic routed through Gluetun | Users via Traefik + SSO |
+| **PostgreSQL** | Database for Nextcloud, Immich, Authelia, LLDAP, Vaultwarden, Open WebUI | App containers |
+| **Redis (Valkey)** | Session store, caching | App containers |
+| **Tailscale** | WireGuard VPN mesh agent (the Pi's own node) | Your VPN devices |
+| **Gluetun** | VPN gateway; owns the network namespace for qBittorrent, Kapowarr and Stremio | Internet |
+| **qBittorrent** | Torrent client; all traffic through Gluetun | Users via Traefik + SSO |
+| **Prowlarr** | Indexer manager (with FlareSolverr for Cloudflare-protected indexers) | Users via Traefik + SSO |
+| **Kapowarr** | Comics manager; feeds the Kavita library | Users via Traefik + SSO |
+| **Kavita** | Comics / manga / ebook reader | Users via Traefik + OIDC |
+| **Stremio + Comet** | Streaming server (through Gluetun) and its debrid addon | Users via Traefik |
+| **Open WebUI** | Local AI chat frontend | Users via Traefik + OIDC |
+| **llama.cpp / Piper / Parakeet / system-tools** | Local LLM inference, TTS, STT, and the server-status tool — all on the internal `ai` network | Open WebUI |
 
 ## Docker Networks
 
@@ -240,16 +250,18 @@ pi-pcloud/
 │   ├── nextcloud/                # Nextcloud app config
 │   ├── immich/                   # Immich config
 │   └── ...
-├── data/                         # ⚠️ Persistent data (mount on SSD!)
+├── data/                         # ⚠️ Persistent data (DATA_LOCATION — mount on SSD!)
 │   ├── nextcloud/                # Nextcloud files
 │   ├── immich/                   # Immich library
-│   ├── authelia-config/          # Auth secrets & config
+│   ├── authelia-config/          # Auth secrets & rendered config
 │   ├── postgres/                 # Database files
-│   ├── redis/                    # Cache/session data
-│   ├── pihole/                   # Pi-hole config & blocklists
+│   ├── download/, comics/        # qBittorrent / Kapowarr output (served by Kavita)
+│   ├── backrest/                 # Backrest data + local repos
 │   └── ...
 └── docs/                         # Documentation
 ```
+
+Smaller state (Pi-hole, Redis, Headscale, Beszel, ntfy, llama.cpp weights, …) lives in named Docker volumes — see the `volumes:` section of `compose.yaml`.
 
 **Recommended setup:**
 - Clone on SSD: `git clone ... /mnt/ssd/pi-pcloud`
