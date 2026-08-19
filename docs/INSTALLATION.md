@@ -23,7 +23,24 @@ Before installing pi-pcloud, ensure you have:
    - Zone: DNS edit permissions on your domain
 4. **Docker & Docker Compose** — Pre-installed on Pi OS (verified during `make preflight`)
 
-## Installation Steps
+## Quick Install (one-liner)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/florianajir/pi-pcloud/main/install.sh | sh
+```
+
+The installer:
+
+1. Checks for `git`, `make`, Docker and the Compose plugin (offers to install the missing ones via `apt-get` / [get.docker.com](https://get.docker.com))
+2. Clones the repository into `~/pi-pcloud` (override with `PI_PCLOUD_DIR=/path`)
+3. Builds `.env` from `.env.dist`, prompting only for the required values — timezone, LAN IP, interface, subnet, gateway and Pi-hole IP are auto-detected, and `PASSWORD` can be auto-generated
+4. Runs `make preflight` then `make install`
+
+It is safe to re-run: an existing clone is fast-forwarded and an existing `.env` is never modified. Any prompt can be pre-answered by exporting the variable first (`HOST_NAME`, `EMAIL`, `ADMIN_USER`, `PASSWORD`, `TIMEZONE`, `HOST_LAN_IP`, `CLOUDFLARE_DNS_API_TOKEN`, `CLOUDFLARE_ZONE_ID`), which also enables unattended installs from a non-interactive shell.
+
+Optional settings (SMTP, S3 backups, `DEFAULT_LANGUAGE`) are left empty — fill them in `.env` later (see [Configuration](CONFIGURATION.md)).
+
+## Manual Installation Steps
 
 ### 1. Clone Repository
 

@@ -24,7 +24,12 @@ Run all commands from the pi-pcloud directory: `/opt/pi-pcloud`
 
 ## Quick Workflows
 
-**First-time setup:**
+**First-time setup** (guided — clones, builds `.env`, deploys; see [Installation](INSTALLATION.md#quick-install-one-liner)):
+```bash
+curl -fsSL https://raw.githubusercontent.com/florianajir/pi-pcloud/main/install.sh | sh
+```
+
+**First-time setup (manual):**
 ```bash
 cp .env.dist .env                       # Edit with your values
 make preflight

@@ -52,6 +52,14 @@ If you're deciding between approaches, here's the short version:
 
 ## Quick Start
 
+One-liner — checks prerequisites, clones into `~/pi-pcloud`, prompts for the required settings (network layout and timezone are auto-detected), then deploys:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/florianajir/pi-pcloud/main/install.sh | sh
+```
+
+Or manually:
+
 ```bash
 git clone https://github.com/florianajir/pi-pcloud.git
 cd pi-pcloud
