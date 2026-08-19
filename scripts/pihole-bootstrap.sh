@@ -1,5 +1,6 @@
 #!/bin/sh
-# Bootstrap Pi-hole: adds recommended block lists and updates gravity.
+# Bootstrap Pi-hole: adds recommended block lists, allows the click-redirect
+# domains they over-block, then updates gravity.
 # Uses the Pi-hole v6 REST API via docker exec curl.
 # Firebog "ticked" lists (low false-positive rate) — https://firebog.net
 # Safe to run multiple times — skips lists already present.
@@ -25,7 +26,6 @@ https://v.firebog.net/hosts/AdguardDNS.txt
 https://v.firebog.net/hosts/Admiral.txt
 https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt
 https://v.firebog.net/hosts/Easylist.txt
-https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext
 https://raw.githubusercontent.com/FadeMind/hosts.extras/master/UncheckyAds/hosts
 https://raw.githubusercontent.com/bigdargon/hostsVN/master/hosts
 https://v.firebog.net/hosts/Easyprivacy.txt
@@ -39,6 +39,25 @@ https://raw.githubusercontent.com/FadeMind/hosts.extras/master/add.Risk/hosts
 https://phishing.army/download/phishing_army_blocklist_extended.txt
 https://raw.githubusercontent.com/Spam404/lists/master/main-blacklist.txt
 https://urlhaus.abuse.ch/downloads/hostfile/
+"
+
+# Click-redirect and CNAME collateral: domains the block lists catch as ad
+# infrastructure, but which sit in the middle of a user-initiated navigation.
+# Blocking them turns a click into a dead page rather than removing an ad.
+# Each one below was verified present in gravity, most in several lists at once
+# (including StevenBlack), so dropping lists cannot fix them — only an allow can.
+ALLOW_LISTS="
+g.msn.com
+www.googleadservices.com
+googleadservices.com
+clickserve.dartsearch.net
+awin1.com
+go.redirectingat.com
+click.linksynergy.com
+s.click.aliexpress.com
+trk.klclick.com
+analytics.google.com
+dit.whatsapp.net
 "
 
 # Run curl inside the Pi-hole container (has curl; avoids extra network hop).
@@ -84,6 +103,27 @@ add_list() {
     case "$http_code" in
         2*) log "Added: $url"; return 0 ;;
         *)  log "Already present or error (HTTP $http_code): $url"; return 1 ;;
+    esac
+}
+
+# Add an exact allow entry. Exact, not regex: an allow is a hole in the filter,
+# so it stays as narrow as the domain that was actually breaking.
+# Returns 0 if newly added, 1 if already present or on error.
+add_allow() {
+    local sid="$1"
+    local domain="$2"
+    local http_code
+    http_code=$(pihole_curl \
+        -o /dev/null \
+        -w "%{http_code}" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -H "sid: $sid" \
+        -d "{\"domain\":\"$domain\",\"comment\":\"click-redirect allow\",\"enabled\":true,\"groups\":[0]}" \
+        "$PIHOLE_API/domains/allow/exact")
+    case "$http_code" in
+        2*) log "Allowed: $domain"; return 0 ;;
+        *)  return 1 ;;
     esac
 }
 
@@ -133,6 +173,13 @@ main() {
         if add_list "$sid" "$url"; then
             newly_added=$((newly_added + 1))
         fi
+    done
+
+    # Allow entries take effect on the next list reload, not on a gravity
+    # rebuild, so they never need to trigger one on their own.
+    for domain in $ALLOW_LISTS; do
+        [ -z "$domain" ] && continue
+        add_allow "$sid" "$domain" || true
     done
 
     if [ "$newly_added" -gt 0 ]; then
