@@ -8,10 +8,11 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   validate:
@@ -90,6 +91,30 @@ jobs:
           test ! -d ./config/headplane/config.yaml
           test -f ./config/headscale/config.yaml
           test -f ./config/headscale/policy.hujson
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Pull images
+        env:
+          # Override the job-wide quiet progress so a failing pull names its image.
+          COMPOSE_PROGRESS: plain
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if docker compose pull --ignore-buildable --policy missing; then
+              exit 0
+            fi
+            delay=$((attempt * 20))
+            echo "::warning::Pull attempt ${attempt}/3 failed; retrying in ${delay}s"
+            sleep "${delay}"
+          done
+          echo "::error::Image pull failed after 3 attempts"
+          exit 1
 
       - name: Start stack and run smoke checks
         run: |
