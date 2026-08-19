@@ -77,10 +77,12 @@ The bootstrap script (`scripts/beszel-agent-bootstrap.sh`) runs on first start a
 
 - **Uptime Kuma** notifies with a priority that depends on the monitor's group,
   from urgent (core infrastructure) down to low (media, tooling). It also checks
-  the public request path, DNS resolution, the VPN egress and the wildcard TLS
-  certificate. See [Uptime Kuma Monitoring](#uptime-kuma-monitoring).
+  the public request path, DNS resolution, the VPN egress, the wildcard TLS
+  certificate and the age of the last backup. See
+  [Uptime Kuma Monitoring](#uptime-kuma-monitoring).
 - **Dockhand** notifies only on container OOM and unhealthy healthchecks.
-- **Backrest** notifies only when a backup fails.
+- **Backrest** notifies only when a backup *fails*; a backup that never started
+  is caught by the Kuma `backup freshness` monitor instead.
 - **Beszel** sends temperature (70°C), CPU (90%), memory (90%), and disk (85%)
   alerts to ntfy after five minutes over the threshold.
 - **Authelia** notifies on every failed login attempt and on regulation bans
@@ -289,7 +291,7 @@ decides the check interval, the retry budget and the ntfy priority:
 | **Core** | traefik, authelia, lldap, postgres, redis, unbound, pihole, ddns-updater, ntfy, DNS resolution | 60s | `ntfy-critical` (prio 5) | each monitor |
 | **Remote Access** | headscale, headplane, tailscale, gluetun, VPN public IP | 60s | `ntfy-high` (prio 4) | each monitor |
 | **External Chain** | route checks, TLS certificate | 120s | `ntfy-high` (prio 4) | each monitor |
-| **Personal Data** | immich, immich-ml, nextcloud, vaultwarden, kavita, backrest | 120s | `ntfy` (prio 3) | each monitor |
+| **Personal Data** | immich, immich-ml, nextcloud, vaultwarden, kavita, backrest, backup freshness | 120s | `ntfy` (prio 3) | each monitor |
 | **Media & Downloads** | qbittorrent, stremio, comet, prowlarr, kapowarr, flaresolverr, route qbittorrent | 300s | `ntfy-low` (prio 2) | the group only |
 | **Tools & Observability** | homepage, beszel, beszel-agent, dockhand | 300s | `ntfy-low` (prio 2) | the group only |
 | **Automation & AI** | n8n, n8n-runners, open-webui, llama-cpp, piper | 300s | `ntfy-low` (prio 2) | the group only |
@@ -323,6 +325,7 @@ they cannot see:
 | `dns resolution` | DNS | Pi-hole up, forwarding to Unbound, and Unbound still reaching the internet |
 | `vpn public ip` | JSON query | gluetun running *and* egress actually going through the tunnel |
 | `TLS certificate` | HTTP | Wildcard certificate expiry (daily) |
+| `backup freshness` | JSON query | A backup that never *started* - Backrest only reports the runs that happened (hourly) |
 
 Route checks are sent to the **Traefik container with a `Host` header**, not to
 the public URL: Kuma resolves the public name to the WAN address, so the request
@@ -335,6 +338,24 @@ certificate expiry has its own monitor.
 Authelia-protected routers answer `302` towards the SSO portal, which counts as
 healthy: those checks validate the routing chain, not the protected app itself -
 the app's docker monitor covers that.
+
+`backup freshness` is the one that fills a real hole rather than doubling a
+container check. Backrest's hook fires on the runs that happen: a failed backup
+pushes to ntfy, but a plan that never started sends nothing at all, and the
+`backrest` monitor beside it stays green throughout. The monitor reads
+`http://pi-system-tools:8000/health/backups`, where system-tools reports the age
+of the last finished run out of Backrest's operation log, and matches
+`status == ok` - which holds only while that age is inside `BACKUP_MAX_AGE_HOURS`
+(default 30: the daily 04:00 schedule plus six hours of slack). The other three
+statuses each name their own reason in the alert - `stale`, `failed`, `unknown`
+(the log could not be read).
+
+Two consequences worth knowing. A fresh install is legitimately **down** here
+until its first backup completes, and if `system-tools` itself is down this goes
+down with it - its own container monitor, in **Tools & Observability**, is what
+tells the two apart. The threshold lives in `config/system-tools/app.py`, so a
+plan on a different schedule needs `BACKUP_MAX_AGE_HOURS` set on the
+`system-tools` service.
 
 ### Homepage widget
 
