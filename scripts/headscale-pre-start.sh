@@ -62,13 +62,14 @@ main() {
         *)  DATA_LOCATION="$PROJECT_DIR/$DATA_LOCATION" ;;
     esac
 
-    # Read OIDC client secret for Headscale node registration
+    # Read OIDC client secret for Headscale node registration. -r rather than -f:
+    # the file is mode 600 and root-owned, so a test for existence alone is also
+    # false when this script is run by hand as a normal user, and the secret then
+    # silently reads as empty.
     OIDC_SECRET_FILE="$DATA_LOCATION/authelia-config/secrets/oidc_headscale_secret.txt"
     OIDC_HEADSCALE_SECRET=""
-    if [ -f "$OIDC_SECRET_FILE" ]; then
+    if [ -r "$OIDC_SECRET_FILE" ]; then
         OIDC_HEADSCALE_SECRET=$(cat "$OIDC_SECRET_FILE")
-    else
-        log "WARNING: OIDC secret not found at $OIDC_SECRET_FILE (run authelia-pre-start.sh first)"
     fi
 
     UPDATED_POLICY=$(sed \
@@ -81,6 +82,29 @@ main() {
     else
         printf '%s\n' "$UPDATED_POLICY" > "$POLICY_FILE"
         log "Rendered policy to $POLICY_FILE"
+    fi
+
+    # Authelia has this client as confidential (public: false, hashed secret), so
+    # substituting an empty string does not produce a degraded config - it
+    # produces one Authelia rejects every login against, while headscale starts
+    # happily because only_start_if_oidc_is_available is false. Worse, the
+    # "already up to date" check below then preserves it on every later run.
+    # Never write that file.
+    if [ -z "$OIDC_HEADSCALE_SECRET" ]; then
+        # The secrets directory is mode 700 root-owned, so a non-root run cannot
+        # even stat the file: absent and forbidden look identical from here
+        # unless the directory itself is tested for searchability.
+        if [ -e "$OIDC_SECRET_FILE" ] || [ ! -x "$(dirname "$OIDC_SECRET_FILE")" ]; then
+            log "ERROR: cannot read $OIDC_SECRET_FILE - run this as root, the way the systemd unit does"
+        else
+            log "ERROR: OIDC secret missing at $OIDC_SECRET_FILE - run authelia-pre-start.sh first"
+        fi
+        if [ -f "$CONFIG_FILE" ]; then
+            # Whatever is already there at least kept working until now.
+            log "Leaving $CONFIG_FILE untouched"
+            exit 0
+        fi
+        exit 1
     fi
 
     UPDATED_CONFIG=$(sed \
