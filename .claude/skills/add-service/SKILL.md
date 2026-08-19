@@ -12,7 +12,12 @@ explicitly which ones you skipped and why.
 ## 1. Compose basics
 
 - `<<: *service-defaults` (journald logging + `restart: unless-stopped`)
-- pinned image tag (digest for anything security-sensitive), `container_name: pi-<service>`
+- pinned image tag — look up the newest **stable** release upstream before writing it
+  (`docker buildx imagetools inspect <image>:latest`, the registry's tag list, or the
+  project's GitHub releases page); never `latest`, never a tag guessed from another
+  service. Skip rc/beta/nightly tags unless the feature we need only exists there, and
+  say so if you do. Add a digest for anything security-sensitive.
+- `container_name: pi-<service>`
 - `expose`, not `ports` — everything reaches the LAN through Traefik
 - healthcheck built on an `x-healthcheck-*` anchor; check which tools the image
   actually ships first (curl/wget/bash/nc/python3 vary widely, and `CMD-SHELL`
