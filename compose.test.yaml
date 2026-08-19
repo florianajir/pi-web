@@ -57,6 +57,11 @@ services:
     # stack depends on it being up.
     profiles: [ci-excluded]
 
+  parakeet:
+    # Same as piper: the build bakes in ~660MB of Parakeet weights, and nothing
+    # else in the stack depends on it being up.
+    profiles: [ci-excluded]
+
   # --- open-webui: run without the excluded inference backend ---
   open-webui:
     # depends_on must be reset, not merged: compose would otherwise pull

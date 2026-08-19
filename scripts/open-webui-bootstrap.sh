@@ -53,6 +53,16 @@ case "$DEFAULT_LANGUAGE" in
     # silently substituted on every request.
     *)   TTS_VOICE="en_US-lessac-medium" ;;
 esac
+# Speech-to-text, its own marker again so the two audio halves move separately.
+# No language in the version: parakeet-tdt-0.6b-v3 is multilingual and picks the
+# language off the audio, so DEFAULT_LANGUAGE has nothing to select here.
+STT_MARKER="pi-pcloud.local_stt_defaults"
+STT_VERSION='"1"'
+# Parakeet's OpenAI-compatible facade (config/parakeet), on the ai network.
+STT_BASE_URL="http://parakeet:8000/v1"
+# Sent as the `model` field and otherwise ignored: the container serves the one
+# model it was built with. Set so the admin page names something recognisable.
+STT_MODEL="parakeet-tdt-0.6b-v3"
 # The interface language. DEFAULT_LOCALE is PersistentConfig like the rest, so
 # compose only reaches an instance that has never started; here the database
 # still holds Open WebUI's own empty default, which means "follow the browser".
@@ -164,6 +174,34 @@ ON CONFLICT (key) DO UPDATE
 SQL
 }
 
+# Point the microphone button at the local Parakeet container. This mirrors the
+# AUDIO_STT_* variables on the open-webui service, which cover a fresh install on
+# their own - those are PersistentConfig, so they are ignored by an instance
+# whose database already exists, which is the case this function is here for.
+#
+# Seeded, not enforced, like the TTS block above: an engine has to be named for the feature
+# to work at all, but this runs once, so switching back to Open WebUI's built-in
+# whisper - or out to a hosted API - in Admin Settings > Audio sticks.
+#
+# Leaving the engine empty is what selects that built-in whisper, which runs
+# inside the open-webui container: `base`, 20.2% WER on read French, and no room
+# under that container's 1g to load anything better. See the parakeet service in
+# compose.yaml for the numbers behind the swap.
+#
+# No API key: the ai network is internal and the facade authenticates nobody,
+# same as llama-cpp and piper.
+apply_stt_defaults() {
+    psql_owui -q <<SQL
+INSERT INTO config (key, value, updated_at) VALUES
+    ('audio.stt.engine',              '"openai"'::json,        extract(epoch from now())::bigint),
+    ('audio.stt.openai.api_base_url', '"$STT_BASE_URL"'::json, extract(epoch from now())::bigint),
+    ('audio.stt.model',               '"$STT_MODEL"'::json,    extract(epoch from now())::bigint),
+    ('$STT_MARKER',                   '$STT_VERSION'::json,    extract(epoch from now())::bigint)
+ON CONFLICT (key) DO UPDATE
+    SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+SQL
+}
+
 # Open WebUI fires an extra, invisible LLM call per message for each of these:
 # a chat title, chat tags, follow-up suggestions, a search query rewrite. Against
 # a cloud API that is free; against a Pi generating ~10 tok/s it multiplies the
@@ -266,6 +304,15 @@ main() {
             changed=1
         else
             log "WARNING: failed to seed Open WebUI text-to-speech settings"
+        fi
+    fi
+
+    if [ "$(marker_present "$STT_MARKER" "$STT_VERSION")" = "f" ]; then
+        log "Pointing speech-to-text at Parakeet ($STT_MODEL)"
+        if apply_stt_defaults; then
+            changed=1
+        else
+            log "WARNING: failed to seed Open WebUI speech-to-text settings"
         fi
     fi
 
