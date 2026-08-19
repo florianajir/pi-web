@@ -1670,9 +1670,13 @@ services:
     expose:
       - 8000
     environment:
-      # Used when a request asks for a voice that does not exist here - which
-      # includes every OpenAI voice name open-webui defaults to (alloy, echo).
-      - PIPER_DEFAULT_VOICE=fr_FR-siwis-medium
+      # open-webui defaults to OpenAI voice names (alloy, echo), none of which
+      # exist here, so in practice this is the voice. Derived from the stack-wide
+      # DEFAULT_LANGUAGE rather than named, so moving the stack to another
+      # language does not mean knowing a Piper voice id; set PIPER_DEFAULT_VOICE
+      # to name one outright. A voice has to be in the image to be picked - see
+      # the VOICES build arg in config/piper/Dockerfile.
+      - PIPER_DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-en-US}
     healthcheck:
       <<: *healthcheck-relaxed
       # python:3.12-slim ships no curl or wget, but python is the point of it.
@@ -1683,7 +1687,7 @@ services:
       # because dashboard-icons has nothing for piper.
       - "homepage.group=AI"
       - "homepage.name=Piper"
-      - "homepage.description=French text-to-speech"
+      - "homepage.description=Text-to-speech, French by default"
       - "homepage.icon=mdi-text-to-speech"
     deploy: *cpu-request-small
     # Same three cores as llama-cpp, leaving core 0 to traefik and DNS.
@@ -1722,6 +1726,9 @@ services:
       # No Ollama in the stack; left on, this probes localhost:11434 on every
       # start and on the model list of every page load.
       - ENABLE_OLLAMA_API=false
+      # Interface language for anyone who has not picked one themselves. Same
+      # BCP 47 tag as the rest of the stack; per-user choices override it.
+      - DEFAULT_LOCALE=${DEFAULT_LANGUAGE:-en-US}
     volumes:
       - open_webui_data:/app/backend/data
       - ${DATA_LOCATION:-./data}/authelia-config/secrets/oidc_open-webui_secret.txt:/run/secrets/oidc_open-webui_secret:ro

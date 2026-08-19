@@ -32,7 +32,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("piper-openai")
 
 VOICE_DIR = Path(os.environ.get("PIPER_VOICE_DIR", "/voices"))
-DEFAULT_VOICE = os.environ.get("PIPER_DEFAULT_VOICE", "fr_FR-siwis-medium")
+# The stack-wide DEFAULT_LANGUAGE, as a BCP 47 tag. A voice is picked to match it
+# rather than named here, so that the language of the whole stack is one variable
+# in .env and not a voice id somebody has to know exists.
+DEFAULT_LANGUAGE = os.environ.get("PIPER_DEFAULT_LANGUAGE", "en-US").strip()
+# Escape hatch: naming a voice outright wins over the language match, which is
+# how you get fr_FR-tom-medium rather than whichever French voice sorts first.
+EXPLICIT_VOICE = os.environ.get("PIPER_DEFAULT_VOICE", "").strip()
 
 app = FastAPI(title="Piper OpenAI-compatible TTS")
 
@@ -44,6 +50,41 @@ _synth_lock = threading.Lock()
 def available_voices() -> list[str]:
     """Voice ids, taken from the .onnx files baked into the image."""
     return sorted(p.stem for p in VOICE_DIR.rglob("*.onnx"))
+
+
+def resolve_default_voice() -> str:
+    """Best voice in the image for DEFAULT_LANGUAGE, widening until something fits.
+
+    Piper names voices `fr_FR-siwis-medium`, so an en-US/fr-FR tag maps onto the
+    first segment. The two fallbacks matter because DEFAULT_LANGUAGE is a
+    stack-wide setting: someone setting de-DE has not necessarily rebuilt this
+    image with a German voice, and answering in the wrong language beats failing
+    every read-aloud with a 500.
+    """
+    voices = available_voices()
+    if not voices:
+        return ""
+    if EXPLICIT_VOICE:
+        return EXPLICIT_VOICE
+
+    region = DEFAULT_LANGUAGE.replace("-", "_")
+    exact = [v for v in voices if v.startswith(f"{region}-")]
+    if exact:
+        return exact[0]
+
+    # fr-BE with only fr_FR voices baked in: same language, other region.
+    language = region.split("_")[0]
+    same_language = [v for v in voices if v.startswith(f"{language}_")]
+    if same_language:
+        log.info("no %s voice, using %s", DEFAULT_LANGUAGE, same_language[0])
+        return same_language[0]
+
+    log.warning("no voice for %s in %s, using %s - rebuild with the VOICES build "
+                "arg to add one", DEFAULT_LANGUAGE, [v for v in voices], voices[0])
+    return voices[0]
+
+
+DEFAULT_VOICE = resolve_default_voice()
 
 
 def voice_path(name: str) -> Path | None:
