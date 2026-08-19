@@ -1,17 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Downloads the GGUF weights llama-cpp serves, into the mounted /models volume.
 #
-# Runs INSIDE the llama.cpp image (it ships bash + curl), started by
+# Runs INSIDE the llama.cpp image (it ships curl), started by
 # scripts/llama-cpp-pre-start.sh. It lives here rather than being inlined in
 # that script so the quoting stays readable and the download can be re-run by
 # hand:
 #   docker run --rm -v llama_models:/models \
 #     -v ./config/llama-cpp/fetch-models.sh:/fetch-models.sh:ro \
-#     --entrypoint bash ghcr.io/ggml-org/llama.cpp:server-bXXXXX /fetch-models.sh
+#     --entrypoint sh ghcr.io/ggml-org/llama.cpp:server-bXXXXX /fetch-models.sh
 #
 # Idempotent: a file whose size already matches the remote one is left alone,
 # a partial download is resumed rather than restarted.
-set -euo pipefail
+set -eu
 
 MODELS_DIR="${MODELS_DIR:-/models}"
 
@@ -91,7 +91,9 @@ main() {
     while IFS='|' read -r name url; do
         [ -n "$name" ] || continue
         fetch "$name" "$url"
-    done <<< "$DOWNLOADS"
+    done <<EOF
+$DOWNLOADS
+EOF
 }
 
 main "$@"

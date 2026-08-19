@@ -46,7 +46,7 @@ main() {
     if docker run --rm \
         -v "$VOLUME_NAME:/models" \
         -v "$FETCH_SCRIPT:/fetch-models.sh:ro" \
-        --entrypoint bash \
+        --entrypoint sh \
         "$LLAMA_IMAGE" /fetch-models.sh; then
         return 0
     fi
