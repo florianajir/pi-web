@@ -3,7 +3,7 @@
 # domains they over-block, then updates gravity. Idempotent - lists and allows
 # already present are skipped.
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 

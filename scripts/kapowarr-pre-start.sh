@@ -6,7 +6,7 @@
 # and hand it (plus the config dirs) to the project owner. Idempotent.
 # Runs as ExecStartPre before docker compose up.
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 

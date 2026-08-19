@@ -6,7 +6,7 @@
 # NOTE: auto-provisioning and role-sync are stored in Kavita's DB, not appsettings —
 # they are a one-time toggle in the admin UI (Settings > OpenID Connect).
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 

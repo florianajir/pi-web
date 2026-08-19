@@ -2,7 +2,7 @@
 # Generate Authelia secrets and render configuration from template.
 # Idempotent: existing secrets and configuration are preserved.
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 
@@ -143,7 +143,7 @@ main() {
     TMP_KEY_INDENTED="$(mktemp)"
     trap 'rm -f "$TMP_RENDERED" "$TMP_KEY_INDENTED"' EXIT INT TERM
 
-    sed -e "s|__HOST_NAME__|$HOST_NAME|g" "$CONFIG_TEMPLATE" > "$TMP_RENDERED"
+    sed -e "s|__HOST_NAME__|$(sed_escape "$HOST_NAME")|g" "$CONFIG_TEMPLATE" > "$TMP_RENDERED"
     sed 's/^/          /' "$SECRETS_DIR/oidc_private_key.pem" > "$TMP_KEY_INDENTED"
 
     RENDERED=$(awk -v key_file="$TMP_KEY_INDENTED" '

@@ -354,6 +354,14 @@ api_put_json_with_cookie() {
 
 # --- Utilities ---
 
+# Escape a value for use as the replacement in a `sed "s|…|…|g"` render: a
+# literal \, & or | would otherwise be interpreted (or terminate the
+# expression) and corrupt the rendered config. Values read via get_env_value
+# cannot contain newlines (it is line-based), so those need no handling.
+sed_escape() {
+    printf '%s' "$1" | sed 's/[\\&|]/\\&/g'
+}
+
 is_truthy() {
     case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
         1|true|yes|on) return 0 ;;

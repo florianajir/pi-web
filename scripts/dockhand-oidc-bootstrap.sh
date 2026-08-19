@@ -2,7 +2,7 @@
 # Configure Dockhand OIDC, app timezone, and ntfy notifications.
 # Safe to run multiple times.
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 

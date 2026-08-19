@@ -3,7 +3,7 @@
 # Runs as ExecStartPost after docker compose up.
 # Safe to run multiple times (idempotent).
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 

@@ -4,7 +4,7 @@
 # config/beszel-agent/agent.env, then
 # (re)starts beszel-agent so first boot works out-of-the-box.
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 

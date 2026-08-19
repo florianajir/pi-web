@@ -8,32 +8,38 @@ CONFIG_FILE="${CONFIG_DIR}/config.json"
 TEMPLATE_FILE="${BACKREST_TEMPLATE:-$PROJECT_DIR/config/backrest/config.json.template}"
 ENV_FILE="${BACKREST_ENV_FILE:-$PROJECT_DIR/.env}"
 
-# For manual runs (e.g. `sh scripts/backrest-pre-start.sh`), load .env if present
-# and if required variables are not already exported by the current environment.
-if [ -f "${ENV_FILE}" ]; then
-  if [ -z "${BACKREST_S3_URI:-}" ] || [ -z "${BACKREST_S3_REPO_PASSWORD:-}" ] || \
-     { [ -z "${S3_ACCESS_KEY_ID:-}" ] && [ -z "${BACKREST_S3_ACCESS_KEY_ID:-}" ]; } || \
-     { [ -z "${S3_SECRET_ACCESS_KEY:-}" ] && [ -z "${BACKREST_S3_SECRET_ACCESS_KEY:-}" ]; }; then
-    set -a
-    . "${ENV_FILE}"
-    set +a
-  fi
-fi
+# For manual runs (e.g. `sh scripts/backrest-pre-start.sh`), fall back to .env for
+# any value the environment does not already provide — key by key via
+# get_env_value, never by dot-sourcing: .env is not shell, so an unquoted `;` or
+# `#` in a value (PIHOLE_DNS_UPSTREAMS has both) executes as a command under `.`.
+# systemd's EnvironmentFile parses it without a shell, which hid this on boot.
+env_value() {
+  local var="$1" val
+  eval "val=\"\${$var:-}\""
+  [ -n "$val" ] || val="$(get_env_value "$var")"
+  printf '%s' "$val"
+}
 
 # Shared S3 credentials (fall back to legacy BACKREST_S3_* for backward compat)
-S3_ENDPOINT="${S3_ENDPOINT:-}"
-S3_BUCKET="${S3_BUCKET:-}"
-S3_ACCESS_KEY_ID="${S3_ACCESS_KEY_ID:-${BACKREST_S3_ACCESS_KEY_ID:-}}"
-S3_SECRET_ACCESS_KEY="${S3_SECRET_ACCESS_KEY:-${BACKREST_S3_SECRET_ACCESS_KEY:-}}"
-S3_REGION="${S3_REGION:-${BACKREST_S3_REGION:-fr-par}}"
+S3_ENDPOINT="$(env_value S3_ENDPOINT)"
+S3_BUCKET="$(env_value S3_BUCKET)"
+S3_ACCESS_KEY_ID="$(env_value S3_ACCESS_KEY_ID)"
+[ -n "$S3_ACCESS_KEY_ID" ] || S3_ACCESS_KEY_ID="$(env_value BACKREST_S3_ACCESS_KEY_ID)"
+S3_SECRET_ACCESS_KEY="$(env_value S3_SECRET_ACCESS_KEY)"
+[ -n "$S3_SECRET_ACCESS_KEY" ] || S3_SECRET_ACCESS_KEY="$(env_value BACKREST_S3_SECRET_ACCESS_KEY)"
+S3_REGION="$(env_value S3_REGION)"
+[ -n "$S3_REGION" ] || S3_REGION="$(env_value BACKREST_S3_REGION)"
+[ -n "$S3_REGION" ] || S3_REGION="fr-par"
 
 # Backrest-specific (derive URI from shared S3 vars if not set explicitly)
-if [ -z "${BACKREST_S3_URI:-}" ] && [ -n "${S3_ENDPOINT}" ] && [ -n "${S3_BUCKET}" ]; then
+BACKREST_S3_URI="$(env_value BACKREST_S3_URI)"
+if [ -z "${BACKREST_S3_URI}" ] && [ -n "${S3_ENDPOINT}" ] && [ -n "${S3_BUCKET}" ]; then
   BACKREST_S3_URI="s3:${S3_ENDPOINT}/${S3_BUCKET}/restic"
 fi
-BACKREST_S3_URI="${BACKREST_S3_URI:-}"
-BACKREST_S3_REPO_PASSWORD="${BACKREST_S3_REPO_PASSWORD:-}"
-BACKREST_INSTANCE="${BACKREST_INSTANCE:-${HOST_NAME:-$(hostname 2>/dev/null || echo pi-pcloud)}}"
+BACKREST_S3_REPO_PASSWORD="$(env_value BACKREST_S3_REPO_PASSWORD)"
+BACKREST_INSTANCE="$(env_value BACKREST_INSTANCE)"
+[ -n "$BACKREST_INSTANCE" ] || BACKREST_INSTANCE="$(env_value HOST_NAME)"
+[ -n "$BACKREST_INSTANCE" ] || BACKREST_INSTANCE="$(hostname 2>/dev/null || echo pi-pcloud)"
 
 if [ ! -f "${TEMPLATE_FILE}" ]; then
   die "template not found at ${TEMPLATE_FILE}"
@@ -70,18 +76,25 @@ fi
 tmp_file="$(mktemp)"
 trap 'rm -f "${tmp_file}" "${tmp_patch:-}"' EXIT INT TERM
 
-sed \
-  -e "s|__BACKREST_INSTANCE__|${BACKREST_INSTANCE}|g" \
-  -e "s|__BACKREST_S3_URI__|${BACKREST_S3_URI}|g" \
-  -e "s|__BACKREST_S3_REPO_PASSWORD__|${BACKREST_S3_REPO_PASSWORD}|g" \
-  -e "s|__BACKREST_S3_ACCESS_KEY_ID__|${S3_ACCESS_KEY_ID}|g" \
-  -e "s|__BACKREST_S3_SECRET_ACCESS_KEY__|${S3_SECRET_ACCESS_KEY}|g" \
-  -e "s|__BACKREST_S3_REGION__|${S3_REGION}|g" \
-  "${TEMPLATE_FILE}" > "${tmp_file}"
-
-if ! jq empty "${tmp_file}" 2>/dev/null; then
-  die "generated config is not valid JSON"
-fi
+# jq --arg rather than sed: the values are user-supplied secrets going into
+# JSON that defines shell hook commands, so a " or \ in a password must become
+# a JSON escape, never a structure change.
+jq \
+  --arg instance "${BACKREST_INSTANCE}" \
+  --arg uri "${BACKREST_S3_URI}" \
+  --arg password "${BACKREST_S3_REPO_PASSWORD}" \
+  --arg access_key "${S3_ACCESS_KEY_ID}" \
+  --arg secret_key "${S3_SECRET_ACCESS_KEY}" \
+  --arg region "${S3_REGION}" \
+  'walk(if type == "string" then
+      gsub("__BACKREST_INSTANCE__"; $instance)
+    | gsub("__BACKREST_S3_URI__"; $uri)
+    | gsub("__BACKREST_S3_REPO_PASSWORD__"; $password)
+    | gsub("__BACKREST_S3_ACCESS_KEY_ID__"; $access_key)
+    | gsub("__BACKREST_S3_SECRET_ACCESS_KEY__"; $secret_key)
+    | gsub("__BACKREST_S3_REGION__"; $region)
+    else . end)' \
+  "${TEMPLATE_FILE}" > "${tmp_file}" || die "failed to render config from template"
 
 mv "${tmp_file}" "${CONFIG_FILE}"
 fix_ownership "${CONFIG_DIR}"

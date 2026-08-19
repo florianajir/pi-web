@@ -11,7 +11,7 @@
 # bootstrapped by their own scripts). Idempotent: only (re)writes a secret
 # file if the value changed, and only restarts homepage if something did.
 
-set -e
+set -eu
 
 . "$(dirname "$0")/lib.sh"
 
