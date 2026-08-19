@@ -62,13 +62,10 @@ get_api_key() {
 
 wait_for_prowlarr() {
     log "Waiting for Prowlarr API..."
-    for i in $(seq 1 $MAX_RETRIES); do
-        if px_curl -f -H "X-Api-Key: $KEY" "$API/system/status" >/dev/null 2>&1; then
-            log "Prowlarr API is ready"
-            return 0
-        fi
-        sleep "$RETRY_INTERVAL"
-    done
+    if wait_for_cmd "$MAX_RETRIES" "$RETRY_INTERVAL" px_curl -f -H "X-Api-Key: $KEY" "$API/system/status"; then
+        log "Prowlarr API is ready"
+        return 0
+    fi
     log "WARNING: Prowlarr API did not become ready in time"
     return 1
 }
@@ -141,13 +138,7 @@ ensure_tag() {
 # Wait until FlareSolverr answers, else Prowlarr's connection test on save fails
 # (Chrome needs ~45s to init on a fresh boot).
 wait_for_flaresolverr() {
-    for i in $(seq 1 $MAX_RETRIES); do
-        if px_curl -f "${FLARESOLVERR_HOST%/}/health" >/dev/null 2>&1; then
-            return 0
-        fi
-        sleep "$RETRY_INTERVAL"
-    done
-    return 1
+    wait_for_cmd "$MAX_RETRIES" "$RETRY_INTERVAL" px_curl -f "${FLARESOLVERR_HOST%/}/health"
 }
 
 ensure_flaresolverr_proxy() {

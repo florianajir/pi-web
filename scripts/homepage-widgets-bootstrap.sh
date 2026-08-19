@@ -61,15 +61,6 @@ sync_prowlarr_key() {
 # --- Headscale: dedicated API key (can't be re-read once created, so only
 # make one the first time) + the tailscale client's node ID (can change if
 # the node re-registers, so refresh it every run). ---
-create_headscale_api_key() {
-    raw_output=$(docker exec pi-headscale headscale apikeys create --expiration 8760h --output json 2>/dev/null | tr -d '\r\n')
-    api_key=$(printf '%s' "$raw_output" | sed -n -E 's/^"([^"]+)"$/\1/p')
-    if [ -z "$api_key" ]; then
-        api_key=$(printf '%s' "$raw_output" | grep -oE '"(api_key|apiKey|key)"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/^"[^"]+"[[:space:]]*:[[:space:]]*"([^"]+)"$/\1/')
-    fi
-    printf '%s' "$api_key"
-}
-
 sync_headscale() {
     if ! container_is_running "pi-headscale"; then
         log "WARNING: pi-headscale not running; skipping Headscale widget key"
