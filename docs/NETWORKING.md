@@ -343,6 +343,18 @@ cat /etc/resolv.conf                    # Should show Tailscale DNS
 networksetup -getdnsservers "Wi-Fi"     # Or VPN adapter
 ```
 
+### A link or a redirect leads nowhere
+
+Sponsored search results, newsletter links and affiliate links route through ad
+infrastructure, so the block lists catch them and the click dies on a blank page
+instead of just losing an ad. `scripts/pihole-bootstrap.sh` keeps an
+`ALLOW_LISTS` of the known offenders; add the domain there rather than only in
+the web UI, or the next rebuild loses it.
+
+To find the real culprit, check the Pi-hole query log for the click: the blocked
+domain is often not the one you typed. A status of *blocked (CNAME)* means an
+alias is at fault — `g.live.com` was blocked because it points at `g.msn.com`.
+
 ### High DNS latency
 
 **Causes:**
