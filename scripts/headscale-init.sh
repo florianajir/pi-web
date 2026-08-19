@@ -17,13 +17,10 @@ check_headscale_ready() {
 
 wait_for_headscale() {
     log "Waiting for Headscale to be ready..."
-    for i in $(seq 1 $MAX_RETRIES); do
-        if check_headscale_ready; then
-            log "Headscale is ready"
-            return 0
-        fi
-        sleep $RETRY_INTERVAL
-    done
+    if wait_for_cmd "$MAX_RETRIES" "$RETRY_INTERVAL" check_headscale_ready; then
+        log "Headscale is ready"
+        return 0
+    fi
     log "ERROR: Headscale did not become ready in time"
     return 1
 }
@@ -55,15 +52,6 @@ create_preauthkey() {
         grep -o '"key": *"[^"]*"' | sed 's/"key": *"\([^"]*\)"/\1/'
 }
 
-create_headscale_api_key() {
-    raw_output=$(docker exec pi-headscale "$HEADSCALE_BIN" apikeys create --expiration 8760h --output json 2>/dev/null | tr -d '\r\n')
-    api_key=$(printf '%s' "$raw_output" | sed -n -E 's/^"([^"]+)"$/\1/p')
-    if [ -z "$api_key" ]; then
-        api_key=$(printf '%s' "$raw_output" | grep -oE '"(api_key|apiKey|key)"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/^"[^"]+"[[:space:]]*:[[:space:]]*"([^"]+)"$/\1/')
-    fi
-    printf '%s' "$api_key"
-}
-
 ensure_headplane_oidc_api_key() {
     local key_file="$PROJECT_DIR/config/headplane/headscale_api_key"
     local current_key=""
@@ -72,6 +60,12 @@ ensure_headplane_oidc_api_key() {
     mkdir -p "$(dirname "$key_file")"
 
     if [ -f "$key_file" ]; then
+        # An unreadable file (root-owned 600, non-root run) is not a missing
+        # key: minting a replacement would orphan it in headscale's key list.
+        if [ ! -r "$key_file" ]; then
+            log "ERROR: Cannot read $key_file (not running as root?)"
+            return 1
+        fi
         current_key=$(tr -d '\r\n' < "$key_file")
     fi
 
@@ -88,7 +82,12 @@ ensure_headplane_oidc_api_key() {
         return 1
     fi
 
-    printf '%s\n' "$new_key" > "$key_file"
+    # The caller wraps this function in `if !`, which disables set -e: a failed
+    # write must not fall through to the success log.
+    if ! printf '%s\n' "$new_key" > "$key_file"; then
+        log "ERROR: Failed to write $key_file; expire the unsaved key with 'headscale apikeys expire'"
+        return 1
+    fi
     chmod 600 "$key_file" 2>/dev/null || true
     HEADPLANE_OIDC_KEY_UPDATED=1
     log "Stored Headplane OIDC Headscale API key at $key_file"

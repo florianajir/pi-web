@@ -15,13 +15,10 @@ OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-nextcloud}"
 
 wait_for_occ() {
     log "Waiting for Nextcloud OCC to be ready..."
-    for i in $(seq 1 $MAX_RETRIES); do
-        if docker exec "$NEXTCLOUD_CONTAINER" php occ status >/dev/null 2>&1; then
-            log "Nextcloud OCC is ready"
-            return 0
-        fi
-        sleep "$RETRY_INTERVAL"
-    done
+    if wait_for_cmd "$MAX_RETRIES" "$RETRY_INTERVAL" docker exec "$NEXTCLOUD_CONTAINER" php occ status; then
+        log "Nextcloud OCC is ready"
+        return 0
+    fi
 
     log "ERROR: Nextcloud OCC did not become ready in time"
     return 1

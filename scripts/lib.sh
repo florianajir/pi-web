@@ -98,6 +98,26 @@ print(f'\$pbkdf2-sha512\$310000\${s}\${d}')
 
 # --- Container helpers ---
 
+compose() {
+    (cd "$PROJECT_DIR" && docker compose "$@")
+}
+
+# Silent generic retry loop; the caller logs around it.
+# Usage: wait_for_cmd <max_retries> <interval_seconds> <command...>
+wait_for_cmd() {
+    local max_retries="$1"
+    local interval="$2"
+    shift 2
+
+    for i in $(seq 1 "$max_retries"); do
+        if "$@" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep "$interval"
+    done
+    return 1
+}
+
 # Usage: wait_for_container <name> [max_retries] [interval_seconds]
 wait_for_container() {
     local name="$1"
@@ -141,6 +161,18 @@ container_is_running() {
     docker ps --format '{{.Names}}' | grep -q "^${name}$"
 }
 
+# Mint a 1-year Headscale API key. Headscale's json output moved the key
+# between a bare string and an object across versions, hence the two parses.
+create_headscale_api_key() {
+    local raw_output api_key
+    raw_output=$(docker exec pi-headscale "${HEADSCALE_BIN:-headscale}" apikeys create --expiration 8760h --output json 2>/dev/null | tr -d '\r\n')
+    api_key=$(printf '%s' "$raw_output" | sed -n -E 's/^"([^"]+)"$/\1/p')
+    if [ -z "$api_key" ]; then
+        api_key=$(printf '%s' "$raw_output" | grep -oE '"(api_key|apiKey|key)"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/^"[^"]+"[[:space:]]*:[[:space:]]*"([^"]+)"$/\1/')
+    fi
+    printf '%s' "$api_key"
+}
+
 # Like wait_for_health, but a timeout is a warning rather than an error.
 # Usage: wait_for_health_warning <name> [max_retries] [interval_seconds]
 wait_for_health_warning() {
@@ -169,7 +201,7 @@ authelia_container_has_oidc_materials() {
         return 1
     fi
 
-    (cd "$PROJECT_DIR" && docker compose exec -T authelia sh -ec "[ -r /config/secrets/oidc_${client_id}_secret.txt ] && grep -q \"client_id: ${client_id}\" /config/configuration.yml" >/dev/null 2>&1)
+    compose exec -T authelia sh -ec "[ -r /config/secrets/oidc_${client_id}_secret.txt ] && grep -q \"client_id: ${client_id}\" /config/configuration.yml" >/dev/null 2>&1
 }
 
 # Usage: ensure_authelia_oidc_materials <client_id> <display_name> [max_retries] [interval_seconds]
@@ -214,7 +246,7 @@ ensure_authelia_oidc_materials() {
 
     if container_is_running "pi-authelia"; then
         log "Restarting Authelia to apply OIDC client updates"
-        if (cd "$PROJECT_DIR" && docker compose restart authelia >/dev/null); then
+        if compose restart authelia >/dev/null; then
             wait_for_health_warning "pi-authelia" "$max_retries" "$interval" || true
         else
             log "WARNING: Failed to restart Authelia automatically"
@@ -258,7 +290,7 @@ get_oidc_secret() {
         return 0
     fi
 
-    secret_value="$(cd "$PROJECT_DIR" && docker compose exec -T authelia sh -ec "cat /config/secrets/oidc_${client_name}_secret.txt" 2>/dev/null | tr -d '\r\n')"
+    secret_value="$(compose exec -T authelia sh -ec "cat /config/secrets/oidc_${client_name}_secret.txt" 2>/dev/null | tr -d '\r\n')"
     if [ -n "$secret_value" ]; then
         printf '%s' "$secret_value"
         return 0

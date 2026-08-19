@@ -97,10 +97,6 @@ confirm() {
     [ "$reply" = "yes" ] || { echo "Aborted"; exit 1; }
 }
 
-compose() {
-    (cd "$PROJECT_DIR" && docker compose "$@")
-}
-
 recreate() {
     local service="$1"
     local container="${2:-pi-$service}"
