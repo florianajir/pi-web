@@ -56,6 +56,8 @@ install: check-env
 	@echo "🧰 Applying host sysctl settings..."
 	sudo cp config/sysctl.d/pi-pcloud.conf /etc/sysctl.d/99-pi-pcloud.conf
 	sudo sysctl --system >/dev/null
+	@echo "💽 Sizing host swap..."
+	@./scripts/configure-swap.sh || echo "  ⚠ swap sizing skipped"
 	@echo "🌐 Adding local DNS overrides to /etc/hosts..."
 	@HOST_NAME_VAL=$$(grep -E '^HOST_NAME=' .env | tail -n1 | cut -d= -f2-); \
 	HOST_LAN_IP_VAL=$$(grep -E '^HOST_LAN_IP=' .env | tail -n1 | cut -d= -f2-); \
@@ -116,6 +118,13 @@ uninstall:
 	@echo "🧰 Removing host sysctl settings..."
 	-sudo rm -f /etc/sysctl.d/99-pi-pcloud.conf
 	-sudo sysctl --system >/dev/null
+	@echo "💽 Restoring original swap config..."
+	@if [ -f /etc/dphys-swapfile.pi-pcloud.bak ]; then \
+		sudo mv /etc/dphys-swapfile.pi-pcloud.bak /etc/dphys-swapfile; \
+		echo "  ✔ /etc/dphys-swapfile restored (applies on next reboot)"; \
+	else \
+		echo "  ℹ no backup found, leaving /etc/dphys-swapfile as is"; \
+	fi
 	@echo "🌐 Removing local DNS overrides from /etc/hosts..."
 	-sudo sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts
 	@echo "🧹 Removing systemd units..."

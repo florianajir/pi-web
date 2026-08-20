@@ -372,11 +372,12 @@ counter.
 **Swap needs two conditions, and that is the interesting one.** It was written
 first as a plain `SWAP_PCT = 50` and fired on its first run against a box where
 nothing was wrong: 103 days of uptime, swap 100% full, **7G of RAM available, no
-OOM kill on record, and 0.13 MB/min of actual paging**. The 2G is
-`/var/swap` on the NVMe, and what filled it was `parakeet` (578M), `llama-cpp`
-(351M) and `immich-machine-learning` (158M) - services that load a model, go idle,
-and have their cold pages evicted exactly once. That is what swap is *for*, and
-the fill level cannot tell it apart from a machine fighting for RAM.
+OOM kill on record, and 0.13 MB/min of actual paging**. The 2G (the size at the
+time; see below) is `/var/swap` on the NVMe, and what filled it was `parakeet`
+(578M), `llama-cpp` (351M) and `immich-machine-learning` (158M) - services that
+load a model, go idle, and have their cold pages evicted exactly once. That is
+what swap is *for*, and the fill level cannot tell it apart from a machine
+fighting for RAM.
 
 So the finding now needs `SWAP_PCT` **and** `RAM_PRESSURE_PCT` (80%) together.
 `RAM_PRESSURE_PCT` sits below `MEMORY_PCT` on purpose: paging under pressure
@@ -384,6 +385,20 @@ starts before RAM is exhausted, so the swap finding can fire one step ahead of t
 memory one. The `memory` topic still reports swap unconditionally for anyone who
 wants the raw number. The general lesson for any threshold added here: a level is
 a state, and only some states are faults.
+
+**The size itself is now managed**, by `scripts/configure-swap.sh` from
+`make install`, with `SWAP_SIZE_MB` (default 4096) in `.env`. Not because a full
+swap is a fault - the paragraph above is still the right reading - but because
+2048 MB is *exactly* what those three model services evict in steady state, which
+leaves nothing for the next spike. Two settings are needed rather than one:
+`/sbin/dphys-swapfile` carries its own `CONF_MAXSWAP=2048` and silently clamps
+`CONF_SWAPSIZE` down to it, so raising only the latter appears to work and
+changes nothing.
+
+Resizing means `swapoff`, which pages everything back into RAM at once, so the
+script only restarts the service when available RAM covers the swapped-out set
+with 20% headroom, and otherwise leaves the new size to take effect on the next
+reboot.
 
 Nothing new is measured for it - it reuses the collectors the other topics already
 call, so the whole pass is one `statvfs` per filesystem, two `/proc` reads, one
