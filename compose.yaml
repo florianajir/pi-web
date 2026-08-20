@@ -1938,7 +1938,10 @@ services:
       - nextcloud
       - auth
     deploy: *cpu-request-small
-    mem_limit: 64m
+    # Shared by Immich, Nextcloud and Authelia. Peak dataset has been seen at
+    # ~44M; the limit must also cover the BGSAVE fork's copy-on-write pages, so
+    # keep it well above config/redis/valkey.conf's maxmemory (192mb).
+    mem_limit: 256m
     oom_score_adj: *oom-score-critical
 
 volumes:
