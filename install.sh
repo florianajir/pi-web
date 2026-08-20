@@ -60,24 +60,31 @@ confirm() {
     esac
 }
 
-# Docker Compose's .env parser mangles more than `$VAR` interpolation: a
-# trailing backslash escapes the newline, an unquoted value is truncated at
-# whitespace-then-`#` (inline comment) and surrounding quotes are stripped —
-# while the bootstrap scripts read .env verbatim with grep/cut, so any of
-# these would hand the services and the scripts two different values. All are
-# refused at the prompt instead of being silently mangled downstream.
-# Compose's `$$` escape is not usable here for the same verbatim-reader
-# reason. Newlines can only arrive via pre-exported values (read -r cannot
-# produce one); LF is a literal newline because $(...) strips trailing ones.
-LF='
-'
-VALUE_RULES="must not contain '\$', '\\', a newline or ' #', and must not start or end with a quote (Docker Compose's .env parser mangles these)"
-# shellcheck disable=SC1003 # '\' is a literal backslash pattern, not an escaped quote
+# A value Docker Compose's .env parser would mangle is refused at the prompt
+# instead of reaching the services altered while the bootstrap scripts read it
+# verbatim. scripts/lib.sh owns the rule (the Makefile's check-env calls the
+# same function, so the two cannot drift); it is read here in a subshell
+# because sourcing lib.sh would clobber this script's log/die. Post-clone
+# only, which is where every prompt happens.
+LIB_SH=""
+VALUE_RULES=""
+
+load_value_rules() {
+    LIB_SH="$INSTALL_DIR/scripts/lib.sh"
+    # `|| true`: set -e would abort on the failed substitution before the die
+    # below could explain what is wrong.
+    VALUE_RULES="$(sh -c '. "$1" >/dev/null 2>&1 && printf %s "$ENV_VALUE_RULES"' _ "$LIB_SH" || true)"
+    [ -n "$VALUE_RULES" ] || die "could not read the .env value rules from $LIB_SH — is the checkout intact?"
+}
+
+# Fails closed: a lib.sh that stops sourcing makes every value unsafe rather
+# than silently accepting it (load_value_rules already proved it sources).
 value_is_safe() {
-    case "$1" in
-        *'$'* | *'\'* | *[[:space:]]'#'* | \"* | *\" | \'* | *\' | *"$LF"*) return 1 ;;
-        *) return 0 ;;
-    esac
+    sh -c '. "$1" >/dev/null 2>&1 && env_value_is_safe "$2"' _ "$LIB_SH" "$1"
+}
+
+require_safe() {
+    value_is_safe "$2" || die "$1 $VALUE_RULES"
 }
 
 # ask VAR "label" "default" [secret] — resolution order: already-exported
@@ -90,12 +97,22 @@ ask() {
 
     eval "current=\${$var:-}"
     if [ -n "$current" ]; then
-        value_is_safe "$current" || die "$var $VALUE_RULES"
+        require_safe "$var" "$current"
+        # Announced: a value that happens to sit in the caller's shell profile
+        # would otherwise be baked into .env with no prompt and no trace.
+        if [ -n "$secret" ]; then
+            log "Using the exported $var (value not displayed)"
+        else
+            log "Using the exported $var=$current"
+        fi
         return 0
     fi
 
     if ! interactive; then
         [ -n "$default" ] || die "$var is required but no terminal is available: export $var and re-run"
+        # Checked like every other path: the detected defaults (timezone from
+        # /etc/timezone, the LAN address) are not invariants.
+        require_safe "the detected default for $var" "$default"
         eval "$var=\$default"
         return 0
     fi
@@ -152,6 +169,9 @@ ensure_base_tools() {
 # Downloaded to a file first: `curl | sh` would hide a download failure (the
 # pipeline reports sh's status, and sh on empty input exits 0).
 install_docker() {
+    # Checked here, not up front: this is curl's only use, so a wget-only host
+    # that already has Docker (or declines this install) must not be refused.
+    have curl || die "curl is required to download https://get.docker.com — install curl, or install Docker yourself (https://docs.docker.com/engine/install/debian/), then re-run"
     DOCKER_SCRIPT="$(mktemp)"
     curl -fsSL https://get.docker.com -o "$DOCKER_SCRIPT" \
         || die "could not download https://get.docker.com — check network access and retry"
@@ -235,8 +255,8 @@ clone_or_update() {
 # the subshell keeps lib.sh's own log/die out of this script.
 read_env_key() {
     sh -c '. "$1/scripts/lib.sh" >/dev/null 2>&1 && read_env_value_from_file "$2" "$3"' \
-        _ "$INSTALL_DIR" "$1" "$2" 2>/dev/null \
-        || grep "^$2=" "$1" 2>/dev/null | tail -n1 | cut -d= -f2-
+        _ "$INSTALL_DIR" "$1" "$2" \
+        || die "could not read $2 from $1 — is $INSTALL_DIR/scripts/lib.sh intact?"
 }
 
 # Injection-safe upsert into the staging file: the value travels through awk's
@@ -269,24 +289,23 @@ gen_password() {
     printf '%s' "$secret"
 }
 
-# The Makefile owns the required-variable list (enforced by check-env). Tokens
-# are validated because they are eval'd as variable names below.
-# shellcheck disable=SC1003 # '\' is a literal backslash pattern, not an escaped quote
+# The Makefile owns the required-variable list (enforced by check-env), so it
+# is asked to expand the list rather than scraped: a text scrape reads only the
+# `:=` line and would silently miss a later `+=` append, leaving a variable
+# unprompted until `make preflight` fails at the very end of the install. make
+# is guaranteed by ensure_base_tools, and this runs after the clone. Tokens are
+# still validated because they are eval'd as variable names below.
 read_required_vars() {
     local raw="" var="" out=""
 
-    raw="$(sed -n 's/^REQUIRED_ENV_VARS[[:space:]]*:=[[:space:]]*//p' "$INSTALL_DIR/Makefile" | head -n1)"
-    case "$raw" in
-        *'\') die "REQUIRED_ENV_VARS spans several lines in $INSTALL_DIR/Makefile; this installer cannot read it" ;;
-    esac
+    raw="$(make -s -C "$INSTALL_DIR" print-required-vars 2>/dev/null || true)"
     for var in $raw; do
         case "$var" in
-            '#'*) break ;;
             *[!A-Z0-9_]* | '') die "unexpected token '$var' in the Makefile's REQUIRED_ENV_VARS" ;;
         esac
         out="$out $var"
     done
-    [ -n "$out" ] || die "could not read REQUIRED_ENV_VARS from $INSTALL_DIR/Makefile"
+    [ -n "$out" ] || die "could not read REQUIRED_ENV_VARS from $INSTALL_DIR/Makefile ('make print-required-vars' returned nothing)"
     printf '%s' "$out"
 }
 
@@ -349,6 +368,36 @@ is_wireless() {
     [ -d "/sys/class/net/$1/wireless" ] || [ -e "/sys/class/net/$1/phy80211" ]
 }
 
+# `ip route get` honours policy routing, so an active full-tunnel VPN (wg0,
+# tun0, tailscale0 with an exit node) can own the default route and be picked
+# as the parent — and macvlan over a tunnel cannot work either. Recognised by
+# the kernel's ARP type (1 = ARPHRD_ETHER) and the tun marker file rather than
+# by name; an unknown type is treated as usable, since only a positive match
+# should block the install.
+is_virtual_parent() {
+    local kind=""
+    [ ! -e "/sys/class/net/$1/tun_flags" ] || return 0
+    kind="$(cat "/sys/class/net/$1/type" 2>/dev/null || true)"
+    case "$kind" in
+        '' | 1) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# An unattended run has nobody to read the warning, so an auto-detected
+# unusable parent stops the install instead; an explicit HOST_LAN_PARENT export
+# is taken as a deliberate choice and only warns.
+check_parent_usable() {
+    local reason="$1"
+    log "WARNING: $LAN_PARENT $reason; macvlan (Pi-hole's LAN address) needs a wired LAN parent"
+    if interactive; then
+        confirm "Continue with $LAN_PARENT anyway?" \
+            || die "connect the machine over Ethernet, or export HOST_LAN_PARENT, then re-run"
+    elif [ -z "${HOST_LAN_PARENT:-}" ]; then
+        die "the auto-detected parent $LAN_PARENT $reason and no terminal is available: connect the machine over Ethernet, or export HOST_LAN_PARENT to override, then re-run"
+    fi
+}
+
 # Exported values win over detection, mirroring the prompt contract. Resolved
 # before any prompt so an abort here cannot discard typed credentials.
 resolve_network() {
@@ -357,21 +406,33 @@ resolve_network() {
     LAN_SUBNET="${HOST_LAN_SUBNET:-$DETECTED_SUBNET}"
     LAN_GATEWAY="${HOST_LAN_GATEWAY:-$DETECTED_GATEWAY}"
 
+    # These five reach .env without passing through a prompt, so they are
+    # checked here instead — a newline in an exported value would otherwise
+    # inject extra lines into .env. An empty value is safe (nothing is written).
+    require_safe HOST_LAN_PARENT "$LAN_PARENT"
+    require_safe HOST_LAN_SUBNET "$LAN_SUBNET"
+    require_safe HOST_LAN_GATEWAY "$LAN_GATEWAY"
+    require_safe ALLOW_IP_RANGES "${ALLOW_IP_RANGES:-}"
+    require_safe PIHOLE_IP "${PIHOLE_IP:-}"
+
     if [ -z "$LAN_PARENT" ] || [ -z "$LAN_SUBNET" ] || [ -z "$LAN_GATEWAY" ]; then
         log "Could not determine the LAN layout (interface/subnet/gateway)"
         if interactive && confirm "Continue with the 192.168.1.0/24 defaults from .env.dist (and fix .env afterwards)?"; then
             log "WARNING: review HOST_LAN_*, ALLOW_IP_RANGES and PIHOLE_IP in .env — a wrong LAN range locks every client out"
+            # Dropped as a set: keeping a half-detected layout (a default route
+            # with no gateway, e.g. an LTE modem) would mix the real subnet with
+            # .env.dist's 192.168.1.1 and leave the macvlan gateway outside its
+            # own subnet. Falling back means falling back to all of .env.dist.
+            LAN_PARENT="" LAN_SUBNET="" LAN_GATEWAY=""
             return 0
         fi
         die "no usable network layout: export HOST_LAN_PARENT, HOST_LAN_SUBNET and HOST_LAN_GATEWAY (plus PIHOLE_IP), then re-run"
     fi
 
     if is_wireless "$LAN_PARENT"; then
-        log "WARNING: $LAN_PARENT is a Wi-Fi interface; macvlan (Pi-hole's LAN address) does not work over Wi-Fi"
-        if interactive; then
-            confirm "Continue with $LAN_PARENT anyway?" \
-                || die "connect the machine over Ethernet, or export HOST_LAN_PARENT, then re-run"
-        fi
+        check_parent_usable "is a Wi-Fi interface"
+    elif is_virtual_parent "$LAN_PARENT"; then
+        check_parent_usable "is not an Ethernet interface (a VPN tunnel?)"
     fi
 }
 
@@ -397,13 +458,21 @@ build_allow_ip_ranges() {
 }
 
 # .250 by convention (the .env.dist default), stepping down when it would
-# collide with the host itself or the gateway.
+# collide with the host itself, the gateway, or a device that answers a ping.
+# Silence is not proof an address is free (a sleeping device, a DHCP lease
+# handed out later), hence the warning at the end of the run — but an answer is
+# proof it is taken. Skipped when ping is unavailable rather than treating
+# every candidate as free.
 pick_pihole_ip() {
     local prefix="$1" octet="" candidate=""
     for octet in 250 249 248 247; do
         candidate="$prefix.$octet"
         [ "$candidate" != "${HOST_LAN_IP:-}" ] || continue
         [ "$candidate" != "$LAN_GATEWAY" ] || continue
+        if have ping && ping -c 1 -W 1 "$candidate" >/dev/null 2>&1; then
+            log "$candidate already answers on the LAN, trying the next address"
+            continue
+        fi
         printf '%s' "$candidate"
         return 0
     done
@@ -416,11 +485,18 @@ write_network_settings() {
     [ -z "$LAN_PARENT" ] || set_env HOST_LAN_PARENT "$LAN_PARENT"
     [ -z "$LAN_SUBNET" ] || set_env HOST_LAN_SUBNET "$LAN_SUBNET"
     [ -z "$LAN_GATEWAY" ] || set_env HOST_LAN_GATEWAY "$LAN_GATEWAY"
+
+    # Written before the no-subnet bail below: an exported value is the
+    # documented override, so it must survive a fallback to the .env.dist LAN
+    # defaults (someone whose LAN really is 192.168.1.0/24 but who needs
+    # another Pi-hole address exports PIHOLE_IP alone).
+    [ -z "${ALLOW_IP_RANGES:-}" ] || set_env ALLOW_IP_RANGES "$ALLOW_IP_RANGES"
+    [ -z "${PIHOLE_IP:-}" ] || set_env PIHOLE_IP "$PIHOLE_IP"
+
+    # Nothing left to derive without a subnet: the .env.dist defaults stand.
     [ -n "$LAN_SUBNET" ] || return 0
 
-    if [ -n "${ALLOW_IP_RANGES:-}" ]; then
-        set_env ALLOW_IP_RANGES "$ALLOW_IP_RANGES"
-    else
+    if [ -z "${ALLOW_IP_RANGES:-}" ]; then
         dist_ranges="$(read_env_key "$INSTALL_DIR/.env.dist" ALLOW_IP_RANGES)"
         dist_lan="$(read_env_key "$INSTALL_DIR/.env.dist" HOST_LAN_SUBNET)"
         if ranges="$(build_allow_ip_ranges "$dist_ranges" "$dist_lan" "$LAN_SUBNET")"; then
@@ -430,10 +506,7 @@ write_network_settings() {
         fi
     fi
 
-    if [ -n "${PIHOLE_IP:-}" ]; then
-        set_env PIHOLE_IP "$PIHOLE_IP"
-        return 0
-    fi
+    [ -z "${PIHOLE_IP:-}" ] || return 0
     case "$LAN_SUBNET" in
         *.0/24)
             pihole_ip="$(pick_pihole_ip "${LAN_SUBNET%.0/24}")" \
@@ -464,6 +537,7 @@ configure_env() {
     rm -f "$ENV_STAGE" "$ENV_STAGE.new"
 
     local required_vars="" var="" value=""
+    load_value_rules
     required_vars="$(read_required_vars)"
 
     # Everything that can abort runs before the first prompt, so a refused
@@ -512,7 +586,6 @@ check_privileges() {
 }
 
 main() {
-    have curl || die "curl is required"
     check_privileges
     ensure_base_tools
     ensure_docker

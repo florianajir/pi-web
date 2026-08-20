@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs doctor preflight check-env headscale-register headscale-reset rotate-password rotate-password-full
+.PHONY: help install uninstall start stop restart status logs doctor preflight check-env print-required-vars headscale-register headscale-reset rotate-password rotate-password-full
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -11,6 +11,10 @@ COMPOSE      := docker compose
 # Empty when make already runs as root: root-only images often ship without a
 # sudo binary at all (install.sh applies the same rule to its own commands).
 SUDO         := $(if $(filter 0,$(shell id -u)),,sudo)
+# Resolved by path, not by name: sysctl lives in /usr/sbin, which a root shell
+# entered with `su` (no dash) does not have on its PATH — and $(SUDO) is empty
+# there, so sudo's secure_path no longer covers it either.
+SYSCTL       := $(firstword $(wildcard /usr/sbin/sysctl /sbin/sysctl) sysctl)
 
 ifeq (headscale-register,$(firstword $(MAKECMDGOALS)))
 HEADSCALE_KEY := $(word 2,$(MAKECMDGOALS))
@@ -35,25 +39,28 @@ help:
 	@echo "  rotate-password-full  Same, plus every Postgres role and every other service using PASSWORD"
 	@echo "  help             This help"
 
-# The case pattern mirrors install.sh's value_is_safe: Docker Compose's .env
-# parser interpolates $$VAR, escapes on trailing backslash, truncates unquoted
-# values at whitespace-then-# and strips surrounding quotes, while the
-# bootstrap scripts read .env verbatim with grep/cut — such values would hand
-# the services and the scripts two different strings.
+# Both the reader and the safety rule come from scripts/lib.sh, which install.sh
+# also calls: a second copy of the rule here would let the installer and this
+# check disagree the moment either is tightened.
 check-env:
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
 	@echo "🔍 Checking required .env variables..."; \
+	. scripts/lib.sh >/dev/null 2>&1 || { echo "❌ scripts/lib.sh is missing or unreadable"; exit 1; }; \
 	missing=0; \
 	for var in $(REQUIRED_ENV_VARS); do \
-		val=$$(grep -E "^$$var=" .env 2>/dev/null | tail -n1 | cut -d= -f2-); \
+		val=$$(read_env_value_from_file .env "$$var"); \
 		if [ -z "$$val" ]; then echo "  ❌ $$var is not set or empty"; missing=1; \
-		else case "$$val" in \
-			*'$$'* | *'\'* | *[[:space:]]'#'* | \"* | *\" | \'* | *\') \
-				echo "  ❌ $$var would be mangled by Docker Compose's .env parser: no '$$', '\', ' #', or leading/trailing quotes"; missing=1 ;; \
-		esac; fi; \
+		elif ! env_value_is_safe "$$val"; then \
+			echo "  ❌ $$var $$ENV_VALUE_RULES"; missing=1; \
+		fi; \
 	done; \
 	if [ $$missing -eq 1 ]; then exit 1; fi
 	@echo "✔ Required .env variables OK"
+
+# Read by install.sh so it prompts for exactly this list: make expands `+=`
+# appends and line continuations that a text scrape of this file would miss.
+print-required-vars:
+	@echo "$(REQUIRED_ENV_VARS)"
 
 preflight: check-env
 	@echo "🔍 Preflight...";
@@ -67,7 +74,7 @@ install: check-env
 	@echo "📦 Installing..."
 	@echo "🧰 Applying host sysctl settings..."
 	$(SUDO) cp config/sysctl.d/pi-pcloud.conf /etc/sysctl.d/99-pi-pcloud.conf
-	$(SUDO) sysctl --system >/dev/null
+	$(SUDO) $(SYSCTL) --system >/dev/null
 	@echo "🌐 Adding local DNS overrides to /etc/hosts..."
 	@HOST_NAME_VAL=$$(grep -E '^HOST_NAME=' .env | tail -n1 | cut -d= -f2-); \
 	HOST_LAN_IP_VAL=$$(grep -E '^HOST_LAN_IP=' .env | tail -n1 | cut -d= -f2-); \
@@ -127,7 +134,7 @@ uninstall:
 	-rm -f ./config/beszel-agent/agent.env
 	@echo "🧰 Removing host sysctl settings..."
 	-$(SUDO) rm -f /etc/sysctl.d/99-pi-pcloud.conf
-	-$(SUDO) sysctl --system >/dev/null
+	-$(SUDO) $(SYSCTL) --system >/dev/null
 	@echo "🌐 Removing local DNS overrides from /etc/hosts..."
 	-$(SUDO) sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts
 	@echo "🧹 Removing systemd units..."
