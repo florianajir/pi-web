@@ -468,6 +468,11 @@ services:
       FTLCONF_misc_dnsmasq_lines: "address=/${HOST_NAME:-pi.lan}/${HOST_LAN_IP:-192.168.1.30}"
       FTLCONF_webserver_port: 8082
       FTLCONF_dns_domain_name: ${HOST_NAME:-pi.lan}
+      # FTL compares the *host-wide* 15min loadavg (/proc/loadavg is not
+      # namespaced) against the core count it can see, which `cpuset: "0-1"`
+      # below caps at 2. On this 4-core Pi that warns at ~50% utilisation, so
+      # the check is structurally wrong here. Host load is monitored by Beszel.
+      FTLCONF_misc_check_load: "false"
     volumes:
       - pihole_data:/etc/pihole
       - ./config/pihole/dnsmasq.d:/etc/dnsmasq.d
