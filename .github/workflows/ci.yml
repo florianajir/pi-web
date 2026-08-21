@@ -3,8 +3,9 @@ name: CI
 on:
   push:
     branches: [main, develop]
+  # No base-branch filter: stacked PRs (a feature branch targeting another
+  # feature branch) must run CI too.
   pull_request:
-    branches: [main, develop]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
