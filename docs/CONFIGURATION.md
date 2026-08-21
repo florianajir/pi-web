@@ -2,6 +2,8 @@
 
 All configuration is managed through the `.env` file. Copy `.env.dist` and edit with your values.
 
+> Do not use `$` or ` #` (whitespace + hash) in any value, do not end a value with `\`, do not quote values and do not leave leading or trailing whitespace: Docker Compose interpolates `$VAR` inside `.env` values (so `Sup3r$ecret!` reaches the services as `Sup3r!` with only a warning in the logs), escapes the newline after a trailing backslash, truncates unquoted values at inline comments, strips surrounding quotes and trims edge whitespace — while the bootstrap scripts read `.env` verbatim, so any of those makes the two sides disagree. A backslash inside a value is fine. `make check-env` refuses such values in the required variables, using the same `scripts/lib.sh` rule the installer applies at its prompts.
+
 ## Environment Variables
 
 ### Personal Settings

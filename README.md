@@ -54,6 +54,14 @@ You don't have to run all of it: core infrastructure always starts, and every ot
 
 ## Quick Start
 
+One-liner — checks prerequisites, clones into `~/pi-pcloud`, prompts for the required settings (network layout and timezone are auto-detected), then deploys:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/florianajir/pi-pcloud/main/install.sh | sh
+```
+
+Or manually:
+
 ```bash
 git clone https://github.com/florianajir/pi-pcloud.git
 cd pi-pcloud

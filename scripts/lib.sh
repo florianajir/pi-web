@@ -21,6 +21,31 @@ die() {
 
 # --- Environment helpers ---
 
+# Docker Compose's .env parser mangles more than `$VAR` interpolation: a
+# trailing backslash escapes the newline, an unquoted value is truncated at
+# whitespace-then-`#` (inline comment), surrounding quotes are stripped and
+# leading/trailing whitespace is trimmed — while these scripts read .env
+# verbatim (read_env_value_from_file below), so any of those would hand the
+# services and the scripts two different values. install.sh refuses them at
+# the prompt and the Makefile's check-env re-checks the file; both call this
+# function so the two cannot drift. A mid-value backslash is fine (Compose
+# passes it through verbatim), only a trailing one escapes the newline.
+# Newlines can only arrive from a pre-exported value; ENV_LF is a literal
+# newline because $(...) strips trailing ones.
+ENV_LF='
+'
+# shellcheck disable=SC2034 # read by install.sh and the Makefile's check-env
+ENV_VALUE_RULES="must not contain '\$', a newline or ' #', must not end with '\\', and must not start or end with a quote or whitespace (Docker Compose's .env parser mangles these)"
+
+# shellcheck disable=SC1003 # '\' is a literal backslash pattern, not an escaped quote
+env_value_is_safe() {
+    case "$1" in
+        *'$'* | *[[:space:]]'#'* | *'\' | \"* | *\" | \'* | *\' | *"$ENV_LF"*) return 1 ;;
+        [[:space:]]* | *[[:space:]]) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
 read_env_value_from_file() {
     local file="$1"
     local key="$2"
@@ -317,6 +342,7 @@ wait_for_http_endpoint() {
     [ -n "$name" ] || name="$url"
 
     log "Waiting for $name..."
+    # shellcheck disable=SC2034 # a countdown, the body does not need the index
     for i in $(seq 1 "$max_retries"); do
         if docker_curl "$url" >/dev/null 2>&1; then
             log "$name is reachable"

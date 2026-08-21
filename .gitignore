@@ -1,4 +1,5 @@
 /.env
+/.env.tmp*
 /.env.bak.*
 /.rotate-password.*
 /compose.override.yaml

@@ -3,8 +3,9 @@ name: CI
 on:
   push:
     branches: [main, develop]
+  # No base-branch filter: stacked PRs (a feature branch targeting another
+  # feature branch) must run CI too.
   pull_request:
-    branches: [main, develop]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -40,6 +41,43 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install yamllint
           yamllint -c .yamllint .
+
+  installer:
+    name: Lint and Test Installer
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends shellcheck
+
+      # Every shell file, since a syntax error has no false positives.
+      - name: Check shell syntax
+        run: |
+          set -euo pipefail
+          for file in install.sh scripts/*.sh tests/*.sh; do
+            sh -n "$file"
+          done
+
+      # Only the installer surface: the older bootstrap scripts under scripts/
+      # carry a backlog of findings, so linting them here would report noise
+      # instead of regressions. Widen the list as they are cleaned up.
+      - name: Lint the installer surface
+        run: |
+          set -euo pipefail
+          shellcheck -s dash --severity=warning \
+            install.sh scripts/lib.sh tests/*.sh
+
+      # Runs install.sh's own functions against stubbed network detection and
+      # a temporary .env, so the paths that decide what lands in .env are
+      # covered without a LAN or any change to the host.
+      - name: Run installer test suites
+        run: make test
 
   smoke-test:
     name: Smoke Test Stack Startup
