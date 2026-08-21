@@ -1,0 +1,24 @@
+#compdef pi-pcloud
+# zsh completion for pi-pcloud.
+#
+# Both lists come from the command itself (--list-commands reads the Makefile,
+# --list-services reads compose.yaml), so nothing here has to be updated when a
+# command or a service is added.
+_pi-pcloud() {
+    local -a items
+
+    if (( CURRENT == 2 )); then
+        items=( ${(f)"$(pi-pcloud --list-commands 2>/dev/null)"} )
+        _describe -t commands 'pi-pcloud command' items
+        return
+    fi
+
+    case ${words[2]} in
+        enable|disable)
+            items=( ${(f)"$(pi-pcloud --list-services 2>/dev/null)"} )
+            _describe -t services 'service' items
+            ;;
+    esac
+}
+
+_pi-pcloud "$@"

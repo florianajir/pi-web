@@ -16,6 +16,7 @@
 #   config             Interactive picker (scripts/services-picker.py)
 #   pick               Same picker, printing the chosen COMPOSE_PROFILES value
 #                      instead of applying it (used by install.sh)
+#   names              The optional service names, one per line (completion)
 #
 # enable (and config, for newly-enabled services) runs the same per-service
 # hooks the systemd unit runs around `docker compose up`:
@@ -399,6 +400,12 @@ cmd_pick() {
     printf '%s\n' "$_value"
 }
 
+# Just the service names, one per line: read straight out of compose.yaml with
+# no docker call, so shell completion stays instant.
+cmd_names() {
+    config_rows | cut -d: -f1
+}
+
 cmd_config() {
     require_env_file
     known="$(known_profiles)"
@@ -471,7 +478,7 @@ cmd_config() {
 # --- Main ---
 
 usage() {
-    echo "Usage: services.sh {list|enable <service>|disable <service>|config|pick}" >&2
+    echo "Usage: services.sh {list|enable <service>|disable <service>|config|pick|names}" >&2
 }
 
 cmd="${1:-}"
@@ -482,5 +489,6 @@ case "$cmd" in
     disable) cmd_disable "${1:-}" ;;
     config) cmd_config ;;
     pick) cmd_pick ;;
+    names) cmd_names ;;
     *) usage; exit 1 ;;
 esac
