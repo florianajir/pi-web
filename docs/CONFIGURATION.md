@@ -221,18 +221,20 @@ make enable s=stremio    # Add it to COMPOSE_PROFILES and start it (plus depende
 make disable s=stremio   # Remove it from COMPOSE_PROFILES and stop it
 ```
 
-`make config` opens a whiptail checklist of every optional service (checked = currently enabled, including auto-enabled dependencies); on confirm it rewrites `COMPOSE_PROFILES` and starts/stops whatever changed. Rows are grouped into sections, and a service that pulls in another is indented under it:
+`make config` opens a whiptail checklist of every optional service (checked = currently enabled, including auto-enabled dependencies); on confirm it rewrites `COMPOSE_PROFILES` and starts/stops whatever changed. Rows are grouped into sections, and a service that only runs with another is indented under it:
 
 ```
 [*] n8n                    Automation
-[*] |- n8n-runners
+[*]   - n8n-runners
 [*] gluetun                Privacy
-[*] |- kapowarr
-[*] |- qbittorrent
-[*] |- stremio
+[*]   - kapowarr
+[*]   - qbittorrent
+[*]   - stremio
 ```
 
-Sections come from the `homepage.group=` labels and the tree from the `profiles:` lists, both read out of `compose.yaml`, so the checklist cannot drift from the stack. Ticking an indented service enables the one it hangs off — leaving that box unticked only means it was not asked for explicitly, so `make config` adds it back and says which service needed it. `enable`/`disable` do the same for a single service, rewriting the `COMPOSE_PROFILES` line in `.env` (materializing the full explicit list first if it was `all` or unset). Enabling also runs the service's init hooks — `scripts/<service>-pre-start.sh` before the start, `scripts/<service>-bootstrap.sh` / `scripts/<service>-oidc-bootstrap.sh` after — the same scripts the systemd unit runs, so no `make restart` is needed: the stack is immediately consistent, and the unit reads the same `.env` at next boot. All three targets are thin wrappers around `scripts/services.sh`.
+Sections come from the `homepage.group=` labels and the nesting from the `profiles:` lists, both read out of `compose.yaml`, so the checklist cannot drift from the stack.
+
+Linked services move together in both directions: unticking `gluetun` unticks the services that run inside its network namespace, and ticking one of them ticks `gluetun` back (its profile is what starts it, so it would come up regardless). whiptail cannot toggle a row from a callback, so the adjusted selection is shown again — with a note naming what moved and why — for you to confirm or keep editing. `enable`/`disable` do the same for a single service, rewriting the `COMPOSE_PROFILES` line in `.env` (materializing the full explicit list first if it was `all` or unset). Enabling also runs the service's init hooks — `scripts/<service>-pre-start.sh` before the start, `scripts/<service>-bootstrap.sh` / `scripts/<service>-oidc-bootstrap.sh` after — the same scripts the systemd unit runs, so no `make restart` is needed: the stack is immediately consistent, and the unit reads the same `.env` at next boot. All three targets are thin wrappers around `scripts/services.sh`.
 
 ## Custom Configuration
 
