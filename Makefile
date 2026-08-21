@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs doctor preflight check-env print-required-vars headscale-register headscale-reset rotate-password rotate-password-full
+.PHONY: help install uninstall start stop restart status logs doctor preflight check-env print-required-vars test headscale-register headscale-reset rotate-password rotate-password-full
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -35,6 +35,7 @@ help:
 	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  headscale-reset  Reset all Headscale nodes, preauth keys, and IP allocations"
 	@echo "  check-env        Validate required .env variables"
+	@echo "  test             Run the installer and check-env test suites (no host changes)"
 	@echo "  rotate-password       Rotate PASSWORD after a leak (LLDAP admin + Authelia only, no Postgres)"
 	@echo "  rotate-password-full  Same, plus every Postgres role and every other service using PASSWORD"
 	@echo "  help             This help"
@@ -45,7 +46,9 @@ help:
 check-env:
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
 	@echo "🔍 Checking required .env variables..."; \
-	. scripts/lib.sh >/dev/null 2>&1 || { echo "❌ scripts/lib.sh is missing or unreadable"; exit 1; }; \
+	if [ ! -r scripts/lib.sh ]; then echo "❌ scripts/lib.sh is missing or unreadable"; exit 1; fi; \
+	. scripts/lib.sh >/dev/null 2>&1; \
+	command -v env_value_is_safe >/dev/null 2>&1 || { echo "❌ scripts/lib.sh did not define env_value_is_safe"; exit 1; }; \
 	missing=0; \
 	for var in $(REQUIRED_ENV_VARS); do \
 		val=$$(read_env_value_from_file .env "$$var"); \
@@ -61,6 +64,12 @@ check-env:
 # appends and line continuations that a text scrape of this file would miss.
 print-required-vars:
 	@echo "$(REQUIRED_ENV_VARS)"
+
+# Same suites CI runs. Every test works on a temporary copy, so this touches
+# neither .env nor the host.
+test:
+	@sh tests/install-test.sh
+	@sh tests/check-env-test.sh
 
 preflight: check-env
 	@echo "🔍 Preflight...";

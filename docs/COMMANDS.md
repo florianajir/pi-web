@@ -17,6 +17,7 @@ Run all commands from the pi-pcloud directory: `/opt/pi-pcloud`
 | `make update` | `git pull` + restart |
 | `make doctor` | Report anything outside its threshold: disk, RAM, swap, temperature, load, containers, restarts, backups |
 | `make check-env` | Validate required `.env` variables |
+| `make test` | Run the installer and `check-env` test suites (temporary copies only, no host changes) |
 | `make headscale-register <key>` | Register a device to VPN |
 | `make headscale-reset` | Reset all VPN nodes (**destructive**) |
 | `make rotate-password` | Rotate `PASSWORD` after a leak (LLDAP admin + Authelia) |

@@ -342,6 +342,7 @@ wait_for_http_endpoint() {
     [ -n "$name" ] || name="$url"
 
     log "Waiting for $name..."
+    # shellcheck disable=SC2034 # a countdown, the body does not need the index
     for i in $(seq 1 "$max_retries"); do
         if docker_curl "$url" >/dev/null 2>&1; then
             log "$name is reachable"
