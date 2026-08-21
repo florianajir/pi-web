@@ -13,7 +13,7 @@
 #   list               List optional services and whether each is enabled
 #   enable <service>   Add to COMPOSE_PROFILES, start it, run its init hooks
 #   disable <service>  Remove from COMPOSE_PROFILES, stop and remove it
-#   config             Interactive whiptail/dialog checklist of all services
+#   config             Interactive picker (scripts/services-picker.py)
 #
 # enable (and config, for newly-enabled services) runs the same per-service
 # hooks the systemd unit runs around `docker compose up`:
@@ -30,7 +30,7 @@
 # which .env compose happens to read.
 #
 # Host-only: this script is never mounted into containers, so sourcing
-# lib.sh is fine here (see docs/../scripts/lib.sh sharing constraints).
+# lib.sh is fine here (scripts that backrest mounts must not source it).
 
 set -eu
 
@@ -78,16 +78,30 @@ write_profiles() {
     else
         printf 'COMPOSE_PROFILES=%s\n' "$1" >> "$ENV_FILE"
     fi
-    echo "✏️  COMPOSE_PROFILES=$1"
+    echo "✏️  Updated COMPOSE_PROFILES in $(basename "$ENV_FILE")"
 }
 
-# Mutating docker compose command (stop/rm). Dry mode prints instead.
+# Mutating docker compose command. Dry mode prints instead.
 run_compose() {
     if is_dry_run; then
         echo "DRY-RUN: docker compose $*"
     else
         compose "$@"
     fi
+}
+
+# Same, with the output held back and replayed only if the command fails:
+# `stop` and `rm` each draw a progress block and `rm` announces every container
+# it is about to remove, which repeats what we just printed ourselves.
+run_compose_quiet() {
+    if is_dry_run; then
+        echo "DRY-RUN: docker compose $*"
+        return 0
+    fi
+    _out="$(compose "$@" 2>&1)" || {
+        printf '%s\n' "$_out" >&2
+        return 1
+    }
 }
 
 # `docker compose up` with the selection passed explicitly, so the started
@@ -130,6 +144,109 @@ validate_service() {
         printf '%s\n' "$_known" | sed 's/^/  - /' >&2
         exit 1
     fi
+}
+
+# --- Checklist layout ---
+
+# One row per optional service, as
+# "<service>:<section>:<companion-of>:<needs>:<description>" (description last,
+# so a colon inside it survives),
+# ordered by section. Three things come out of compose.yaml, so the picker can
+# never drift from the stack:
+#   homepage.group=            the section the service is listed under
+#   pi-pcloud.companion-of=    the service it is pointless without, which is
+#                              what the picker draws it indented beneath
+#   homepage.description=      the one-line description shown beside it
+#   profiles:                  a service listing others in its own profile list
+#                              is a dependency they cannot run without (gluetun
+#                              for the containers sharing its network
+#                              namespace), reported as <needs>
+# The last two are different relations on purpose: qbittorrent needs gluetun but
+# is a service in its own right, listed under Download, while comet only makes
+# sense under stremio. Both propagate when a box is toggled; only companion-of
+# nests. A service with no section label borrows its companion's, else "Other".
+# Sorting goes through sort(1) because mawk has no asort. Fields are
+# colon-separated, not tab-separated: `read` folds runs of IFS whitespace, which
+# would swallow the empty fields a row carries.
+config_rows() {
+    awk '
+        /^services:[ \t]*$/ { in_services = 1; next }
+        /^[A-Za-z0-9_-]+:/ {
+            if (in_services) collect()
+            in_services = 0
+            next
+        }
+        !in_services { next }
+        /^  [A-Za-z0-9_-]+:[ \t]*$/ {
+            collect()
+            svc = $0
+            gsub(/[ :]/, "", svc)
+            next
+        }
+        /^[ \t]+profiles:/ { profiles = $0; next }
+        /homepage\.group=/ {
+            group = $0
+            sub(/.*homepage\.group=/, "", group)
+            sub(/"[ \t]*$/, "", group)
+            next
+        }
+        /homepage\.description=/ {
+            desc = $0
+            sub(/.*homepage\.description=/, "", desc)
+            sub(/"[ \t]*$/, "", desc)
+            gsub(/\|/, "/", desc)
+            next
+        }
+        /pi-pcloud\.companion-of=/ {
+            companion = $0
+            sub(/.*pi-pcloud\.companion-of=/, "", companion)
+            sub(/"[ \t]*$/, "", companion)
+            next
+        }
+        END {
+            collect()
+            for (i = 1; i <= n; i++) {
+                cnt = split(prof[i], part, ",")
+                for (j = 1; j <= cnt; j++)
+                    if (part[j] != "" && part[j] != "all" && part[j] != name[i])
+                        needs[part[j]] = needs[part[j]] " " name[i]
+            }
+            for (i = 1; i <= n; i++) {
+                g = grp[i]
+                if (g == "" && comp[i] != "")
+                    for (k = 1; k <= n; k++)
+                        if (name[k] == comp[i] && grp[k] != "") g = grp[k]
+                if (g == "") g = "Other"
+                section[name[i]] = g
+            }
+            for (i = 1; i <= n; i++) {
+                root = comp[i] != "" ? comp[i] : name[i]
+                child = comp[i] != "" ? 1 : 0
+                sub(/^ /, "", needs[name[i]])
+                # A sidecar carries no dashboard description of its own; saying
+                # what it runs with beats an empty column.
+                text = info[i] != "" ? info[i] : (comp[i] != "" ? "runs with " comp[i] : "")
+                printf "%s|%s|%d|%s|%s|%s|%s\n", section[name[i]], root, child, name[i], comp[i], needs[name[i]], text
+            }
+        }
+        function collect() {
+            if (svc != "" && profiles != "") {
+                n++
+                name[n] = svc
+                grp[n] = group
+                comp[n] = companion
+                info[n] = desc
+                p = profiles
+                sub(/^[^[]*\[/, "", p)
+                sub(/\].*$/, "", p)
+                gsub(/["\t ]/, "", p)
+                prof[n] = p
+            }
+            svc = ""; profiles = ""; group = ""; companion = ""; desc = ""
+        }
+    ' "$PROJECT_DIR/compose.yaml" \
+        | sort -t'|' -k1,1 -k2,2 -k3,3n -k4,4 \
+        | awk -F'|' '{ printf "%s:%s:%s:%s:%s\n", $4, ($3 == 0 ? $1 : ""), $5, $6, $7 }'
 }
 
 # --- Subcommands ---
@@ -205,8 +322,8 @@ cmd_disable() {
         echo "⚠️  $svc is still auto-enabled by another enabled service's profile — it will come back on the next stack restart"
     fi
     echo "🛑 Stopping and removing $svc..."
-    run_compose stop "$svc"
-    run_compose rm -f "$svc"
+    run_compose_quiet stop "$svc"
+    run_compose_quiet rm -f "$svc"
     echo "✅ $svc disabled"
 }
 
@@ -217,12 +334,9 @@ cmd_config() {
         echo "   or use 'make enable s=<service>' / 'make disable s=<service>' instead." >&2
         exit 1
     fi
-    if command -v whiptail >/dev/null 2>&1; then
-        dialog_tool=whiptail
-    elif command -v dialog >/dev/null 2>&1; then
-        dialog_tool=dialog
-    else
-        echo "❌ 'config' needs whiptail or dialog installed (sudo apt install whiptail)." >&2
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "❌ 'config' needs python3 (shipped with Raspberry Pi OS). Without it," >&2
+        echo "   use 'make enable s=<service>' / 'make disable s=<service>'." >&2
         exit 1
     fi
 
@@ -234,39 +348,38 @@ cmd_config() {
     known="$(known_profiles)"
     old_enabled="$(services_for_profiles "$old_profiles")"
 
-    # Build the checklist rows: <tag> <status> <on|off>. Checked = currently
-    # enabled (same computation as list, so auto-enabled deps show checked).
-    count=0
-    set --
-    for svc in $known; do
+    # The picker only chooses: it reads
+    # "service:section:parent:needs:state:description" rows and
+    # writes back the services that stay ticked. Files, not a pipe, because it
+    # takes over the terminal (see scripts/services-picker.py).
+    rows_file="$(mktemp)"
+    picked_file="$(mktemp)"
+    while IFS=: read -r svc section parent needs desc; do
+        [ -n "$svc" ] || continue
+        in_lines "$known" "$svc" || continue
         if in_lines "$old_enabled" "$svc"; then
-            set -- "$@" "$svc" "enabled" on
+            printf '%s:%s:%s:%s:on:%s\n' "$svc" "$section" "$parent" "$needs" "$desc" >>"$rows_file"
         else
-            set -- "$@" "$svc" "disabled" off
+            printf '%s:%s:%s:%s:off:%s\n' "$svc" "$section" "$parent" "$needs" "$desc" >>"$rows_file"
         fi
-        count=$((count + 1))
-    done
-    if [ "$count" -eq 0 ]; then
+    done <<EOF
+$(config_rows)
+EOF
+    if [ ! -s "$rows_file" ]; then
+        rm -f "$rows_file" "$picked_file"
         echo "❌ No optional services declared in compose.yaml" >&2
         exit 1
     fi
 
-    list_height=$count
-    [ "$list_height" -le 14 ] || list_height=14
-    height=$((list_height + 8))
-
-    # whiptail/dialog draw the UI on the terminal and print the chosen tags on
-    # stderr; the fd swap captures them. A non-zero exit means Cancel/Esc.
-    if ! selection="$("$dialog_tool" --title "pi-pcloud optional services" \
-            --separate-output \
-            --checklist "Choose which optional services run (space toggles, enter applies):" \
-            "$height" 64 "$list_height" "$@" 3>&1 1>&2 2>&3)"; then
+    if python3 "$PROJECT_DIR/scripts/services-picker.py" "$rows_file" "$picked_file"; then
+        selection="$(sort -u "$picked_file")"
+    else
+        rm -f "$rows_file" "$picked_file"
         echo "Cancelled — no changes."
         return 0
     fi
+    rm -f "$rows_file" "$picked_file"
 
-    # Compute the new COMPOSE_PROFILES value from the selection.
-    selection="$(printf '%s\n' "$selection" | grep -v '^$' || true)"
     new_profiles="$(printf '%s\n' "$selection" | grep -v '^$' | paste -sd, - || true)"
     if [ "$(printf '%s\n' "$selection" | sort)" = "$known" ]; then
         new_profiles=all
@@ -292,27 +405,32 @@ cmd_config() {
         return 0
     fi
 
-    for svc in $newly_on; do
-        run_hook "$svc-pre-start.sh"
-    done
+    # Only the services that were just enabled are started, so disabling
+    # something does not redraw the whole stack (and does not rebuild images
+    # to reach a state it is already in).
+    if [ -n "$newly_on" ]; then
+        for svc in $newly_on; do
+            run_hook "$svc-pre-start.sh"
+        done
+        echo "🚀 Starting$newly_on..."
+        # shellcheck disable=SC2086 # service names, split on purpose
+        run_compose_up_with "$new_profiles" up -d $newly_on
+    fi
 
-    echo "🚀 Applying selection (docker compose up -d)..."
-    run_compose_up_with "$new_profiles" up -d
-
-    for svc in $newly_off; do
-        echo "🛑 Stopping and removing $svc..."
-        run_compose stop "$svc"
-        run_compose rm -f "$svc"
-    done
+    if [ -n "$newly_off" ]; then
+        echo "🛑 Stopping and removing$newly_off..."
+        # shellcheck disable=SC2086 # service names, split on purpose
+        run_compose_quiet stop $newly_off
+        # shellcheck disable=SC2086 # service names, split on purpose
+        run_compose_quiet rm -f $newly_off
+    fi
 
     for svc in $newly_on; do
         run_hook "$svc-bootstrap.sh"
         run_hook "$svc-oidc-bootstrap.sh"
     done
 
-    echo "✅ Applied. COMPOSE_PROFILES=${new_profiles:-<empty: core only>}"
-    [ -z "$newly_on" ] || echo "   enabled:$newly_on"
-    [ -z "$newly_off" ] || echo "   disabled:$newly_off"
+    echo "✅ Applied${newly_on:+ · enabled:$newly_on}${newly_off:+ · disabled:$newly_off}"
 }
 
 # --- Main ---

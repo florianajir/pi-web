@@ -223,7 +223,34 @@ make enable s=stremio    # Add it to COMPOSE_PROFILES and start it (plus depende
 make disable s=stremio   # Remove it from COMPOSE_PROFILES and stop it
 ```
 
-`make config` opens a whiptail checklist of every optional service (checked = currently enabled, including auto-enabled dependencies); on confirm it rewrites `COMPOSE_PROFILES` and starts/stops whatever changed. `enable`/`disable` do the same for a single service, rewriting the `COMPOSE_PROFILES` line in `.env` (materializing the full explicit list first if it was `all` or unset). Enabling also runs the service's init hooks — `scripts/<service>-pre-start.sh` before the start, `scripts/<service>-bootstrap.sh` / `scripts/<service>-oidc-bootstrap.sh` after — the same scripts the systemd unit runs, so no `make restart` is needed: the stack is immediately consistent, and the unit reads the same `.env` at next boot. All three targets are thin wrappers around `scripts/services.sh`.
+`make config` opens a terminal picker listing every optional service (ticked = currently enabled, including auto-enabled dependencies); on confirm it rewrites `COMPOSE_PROFILES` and starts/stops whatever changed. Services are listed under the section they belong to, and one that is pointless on its own is indented under the service it belongs to:
+
+```
+Choose which services run — applying starts and stops containers now
+24/24 enabled · Traefik, Authelia, Pi-hole, Headscale, Postgres … always run
+── Download ──────────────────────────────────────────────────────────────
+ [x] prowlarr                   Indexer manager
+ [x]   flaresolverr             Cloudflare challenge solver for Prowlarr
+ [x] qbittorrent                Torrent client (VPN protected)
+── Video ─────────────────────────────────────────────────────────────────
+ [x] stremio                    Streaming server (VPN protected)
+ [x]   comet                    Stremio debrid addon
+```
+
+Three things drive that layout, all read out of `compose.yaml` so the picker cannot drift from the stack:
+
+| In `compose.yaml` | Meaning |
+|-------------------|---------|
+| `homepage.group=` | the section the service is listed under (same label the dashboard uses) |
+| `pi-pcloud.companion-of=` | pointless on its own — drawn indented under that service (`comet` under `stremio`, `immich-machine-learning` under `immich-server`) |
+| `homepage.description=` | the one-line description shown beside the service; without a `homepage.group` it stays off the dashboard, so a sidecar can be described without being listed there |
+| `profiles:` listing other services | cannot run without this one — `gluetun` for the containers sharing its network namespace |
+
+The last two are deliberately different relations. `qbittorrent` needs `gluetun` but is a service in its own right, so it stays under **Download** rather than being buried under the VPN; `comet` only makes sense with `stremio`, so it sits under it.
+
+Toggling propagates along both relations, transitively, so the screen always shows a set the stack can actually run: unticking `gluetun` unticks `qbittorrent`, `kapowarr`, `stremio` and — through `stremio` — `comet`; ticking `comet` ticks `stremio` and `gluetun` back. The footer names whatever moved.
+
+The picker is `scripts/services-picker.py` — Python's standard-library `curses`, so nothing to install on Raspberry Pi OS, and it only chooses: reading `compose.yaml`, writing `.env` and running the hooks all stay in `scripts/services.sh`. On a host without `python3`, use `make enable` / `make disable`, which need no TUI at all. `enable`/`disable` do the same for a single service, rewriting the `COMPOSE_PROFILES` line in `.env` (materializing the full explicit list first if it was `all` or unset). Enabling also runs the service's init hooks — `scripts/<service>-pre-start.sh` before the start, `scripts/<service>-bootstrap.sh` / `scripts/<service>-oidc-bootstrap.sh` after — the same scripts the systemd unit runs, so no `make restart` is needed: the stack is immediately consistent, and the unit reads the same `.env` at next boot. All three targets are thin wrappers around `scripts/services.sh`.
 
 ## Custom Configuration
 
