@@ -134,8 +134,11 @@ validate_service() {
 
 # --- Checklist layout ---
 
-# One display row per optional service, as "<tag>\t<description>", ordered by
-# section with each coupled pair rendered as a tree. Everything is derived from
+# One display row per optional service, as "<tag>:<section>:<parent>",
+# ordered by section with each coupled pair rendered as a tree: a "|- " tag is
+# a service that pulls in the one it hangs off, and <parent> names it. Every
+# child gets the same glyph - the classic last-child variant would only claim
+# that nothing follows, which the section layout already shows. Everything is derived from
 # compose.yaml, so the checklist cannot drift from the stack: a service's
 # `profiles:` list names the dependents that auto-activate it (gluetun carries
 # its netns tenants, n8n carries n8n-runners), which is what makes a pair a
@@ -143,9 +146,11 @@ validate_service() {
 # borrows its first child's section (flaresolverr sits with prowlarr), else the
 # section of the service it shares a name prefix with (immich-machine-learning
 # sits with immich-server), else "Other". Sorting goes through sort(1) because
-# mawk has no asort. The tree glyphs stay ASCII: whiptail pads the tag column
-# by byte length, so a multi-byte glyph would shift the description column of
-# every child row out of line.
+# mawk has no asort. The glyph stays ASCII: whiptail pads the tag column by
+# byte length, so a multi-byte glyph would shift the second column of every
+# child row out of line. Fields are colon-separated, not tab-separated: `read`
+# folds runs of IFS whitespace, which would swallow the empty field a row
+# always has (a section has no parent and a child shows no section).
 config_rows() {
     awk '
         /^services:[ \t]*$/ { in_services = 1; next }
@@ -216,11 +221,13 @@ config_rows() {
         | awk -F'|' '
             { sec[NR] = $1; root[NR] = $2; child[NR] = $3; svc[NR] = $4; par[NR] = $5; n = NR }
             END {
-                for (i = 1; i <= n; i++) {
-                    if (child[i] == 0) { printf "%s\t%s\n", svc[i], sec[i]; continue }
-                    last = !(i < n && child[i + 1] == 1 && root[i + 1] == root[i])
-                    printf "%s %s\talso starts %s\n", (last ? "`-" : "|-"), svc[i], par[i]
-                }
+                for (i = 1; i <= n; i++)
+                    if (child[i] == 0) {
+                        section = sec[i]
+                        gsub(/:/, " ", section)
+                        printf "%s:%s:\n", svc[i], section
+                    } else
+                        printf "|- %s::%s\n", svc[i], par[i]
             }'
 }
 
@@ -331,12 +338,14 @@ cmd_config() {
     # service name is its last whitespace-separated word. Fed by a here-doc,
     # not a pipe, so `set --` lands in this shell.
     count=0
+    edges=""
     set --
-    tab="$(printf '\t')"
-    while IFS="$tab" read -r tag desc; do
+    while IFS=: read -r tag desc parent; do
         [ -n "$tag" ] || continue
         svc="${tag##* }"
         in_lines "$known" "$svc" || continue
+        [ -z "$parent" ] || edges="$edges$svc $parent
+"
         if in_lines "$old_enabled" "$svc"; then
             set -- "$@" "$tag" "$desc" on
         else
@@ -367,7 +376,23 @@ EOF
 
     # Back from display tags to service names (drop the tree glyphs).
     selection="$(printf '%s\n' "$selection" | sed 's/^.* //' | grep -v '^$' || true)"
-    new_profiles="$(printf '%s\n' "$selection" | grep -v '^$' | paste -sd, - || true)"
+
+    # Selecting an indented service starts the one it hangs off, whether or
+    # not that box is ticked (its profile is what compose activates). Adding
+    # it here keeps .env stating what actually runs, so the box comes back
+    # ticked next time instead of silently reappearing.
+    while IFS=' ' read -r child parent; do
+        [ -n "$parent" ] || continue
+        in_lines "$selection" "$child" || continue
+        in_lines "$selection" "$parent" && continue
+        echo "ℹ️  $parent enabled too: $child needs it"
+        selection="$selection
+$parent"
+    done <<EOF
+$edges
+EOF
+    selection="$(printf '%s\n' "$selection" | grep -v '^$' | sort -u || true)"
+    new_profiles="$(printf '%s\n' "$selection" | paste -sd, - || true)"
     if [ "$(printf '%s\n' "$selection" | sort)" = "$known" ]; then
         new_profiles=all
     fi
@@ -382,11 +407,6 @@ EOF
     for svc in $known; do
         if in_lines "$new_enabled" "$svc"; then
             in_lines "$old_enabled" "$svc" || newly_on="$newly_on $svc"
-            # Unchecked but still enabled: a checked service activates its
-            # profile too, so the box cannot be cleared on its own. Said here
-            # because the row comes back checked on the next run.
-            in_lines "$selection" "$svc" \
-                || echo "⚠️  $svc stays enabled: another selected service auto-activates it"
         else
             if in_lines "$old_enabled" "$svc"; then newly_off="$newly_off $svc"; fi
         fi
