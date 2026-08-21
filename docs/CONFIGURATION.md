@@ -221,20 +221,21 @@ make enable s=stremio    # Add it to COMPOSE_PROFILES and start it (plus depende
 make disable s=stremio   # Remove it from COMPOSE_PROFILES and stop it
 ```
 
-`make config` opens a whiptail checklist of every optional service (checked = currently enabled, including auto-enabled dependencies); on confirm it rewrites `COMPOSE_PROFILES` and starts/stops whatever changed. Rows are grouped into sections, and a service that only runs with another is indented under it:
+`make config` opens a terminal picker listing every optional service (ticked = currently enabled, including auto-enabled dependencies); on confirm it rewrites `COMPOSE_PROFILES` and starts/stops whatever changed. Services are grouped into sections, and one that only runs with another is indented under it:
 
 ```
-[*] n8n                    Automation
-[*]   - n8n-runners
-[*] gluetun                Privacy
-[*]   - kapowarr
-[*]   - qbittorrent
-[*]   - stremio
+── Privacy ──────────────────────────
+ [x] gluetun
+ [x]   kapowarr
+ [x]   qbittorrent
+ [x]   stremio
 ```
 
-Sections come from the `homepage.group=` labels and the nesting from the `profiles:` lists, both read out of `compose.yaml`, so the checklist cannot drift from the stack.
+Sections come from the `homepage.group=` labels and the nesting from the `profiles:` lists, both read out of `compose.yaml`, so the list cannot drift from the stack.
 
-Linked services move together in both directions: unticking `gluetun` unticks the services that run inside its network namespace, and ticking one of them ticks `gluetun` back (its profile is what starts it, so it would come up regardless). whiptail cannot toggle a row from a callback, so the adjusted selection is shown again — with a note naming what moved and why — for you to confirm or keep editing. `enable`/`disable` do the same for a single service, rewriting the `COMPOSE_PROFILES` line in `.env` (materializing the full explicit list first if it was `all` or unset). Enabling also runs the service's init hooks — `scripts/<service>-pre-start.sh` before the start, `scripts/<service>-bootstrap.sh` / `scripts/<service>-oidc-bootstrap.sh` after — the same scripts the systemd unit runs, so no `make restart` is needed: the stack is immediately consistent, and the unit reads the same `.env` at next boot. All three targets are thin wrappers around `scripts/services.sh`.
+Linked services move together as you toggle, in both directions: unticking `gluetun` unticks the services that run inside its network namespace, and ticking one of them ticks `gluetun` back (its profile is what starts it, so it would come up regardless).
+
+The picker is `scripts/services-picker.py` — Python's standard-library `curses`, so nothing to install on Raspberry Pi OS, and it only chooses: reading `compose.yaml`, writing `.env` and running the hooks all stay in `scripts/services.sh`. On a host without `python3`, use `make enable` / `make disable`, which need no TUI at all. `enable`/`disable` do the same for a single service, rewriting the `COMPOSE_PROFILES` line in `.env` (materializing the full explicit list first if it was `all` or unset). Enabling also runs the service's init hooks — `scripts/<service>-pre-start.sh` before the start, `scripts/<service>-bootstrap.sh` / `scripts/<service>-oidc-bootstrap.sh` after — the same scripts the systemd unit runs, so no `make restart` is needed: the stack is immediately consistent, and the unit reads the same `.env` at next boot. All three targets are thin wrappers around `scripts/services.sh`.
 
 ## Custom Configuration
 

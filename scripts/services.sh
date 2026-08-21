@@ -13,7 +13,7 @@
 #   list               List optional services and whether each is enabled
 #   enable <service>   Add to COMPOSE_PROFILES, start it, run its init hooks
 #   disable <service>  Remove from COMPOSE_PROFILES, stop and remove it
-#   config             Interactive whiptail/dialog checklist of all services
+#   config             Interactive picker (scripts/services-picker.py)
 #
 # enable (and config, for newly-enabled services) runs the same per-service
 # hooks the systemd unit runs around `docker compose up`:
@@ -134,9 +134,9 @@ validate_service() {
 
 # --- Checklist layout ---
 
-# One display row per optional service, as "<tag>:<section>:<parent>",
-# ordered by section, with a service that pulls in another indented under it:
-# an "  - " tag hangs off the row above and <parent> names it. Everything is derived from
+# One row per optional service, as "<service>:<section>:<parent>", ordered by
+# section; <parent> is set when the service only runs with another one, which
+# is what the picker renders as an indented child. Everything is derived from
 # compose.yaml, so the checklist cannot drift from the stack: a service's
 # `profiles:` list names the dependents that auto-activate it (gluetun carries
 # its netns tenants, n8n carries n8n-runners), which is what makes a pair a
@@ -144,11 +144,9 @@ validate_service() {
 # borrows its first child's section (flaresolverr sits with prowlarr), else the
 # section of the service it shares a name prefix with (immich-machine-learning
 # sits with immich-server), else "Other". Sorting goes through sort(1) because
-# mawk has no asort. The indent marker stays ASCII: whiptail pads the tag
-# column by byte length, so a multi-byte glyph would shift the second column of
-# every child row out of line. Fields are colon-separated, not tab-separated: `read`
-# folds runs of IFS whitespace, which would swallow the empty field a row
-# always has (a section has no parent and a child shows no section).
+# mawk has no asort. Fields are colon-separated, not tab-separated: `read` folds
+# runs of IFS whitespace, which would swallow the empty field every row carries
+# (a section has no parent, a child has no section).
 config_rows() {
     awk '
         /^services:[ \t]*$/ { in_services = 1; next }
@@ -225,46 +223,8 @@ config_rows() {
                         gsub(/:/, " ", section)
                         printf "%s:%s:\n", svc[i], section
                     } else
-                        printf "  - %s::%s\n", svc[i], par[i]
+                        printf "%s::%s\n", svc[i], par[i]
             }'
-}
-
-# Linked services move together, in both directions: unticking a parent takes
-# the services hanging off it with it, and ticking one of those ticks the
-# parent back (compose starts it anyway, through the child's own profile).
-# Rule 1 keys off what changed against the state that was on screen, so the
-# two rules cannot fight over a box the user did not touch.
-close_selection() {
-    _sel="$1"
-    _shown="$2"
-    _edges="$3"
-    while IFS=' ' read -r _child _parent; do
-        [ -n "$_parent" ] || continue
-        in_lines "$_shown" "$_parent" || continue
-        in_lines "$_sel" "$_parent" && continue
-        _sel="$(printf '%s\n' "$_sel" | grep -vx "$_child" || true)"
-    done <<EOF
-$_edges
-EOF
-    while IFS=' ' read -r _child _parent; do
-        [ -n "$_parent" ] || continue
-        in_lines "$_sel" "$_child" || continue
-        in_lines "$_sel" "$_parent" && continue
-        _sel="$_sel
-$_parent"
-    done <<EOF
-$_edges
-EOF
-    printf '%s\n' "$_sel" | grep -v '^$' | sort -u || true
-}
-
-# missing_from <list-a> <list-b>: entries of a absent from b, space-joined.
-missing_from() {
-    _out=""
-    for _item in $1; do
-        in_lines "$2" "$_item" || _out="$_out $_item"
-    done
-    printf '%s' "${_out# }"
 }
 
 # --- Subcommands ---
@@ -352,12 +312,9 @@ cmd_config() {
         echo "   or use 'make enable s=<service>' / 'make disable s=<service>' instead." >&2
         exit 1
     fi
-    if command -v whiptail >/dev/null 2>&1; then
-        dialog_tool=whiptail
-    elif command -v dialog >/dev/null 2>&1; then
-        dialog_tool=dialog
-    else
-        echo "❌ 'config' needs whiptail or dialog installed (sudo apt install whiptail)." >&2
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "❌ 'config' needs python3 (shipped with Raspberry Pi OS). Without it," >&2
+        echo "   use 'make enable s=<service>' / 'make disable s=<service>'." >&2
         exit 1
     fi
 
@@ -369,80 +326,38 @@ cmd_config() {
     known="$(known_profiles)"
     old_enabled="$(services_for_profiles "$old_profiles")"
 
-    # The rows never change, only their tick state, so read them once. The tag
-    # carries the indent marker, so the service name is its last
-    # whitespace-separated word. Fed by a here-doc, not a pipe, so the
-    # assignments land in this shell.
-    rows=""
-    edges=""
-    count=0
-    while IFS=: read -r tag desc parent; do
-        [ -n "$tag" ] || continue
-        svc="${tag##* }"
+    # The picker only chooses: it reads "service:section:parent:state" rows and
+    # writes back the services that stay ticked. Files, not a pipe, because it
+    # takes over the terminal (see scripts/services-picker.py).
+    rows_file="$(mktemp)"
+    picked_file="$(mktemp)"
+    while IFS=: read -r svc section parent; do
+        [ -n "$svc" ] || continue
         in_lines "$known" "$svc" || continue
-        rows="$rows$tag:$desc
-"
-        [ -z "$parent" ] || edges="$edges$svc $parent
-"
-        count=$((count + 1))
+        if in_lines "$old_enabled" "$svc"; then
+            printf '%s:%s:%s:on\n' "$svc" "$section" "$parent" >>"$rows_file"
+        else
+            printf '%s:%s:%s:off\n' "$svc" "$section" "$parent" >>"$rows_file"
+        fi
     done <<EOF
 $(config_rows)
 EOF
-    if [ "$count" -eq 0 ]; then
+    if [ ! -s "$rows_file" ]; then
+        rm -f "$rows_file" "$picked_file"
         echo "❌ No optional services declared in compose.yaml" >&2
         exit 1
     fi
 
-    list_height=$count
-    [ "$list_height" -le 14 ] || list_height=14
-    height=$((list_height + 8))
+    if python3 "$PROJECT_DIR/scripts/services-picker.py" "$rows_file" "$picked_file"; then
+        selection="$(sort -u "$picked_file")"
+    else
+        rm -f "$rows_file" "$picked_file"
+        echo "Cancelled — no changes."
+        return 0
+    fi
+    rm -f "$rows_file" "$picked_file"
 
-    # Shown ticked, then re-shown whenever the linked services move a box the
-    # user did not touch: whiptail has no way to toggle a row from a callback,
-    # so the adjusted state comes back on screen to be confirmed or edited.
-    shown="$(printf '%s\n' "$old_enabled" | grep -v '^$' | sort -u || true)"
-    note=""
-    while :; do
-        set --
-        while IFS=: read -r tag desc; do
-            [ -n "$tag" ] || continue
-            svc="${tag##* }"
-            if in_lines "$shown" "$svc"; then
-                set -- "$@" "$tag" "$desc" on
-            else
-                set -- "$@" "$tag" "$desc" off
-            fi
-        done <<EOF
-$rows
-EOF
-        # whiptail/dialog draw the UI on the terminal and print the chosen tags
-        # on stderr; the fd swap captures them. Non-zero means Cancel/Esc.
-        if ! selection="$("$dialog_tool" --title "pi-pcloud optional services" \
-                --separate-output \
-                --checklist "${note}Choose which optional services run (space toggles, enter applies). An indented service runs with the one above it, and the two are ticked and unticked together:" \
-                "$height" 72 "$list_height" "$@" 3>&1 1>&2 2>&3)"; then
-            echo "Cancelled — no changes."
-            return 0
-        fi
-
-        # Back from display tags to service names (drop the indent marker).
-        selection="$(printf '%s\n' "$selection" | sed 's/^.* //' | grep -v '^$' | sort -u || true)"
-        closed="$(close_selection "$selection" "$shown" "$edges")"
-        [ "$closed" != "$selection" ] || break
-
-        added="$(missing_from "$closed" "$selection")"
-        removed="$(missing_from "$selection" "$closed")"
-        note=""
-        [ -z "$added" ] || note="${note}Also ticked (needed by a ticked service): $added
-"
-        [ -z "$removed" ] || note="${note}Also unticked (they only run with the service you unticked): $removed
-"
-        note="$note
-"
-        shown="$closed"
-    done
-    selection="$closed"
-    new_profiles="$(printf '%s\n' "$selection" | paste -sd, - || true)"
+    new_profiles="$(printf '%s\n' "$selection" | grep -v '^$' | paste -sd, - || true)"
     if [ "$(printf '%s\n' "$selection" | sort)" = "$known" ]; then
         new_profiles=all
     fi
