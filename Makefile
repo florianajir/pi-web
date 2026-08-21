@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs doctor preflight check-env headscale-register headscale-reset rotate-password rotate-password-full
+.PHONY: help install uninstall start stop restart status logs doctor preflight check-env services enable disable headscale-register headscale-reset rotate-password rotate-password-full
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -23,6 +23,9 @@ help:
 	@echo "  restart          Restart stack"
 	@echo "  status           Show systemd status"
 	@echo "  logs             Follow compose logs"
+	@echo "  services         List optional services and whether each is enabled"
+	@echo "  enable s=<name>  Enable an optional service (updates COMPOSE_PROFILES, starts it)"
+	@echo "  disable s=<name> Disable an optional service (updates COMPOSE_PROFILES, stops it)"
 	@echo "  doctor           Report anything outside its threshold (disk, RAM, temp, containers, backups)"
 	@echo "  preflight        Quick env readiness check"
 	@echo "  headscale-register <key> Register a headscale node"
@@ -70,7 +73,8 @@ install: check-env
 	sudo cp /tmp/$(UNIT) /etc/systemd/system/
 	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/$(WATCH_UNIT) > /tmp/$(WATCH_UNIT)
 	sudo cp /tmp/$(WATCH_UNIT) /etc/systemd/system/
-	sudo cp config/systemd/system/nextcloud-cron.service /etc/systemd/system/
+	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/nextcloud-cron.service > /tmp/nextcloud-cron.service
+	sudo cp /tmp/nextcloud-cron.service /etc/systemd/system/
 	sudo cp config/systemd/system/nextcloud-cron.timer /etc/systemd/system/
 	sudo systemctl daemon-reload
 	sudo systemctl enable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer
@@ -156,6 +160,106 @@ status:
 logs:
 	@echo "📝 Logs (Ctrl+C to exit)"
 	$(COMPOSE) logs -f --tail=100
+
+# Optional services are toggled through Docker Compose profiles: every optional
+# service carries a profile named after itself (plus the catch-all "all"), and
+# COMPOSE_PROFILES in .env selects which run. A missing line means everything
+# (pre-profiles installs); an explicitly empty value means core-only, matching
+# what docker compose does with it. Enabled-ness is computed with `docker
+# compose config --services` under the current selection, which is
+# authoritative and handles coupled profiles (e.g. stremio auto-enabling
+# gluetun) for free.
+services:
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	@if grep -qE '^COMPOSE_PROFILES=' .env; then \
+		profiles=$$(grep -E '^COMPOSE_PROFILES=' .env | tail -n1 | cut -d= -f2-); \
+		echo "🧩 Optional services (COMPOSE_PROFILES=$${profiles:-<empty: core only>})"; \
+	else \
+		profiles=all; \
+		echo "🧩 Optional services (no COMPOSE_PROFILES line in .env = all)"; \
+	fi; \
+	known=$$($(COMPOSE) config --profiles | grep -v '^all$$' | sort) || exit 1; \
+	enabled=$$(COMPOSE_PROFILES="$$profiles" $(COMPOSE) config --services); \
+	for svc in $$known; do \
+		if printf '%s\n' "$$enabled" | grep -qx "$$svc"; then \
+			printf '  ✅ %s enabled\n' "$$svc"; \
+		else \
+			printf '  ⛔ %s disabled\n' "$$svc"; \
+		fi; \
+	done
+
+enable:
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	@if [ -z "$(s)" ]; then \
+		echo "❌ Usage: make enable s=<service>. Valid services:"; \
+		$(COMPOSE) config --profiles | grep -v '^all$$' | sort | sed 's/^/  - /'; \
+		exit 1; \
+	fi
+	@if ! $(COMPOSE) config --profiles | grep -v '^all$$' | grep -qx "$(s)"; then \
+		echo "❌ Unknown service '$(s)'. Valid services:"; \
+		$(COMPOSE) config --profiles | grep -v '^all$$' | sort | sed 's/^/  - /'; \
+		exit 1; \
+	fi
+	@if grep -qE '^COMPOSE_PROFILES=' .env; then \
+		current=$$(grep -E '^COMPOSE_PROFILES=' .env | tail -n1 | cut -d= -f2-); \
+	else \
+		echo "ℹ️  No COMPOSE_PROFILES line in .env (= everything enabled): writing the full explicit list first"; \
+		current=$$($(COMPOSE) config --profiles | grep -v '^all$$' | paste -sd, -); \
+	fi; \
+	if [ "$$current" = "all" ]; then \
+		echo "ℹ️  COMPOSE_PROFILES=all: every service is already enabled"; \
+	else \
+		case ",$$current," in \
+			",,") new="$(s)";; \
+			*",$(s),"*) new="$$current"; echo "ℹ️  $(s) already in COMPOSE_PROFILES";; \
+			*) new="$$current,$(s)";; \
+		esac; \
+		if grep -qE '^COMPOSE_PROFILES=' .env; then \
+			sed -i "s/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=$$new/" .env; \
+		else \
+			printf 'COMPOSE_PROFILES=%s\n' "$$new" >> .env; \
+		fi; \
+		echo "✏️  COMPOSE_PROFILES=$$new"; \
+	fi
+	@echo "🚀 Starting $(s) (and any services it depends on)..."
+	@$(COMPOSE) up -d $(s)
+	@echo "✅ $(s) enabled — run 'make restart' to keep the systemd-managed stack consistent"
+
+disable:
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	@if [ -z "$(s)" ]; then \
+		echo "❌ Usage: make disable s=<service>. Valid services:"; \
+		$(COMPOSE) config --profiles | grep -v '^all$$' | sort | sed 's/^/  - /'; \
+		exit 1; \
+	fi
+	@if ! $(COMPOSE) config --profiles | grep -v '^all$$' | grep -qx "$(s)"; then \
+		echo "❌ Unknown service '$(s)'. Valid services:"; \
+		$(COMPOSE) config --profiles | grep -v '^all$$' | sort | sed 's/^/  - /'; \
+		exit 1; \
+	fi
+	@if grep -qE '^COMPOSE_PROFILES=' .env; then \
+		current=$$(grep -E '^COMPOSE_PROFILES=' .env | tail -n1 | cut -d= -f2-); \
+	else \
+		current=all; \
+	fi; \
+	if [ "$$current" = "all" ]; then \
+		echo "ℹ️  COMPOSE_PROFILES was '$$current' (= everything enabled): writing the full explicit list first"; \
+		current=$$($(COMPOSE) config --profiles | grep -v '^all$$' | paste -sd, -); \
+	fi; \
+	new=$$(printf '%s\n' "$$current" | tr ',' '\n' | grep -vx "$(s)" | paste -sd, - || true); \
+	[ -n "$$new" ] || echo "⚠️  COMPOSE_PROFILES is now empty: only core services will run"; \
+	if grep -qE '^COMPOSE_PROFILES=' .env; then \
+		sed -i "s/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=$$new/" .env; \
+	else \
+		printf 'COMPOSE_PROFILES=%s\n' "$$new" >> .env; \
+	fi; \
+	echo "✏️  COMPOSE_PROFILES=$$new"; \
+	if COMPOSE_PROFILES="$$new" $(COMPOSE) config --services 2>/dev/null | grep -qx "$(s)"; then \
+		echo "⚠️  $(s) is still auto-enabled by another enabled service's profile — it will come back on 'make restart'"; \
+	fi
+	@echo "🛑 Stopping and removing $(s)..."
+	@$(COMPOSE) stop $(s) && $(COMPOSE) rm -f $(s)
+	@echo "✅ $(s) disabled — run 'make restart' to keep the systemd-managed stack consistent"
 
 # The same endpoint the assistant calls for the `anomalies` topic, so the shell
 # and the chat cannot disagree. Asked from inside the container because

@@ -29,6 +29,9 @@ jobs:
         run: |
           set -euo pipefail
           docker compose -f compose.yaml config >/dev/null
+          # Validate with every per-service profile enabled too, so optional
+          # services' definitions are checked even though they carry profiles.
+          COMPOSE_PROFILES=all docker compose -f compose.yaml config >/dev/null
           docker compose -f compose.yaml -f compose.test.yaml config >/dev/null
 
       - name: Lint workflow and Compose YAML
@@ -53,6 +56,17 @@ jobs:
       CLOUDFLARE_ZONE_ID: ci-zone-placeholder
       CLOUDFLARE_DNS_API_TOKEN: ci-token-placeholder
       COMPOSE_FILE: compose.yaml:compose.test.yaml
+      # Explicit list, NOT "all": profile lists merge across compose files, and
+      # compose.test.yaml marks CI-unfriendly services (gluetun, headscale,
+      # backrest, ...) with the ci-excluded profile — "all" would re-enable
+      # them. This list is every optional service except those and except
+      # services depending on them (headplane needs headscale; the gluetun
+      # tenants qbittorrent/stremio/kapowarr are out with gluetun), and
+      # reproduces exactly the service set CI started before profiles existed.
+      COMPOSE_PROFILES: >-
+        beszel,uptime-kuma,dockhand,n8n,n8n-runners,immich-machine-learning,
+        immich-server,nextcloud,comet,prowlarr,flaresolverr,kavita,
+        vaultwarden,system-tools,open-webui
       COMPOSE_ANSI: never
       COMPOSE_REMOVE_ORPHANS: "1"
       COMPOSE_PROGRESS: quiet
