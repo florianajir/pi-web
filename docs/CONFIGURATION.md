@@ -224,13 +224,15 @@ make disable s=stremio   # Remove it from COMPOSE_PROFILES and stop it
 `make config` opens a terminal picker listing every optional service (ticked = currently enabled, including auto-enabled dependencies); on confirm it rewrites `COMPOSE_PROFILES` and starts/stops whatever changed. Services are listed under the section they belong to, and one that is pointless on its own is indented under the service it belongs to:
 
 ```
-── Download ─────────────────────────
- [x] prowlarr
- [x]   flaresolverr
- [x] qbittorrent
-── Video ────────────────────────────
- [x] stremio
- [x]   comet
+Choose which services run — applying starts and stops containers now
+24/24 enabled · Traefik, Authelia, Pi-hole, Headscale, Postgres … always run
+── Download ──────────────────────────────────────────────────────────────
+ [x] prowlarr                   Indexer manager
+ [x]   flaresolverr             runs with prowlarr
+ [x] qbittorrent                Torrent client (VPN protected)
+── Video ─────────────────────────────────────────────────────────────────
+ [x] stremio                    Streaming server (VPN protected)
+ [x]   comet                    Stremio debrid addon
 ```
 
 Three things drive that layout, all read out of `compose.yaml` so the picker cannot drift from the stack:
@@ -239,6 +241,7 @@ Three things drive that layout, all read out of `compose.yaml` so the picker can
 |-------------------|---------|
 | `homepage.group=` | the section the service is listed under (same label the dashboard uses) |
 | `pi-pcloud.companion-of=` | pointless on its own — drawn indented under that service (`comet` under `stremio`, `immich-machine-learning` under `immich-server`) |
+| `homepage.description=` | the one-line description shown beside the service (a sidecar without one shows what it runs with) |
 | `profiles:` listing other services | cannot run without this one — `gluetun` for the containers sharing its network namespace |
 
 The last two are deliberately different relations. `qbittorrent` needs `gluetun` but is a service in its own right, so it stays under **Download** rather than being buried under the VPN; `comet` only makes sense with `stremio`, so it sits under it.

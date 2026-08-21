@@ -134,12 +134,15 @@ validate_service() {
 
 # --- Checklist layout ---
 
-# One row per optional service, as "<service>:<section>:<companion-of>:<needs>",
+# One row per optional service, as
+# "<service>:<section>:<companion-of>:<needs>:<description>" (description last,
+# so a colon inside it survives),
 # ordered by section. Three things come out of compose.yaml, so the picker can
 # never drift from the stack:
 #   homepage.group=            the section the service is listed under
 #   pi-pcloud.companion-of=    the service it is pointless without, which is
 #                              what the picker draws it indented beneath
+#   homepage.description=      the one-line description shown beside it
 #   profiles:                  a service listing others in its own profile list
 #                              is a dependency they cannot run without (gluetun
 #                              for the containers sharing its network
@@ -173,6 +176,13 @@ config_rows() {
             sub(/"[ \t]*$/, "", group)
             next
         }
+        /homepage\.description=/ {
+            desc = $0
+            sub(/.*homepage\.description=/, "", desc)
+            sub(/"[ \t]*$/, "", desc)
+            gsub(/\|/, "/", desc)
+            next
+        }
         /pi-pcloud\.companion-of=/ {
             companion = $0
             sub(/.*pi-pcloud\.companion-of=/, "", companion)
@@ -199,7 +209,10 @@ config_rows() {
                 root = comp[i] != "" ? comp[i] : name[i]
                 child = comp[i] != "" ? 1 : 0
                 sub(/^ /, "", needs[name[i]])
-                printf "%s|%s|%d|%s|%s|%s\n", section[name[i]], root, child, name[i], comp[i], needs[name[i]]
+                # A sidecar carries no dashboard description of its own; saying
+                # what it runs with beats an empty column.
+                text = info[i] != "" ? info[i] : (comp[i] != "" ? "runs with " comp[i] : "")
+                printf "%s|%s|%d|%s|%s|%s|%s\n", section[name[i]], root, child, name[i], comp[i], needs[name[i]], text
             }
         }
         function collect() {
@@ -208,17 +221,18 @@ config_rows() {
                 name[n] = svc
                 grp[n] = group
                 comp[n] = companion
+                info[n] = desc
                 p = profiles
                 sub(/^[^[]*\[/, "", p)
                 sub(/\].*$/, "", p)
                 gsub(/["\t ]/, "", p)
                 prof[n] = p
             }
-            svc = ""; profiles = ""; group = ""; companion = ""
+            svc = ""; profiles = ""; group = ""; companion = ""; desc = ""
         }
     ' "$PROJECT_DIR/compose.yaml" \
         | sort -t'|' -k1,1 -k2,2 -k3,3n -k4,4 \
-        | awk -F'|' '{ printf "%s:%s:%s:%s\n", $4, ($3 == 0 ? $1 : ""), $5, $6 }'
+        | awk -F'|' '{ printf "%s:%s:%s:%s:%s\n", $4, ($3 == 0 ? $1 : ""), $5, $6, $7 }'
 }
 
 # --- Subcommands ---
@@ -320,18 +334,19 @@ cmd_config() {
     known="$(known_profiles)"
     old_enabled="$(services_for_profiles "$old_profiles")"
 
-    # The picker only chooses: it reads "service:section:parent:needs:state" and
+    # The picker only chooses: it reads
+    # "service:section:parent:needs:state:description" rows and
     # writes back the services that stay ticked. Files, not a pipe, because it
     # takes over the terminal (see scripts/services-picker.py).
     rows_file="$(mktemp)"
     picked_file="$(mktemp)"
-    while IFS=: read -r svc section parent needs; do
+    while IFS=: read -r svc section parent needs desc; do
         [ -n "$svc" ] || continue
         in_lines "$known" "$svc" || continue
         if in_lines "$old_enabled" "$svc"; then
-            printf '%s:%s:%s:%s:on\n' "$svc" "$section" "$parent" "$needs" >>"$rows_file"
+            printf '%s:%s:%s:%s:on:%s\n' "$svc" "$section" "$parent" "$needs" "$desc" >>"$rows_file"
         else
-            printf '%s:%s:%s:%s:off\n' "$svc" "$section" "$parent" "$needs" >>"$rows_file"
+            printf '%s:%s:%s:%s:off:%s\n' "$svc" "$section" "$parent" "$needs" "$desc" >>"$rows_file"
         fi
     done <<EOF
 $(config_rows)

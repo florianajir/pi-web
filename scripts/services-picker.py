@@ -3,7 +3,8 @@
 
 Usage: services-picker.py <rows-file> <out-file>
 
-The rows file holds one service per line, "service:section:companion-of:needs:state",
+The rows file holds one service per line, as
+"service:section:companion-of:needs:state:description",
 as produced by scripts/services.sh (which owns everything else: reading
 compose.yaml, writing .env, running the per-service hooks). This script only
 lets the user choose, then writes the services that stay ticked to the out
@@ -23,7 +24,9 @@ transitively, so the screen always shows a set the stack can actually run.
 import curses
 import sys
 
-HELP = "space toggle  a all  n none  enter apply  q cancel"
+HELP = "space toggle · a all · n none · enter apply · q cancel"
+# Title, count and the blank line the sections start after.
+HEADER = 2
 
 
 def read_rows(path):
@@ -34,10 +37,10 @@ def read_rows(path):
             line = line.rstrip("\n")
             if not line:
                 continue
-            fields = line.split(":", 4)
-            if len(fields) != 5:
+            fields = line.split(":", 5)
+            if len(fields) != 6:
                 sys.exit(f"services-picker: malformed row {line!r}")
-            service, section, parent, needs, state = fields
+            service, section, parent, needs, state, description = fields
             rows.append({
                 "service": service,
                 "section": section,
@@ -45,6 +48,7 @@ def read_rows(path):
                 # Everything this service cannot run without, companion included.
                 "needs": [n for n in ([parent] if parent else []) + needs.split() if n],
                 "on": state == "on",
+                "description": description,
             })
     return rows
 
@@ -106,26 +110,38 @@ def set_all(rows, on):
         row["on"] = on
 
 
-def draw(win, rows, lines, cursor, offset, message):
+def name_column(rows):
+    """Width of the service column, so the descriptions line up."""
+    return max(len(("  " if row["parent"] else "") + row["service"]) for row in rows)
+
+
+def draw(win, rows, lines, cursor, offset, message, column):
     win.erase()
     height, width = win.getmaxyx()
-    body = max(height - 3, 1)
-    win.addnstr(0, 0, "Optional services — core infrastructure always runs",
+    body = max(height - HEADER - 1, 1)
+    enabled = sum(1 for row in rows if row["on"])
+    # Two lines that fit 80 columns: what this screen does, then what it will
+    # not touch — the services that are missing from the list on purpose.
+    win.addnstr(0, 0, "Choose which services run — applying starts and stops containers now",
                 width - 1, curses.A_BOLD)
+    win.addnstr(1, 0, f"{enabled}/{len(rows)} enabled · Traefik, Authelia, Pi-hole, "
+                      f"Headscale, Postgres … always run", width - 1, curses.A_DIM)
+    # Descriptions only earn their place once the names fit comfortably.
+    room = width - (5 + column + 2)
     for screen_row, line_index in enumerate(range(offset, min(offset + body, len(lines)))):
         kind, payload = lines[line_index]
-        y = screen_row + 1
+        y = screen_row + HEADER
         if kind == "head":
             win.addnstr(y, 0, f"── {payload} ".ljust(width - 1, "─"), width - 1, curses.A_DIM)
             continue
         row = rows[payload]
-        indent = "  " if row["parent"] else ""
-        text = f" [{'x' if row['on'] else ' '}] {indent}{row['service']}"
+        name = ("  " if row["parent"] else "") + row["service"]
+        text = f" [{'x' if row['on'] else ' '}] {name}"
+        if row["description"] and room >= 16:
+            text = f"{text.ljust(5 + column + 2)}{row['description']}"
         attr = curses.A_REVERSE if line_index == cursor else curses.A_NORMAL
         win.addnstr(y, 0, text.ljust(width - 1), width - 1, attr)
-    selected = sum(1 for row in rows if row["on"])
-    footer = message or f"{selected}/{len(rows)} selected   {HELP}"
-    win.addnstr(height - 1, 0, footer[:width - 1], width - 1, curses.A_DIM)
+    win.addnstr(height - 1, 0, (message or HELP)[:width - 1], width - 1, curses.A_DIM)
     win.refresh()
 
 
@@ -153,12 +169,13 @@ def run(screen, rows):
         return False
     offset = 0
     message = ""
+    column = name_column(rows)
     while True:
-        height = max(screen.getmaxyx()[0] - 3, 1)
+        height = max(screen.getmaxyx()[0] - HEADER - 1, 1)
         offset = min(offset, cursor)
         if cursor >= offset + height:
             offset = cursor - height + 1
-        draw(screen, rows, lines, cursor, offset, message)
+        draw(screen, rows, lines, cursor, offset, message, column)
         key = screen.getch()
         if key in (ord("q"), 27):
             return False
