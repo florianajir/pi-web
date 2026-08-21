@@ -215,12 +215,13 @@ An install whose `.env` predates this feature (no `COMPOSE_PROFILES` line) keeps
 **Manage the selection with make** (or edit `COMPOSE_PROFILES` by hand and `make restart`):
 
 ```bash
+make config              # Interactive checklist — the comfortable path
 make services            # List each optional service and whether it is enabled
 make enable s=stremio    # Add it to COMPOSE_PROFILES and start it (plus dependencies)
 make disable s=stremio   # Remove it from COMPOSE_PROFILES and stop it
 ```
 
-`enable`/`disable` rewrite the `COMPOSE_PROFILES` line in `.env` (materializing the full explicit list first if it was `all` or unset), then start or stop the container. Finish with `make restart` so the systemd-managed stack state matches the new selection.
+`make config` opens a whiptail checklist of every optional service (checked = currently enabled, including auto-enabled dependencies); on confirm it rewrites `COMPOSE_PROFILES` and starts/stops whatever changed. `enable`/`disable` do the same for a single service, rewriting the `COMPOSE_PROFILES` line in `.env` (materializing the full explicit list first if it was `all` or unset). Enabling also runs the service's init hooks — `scripts/<service>-pre-start.sh` before the start, `scripts/<service>-bootstrap.sh` / `scripts/<service>-oidc-bootstrap.sh` after — the same scripts the systemd unit runs, so no `make restart` is needed: the stack is immediately consistent, and the unit reads the same `.env` at next boot. All three targets are thin wrappers around `scripts/services.sh`.
 
 ## Custom Configuration
 
