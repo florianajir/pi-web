@@ -19,5 +19,10 @@
 !/config/homepage/secrets/README.md
 /config/homepage/homepage.env
 
+# Bytecode from importing the Python scripts (test harnesses, py_compile);
+# a plain run never writes it, since __main__ is not cached.
+__pycache__/
+*.pyc
+
 ._.DS_Store
 .DS_Store
