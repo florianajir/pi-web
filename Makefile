@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs doctor preflight check-env print-required-vars test services enable disable config headscale-register headscale-reset rotate-password rotate-password-full
+.PHONY: help install install-system uninstall start stop restart update status logs doctor preflight check-env print-required-vars test services enable disable config headscale-register headscale-reset rotate-password rotate-password-full
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -37,10 +37,12 @@ HEADSCALE_KEY := $(GOAL_ARG)
 help:
 	@echo "Commands:"
 	@echo "  install          Install & enable systemd unit, start stack and initialize"
+	@echo "  install-system   Re-apply the host files only (sysctl, /etc/hosts, units, command)"
 	@echo "  uninstall        Stop stack, remove all data/volumes and uninstall systemd units"
 	@echo "  start            Start stack"
 	@echo "  stop             Stop stack"
 	@echo "  restart          Restart stack"
+	@echo "  update           Pull the repository and updated images, rebuild, restart"
 	@echo "  status           Show systemd status"
 	@echo "  logs             Follow compose logs"
 	@echo "  services         List optional services and whether each is enabled"
@@ -97,8 +99,25 @@ preflight: check-env
 	@if docker run --rm -m 32m busybox sh -c 'cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null' | grep -qE '33554432|32'; then echo "✔ memory limits enforced"; else echo "⚠ memory limits NOT enforced"; fi
 	@echo "Done"
 
-install: check-env
-	@echo "📦 Installing..."
+install: check-env install-system
+	@if [ "$(SKIP_START)" = "1" ]; then \
+		echo "⏭️  SKIP_START=1 set; not starting stack"; \
+	else \
+		echo "🚀 Starting stack..."; \
+		$(SUDO) systemctl start $(UNIT); \
+		$(MAKE) start; \
+	fi
+	@echo "✅ Installation complete"
+
+# Everything this repository installs outside itself: sysctl, the /etc/hosts
+# records, the systemd units (rendered with this checkout's path) and the
+# pi-pcloud command. Split out of `install` so `update` can re-apply it after
+# a pull: these are copies, so a unit or a completion changed upstream would
+# otherwise sit stale on the host until the next install. Every step is
+# idempotent. The command itself is a symlink into the checkout and needs no
+# refresh, unlike the completions beside it.
+install-system:
+	@echo "📦 Installing system files..."
 	@echo "🧰 Applying host sysctl settings..."
 	$(SUDO) cp config/sysctl.d/pi-pcloud.conf /etc/sysctl.d/99-pi-pcloud.conf
 	$(SUDO) $(SYSCTL) --system >/dev/null
@@ -130,14 +149,6 @@ install: check-env
 	$(SUDO) cp config/completion/pi-pcloud.bash $(BASH_COMPLETION)
 	$(SUDO) cp config/completion/_pi-pcloud $(ZSH_COMPLETION)
 	@echo "✅ pi-pcloud available on PATH (new shells get completion)"
-	@if [ "$(SKIP_START)" = "1" ]; then \
-		echo "⏭️  SKIP_START=1 set; not starting stack"; \
-	else \
-		echo "🚀 Starting stack..."; \
-		$(SUDO) systemctl start $(UNIT); \
-		$(MAKE) start; \
-	fi
-	@echo "✅ Installation complete"
 
 uninstall:
 	@echo "🗑️  Uninstalling pi-pcloud..."
@@ -199,10 +210,26 @@ stop:
 
 restart: stop start
 
+# Images are refreshed while the stack is still running, so the interruption is
+# one restart instead of a download. `pull` only covers the services the
+# current COMPOSE_PROFILES selects, and skips the five images built here, which
+# `build --pull` rebuilds against their updated bases. Pruning at the end
+# reclaims the layers the recreated containers just released — dangling images
+# only, so nothing a container still references is touched.
 update:
-	@echo "🔄 Update (git pull + restart)"
+	@echo "🔄 Updating pi-pcloud..."
+	@branch=$$(git rev-parse --abbrev-ref HEAD); 	if [ "$$branch" != "main" ]; then echo "  ⚠ on branch $$branch, not main"; fi
+	@echo "📥 Repository..."
 	@git pull --ff-only
+	$(MAKE) check-env
+	@echo "📦 Images (the stack keeps running)..."
+	@$(COMPOSE) pull --ignore-buildable
+	@echo "🔨 Locally built images..."
+	@$(COMPOSE) build --pull
+	$(MAKE) install-system
 	$(MAKE) restart
+	@echo "🧹 Reclaiming space from the replaced images..."
+	@docker image prune -f | tail -n1
 	@echo "✅ Update complete"
 
 status:

@@ -8,6 +8,7 @@
 pi-pcloud config             # same as `make config`
 pi-pcloud enable stremio     # same as `make enable stremio`
 pi-pcloud status             # same as `make status`
+pi-pcloud update             # pull code and images, rebuild, restart
 pi-pcloud                    # the command list
 ```
 
@@ -33,7 +34,8 @@ Run these from the pi-pcloud directory (`/opt/pi-pcloud`), or use the `pi-pcloud
 | `make enable <service>` | Enable an optional service: update `COMPOSE_PROFILES` in `.env`, start it, run its init hooks |
 | `make disable <service>` | Disable an optional service: update `COMPOSE_PROFILES` in `.env` and stop it |
 | `make config` | Interactive checklist to choose which optional services run |
-| `make update` | `git pull` + restart |
+| `make update` | Pull the repository and updated images, rebuild the locally built ones, re-apply the host files, restart, prune replaced layers |
+| `make install-system` | Re-apply only what lives outside the repository: sysctl, `/etc/hosts` records, systemd units, the `pi-pcloud` command and its completions |
 | `make doctor` | Report anything outside its threshold: disk, RAM, swap, temperature, load, containers, restarts, backups |
 | `make check-env` | Validate required `.env` variables |
 | `make test` | Run the installer and `check-env` test suites (temporary copies only, no host changes) |
@@ -41,6 +43,10 @@ Run these from the pi-pcloud directory (`/opt/pi-pcloud`), or use the `pi-pcloud
 | `make headscale-reset` | Reset all VPN nodes (**destructive**) |
 | `make rotate-password` | Rotate `PASSWORD` after a leak (LLDAP admin + Authelia) |
 | `make rotate-password-full` | Same, plus every Postgres role and every other service using `PASSWORD` |
+
+**About `update`:** images are refreshed while the stack is still running, so the interruption is a single restart rather than a download. It only pulls what the current `COMPOSE_PROFILES` selects, rebuilds the five images built from `config/*/Dockerfile` against their updated bases, and finishes with `docker image prune -f`, which reclaims the layers the recreated containers released (dangling images only — nothing a container still references). Expect several minutes on a Pi when base images have moved.
+
+`update` also re-runs `install-system`, because a pull can change files this repository copies **outside** itself — the systemd units, the sysctl drop-in, the shell completions — and those copies would otherwise sit stale on the host until the next `make install`. It validates `.env` against the required-variable list first, so a variable added upstream is caught before the stack is restarted rather than after. The `pi-pcloud` command needs no refresh: it is a symlink into the checkout.
 
 ## Quick Workflows
 
@@ -91,7 +97,7 @@ make headscale-register <key-from-the-url>
 
 **Update the stack:**
 ```bash
-make update                             # git pull + restart
+make update                             # code + images, then one restart
 docker compose pull && make restart     # only re-pull pinned images
 ```
 
