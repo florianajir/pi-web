@@ -214,13 +214,13 @@ case "$out" in
     *) ok "announces an inherited value" "$out" yes ;;
 esac
 
-out="$( (PASSWORD=s3cr3t-not-logged ask PASSWORD "Password" "" 1) 2>&1 )"
+out="$( (PASSWORD=fake-test-secret-value ask PASSWORD "Password" "" 1) 2>&1 )"
 case "$out" in
     *"not displayed"*) ok "announces an inherited secret" yes yes ;;
     *) ok "announces an inherited secret" "$out" yes ;;
 esac
 case "$out" in
-    *s3cr3t-not-logged*) ok "never logs the secret itself" no yes ;;
+    *fake-test-secret-value*) ok "never logs the secret itself" no yes ;;
     *) ok "never logs the secret itself" yes yes ;;
 esac
 
@@ -240,7 +240,7 @@ detect_network() {
 }
 ping() { return 1; }
 export HOST_NAME=pi.example.com EMAIL=admin@example.com ADMIN_USER=admin \
-    PASSWORD=correct-horse-battery-staple TIMEZONE=Europe/Paris \
+    PASSWORD=test-placeholder-password TIMEZONE=Europe/Paris \
     HOST_LAN_IP=192.168.1.42 CLOUDFLARE_DNS_API_TOKEN=ci-token \
     CLOUDFLARE_ZONE_ID=ci-zone
 unset PIHOLE_IP ALLOW_IP_RANGES HOST_LAN_PARENT HOST_LAN_SUBNET HOST_LAN_GATEWAY 2>/dev/null || true
