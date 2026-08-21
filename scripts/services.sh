@@ -132,6 +132,98 @@ validate_service() {
     fi
 }
 
+# --- Checklist layout ---
+
+# One display row per optional service, as "<tag>\t<description>", ordered by
+# section with each coupled pair rendered as a tree. Everything is derived from
+# compose.yaml, so the checklist cannot drift from the stack: a service's
+# `profiles:` list names the dependents that auto-activate it (gluetun carries
+# its netns tenants, n8n carries n8n-runners), which is what makes a pair a
+# tree, and its `homepage.group=` label gives the section. A label-less service
+# borrows its first child's section (flaresolverr sits with prowlarr), else the
+# section of the service it shares a name prefix with (immich-machine-learning
+# sits with immich-server), else "Other". Sorting goes through sort(1) because
+# mawk has no asort. The tree glyphs stay ASCII: whiptail pads the tag column
+# by byte length, so a multi-byte glyph would shift the description column of
+# every child row out of line.
+config_rows() {
+    awk '
+        /^services:[ \t]*$/ { in_services = 1; next }
+        /^[A-Za-z0-9_-]+:/ {
+            if (in_services) collect()
+            in_services = 0
+            next
+        }
+        !in_services { next }
+        /^  [A-Za-z0-9_-]+:[ \t]*$/ {
+            collect()
+            svc = $0
+            gsub(/[ :]/, "", svc)
+            next
+        }
+        /^[ \t]+profiles:/ { profiles = $0; next }
+        /homepage\.group=/ {
+            group = $0
+            sub(/.*homepage\.group=/, "", group)
+            sub(/"[ \t]*$/, "", group)
+            next
+        }
+        END {
+            collect()
+            for (i = 1; i <= n; i++) {
+                cnt = split(prof[i], part, ",")
+                for (j = 1; j <= cnt; j++)
+                    if (part[j] != "" && part[j] != "all" && part[j] != name[i])
+                        parent[part[j]] = name[i]
+            }
+            for (i = 1; i <= n; i++) {
+                if (name[i] in parent) continue
+                g = grp[i]
+                for (k = 1; k <= n && g == ""; k++)
+                    if ((name[k] in parent) && parent[name[k]] == name[i] && grp[k] != "")
+                        g = grp[k]
+                if (g == "") {
+                    pre = name[i]
+                    sub(/-.*$/, "", pre)
+                    for (k = 1; k <= n && g == ""; k++)
+                        if (k != i && grp[k] != "" && index(name[k], pre "-") == 1)
+                            g = grp[k]
+                }
+                if (g == "") g = "Other"
+                section[name[i]] = g
+            }
+            for (i = 1; i <= n; i++)
+                if (name[i] in parent)
+                    printf "%s|%s|1|%s|%s\n", section[parent[name[i]]], parent[name[i]], name[i], parent[name[i]]
+                else
+                    printf "%s|%s|0|%s|\n", section[name[i]], name[i], name[i]
+        }
+        function collect() {
+            if (svc != "" && profiles != "") {
+                n++
+                name[n] = svc
+                grp[n] = group
+                p = profiles
+                sub(/^[^[]*\[/, "", p)
+                sub(/\].*$/, "", p)
+                gsub(/["\t ]/, "", p)
+                prof[n] = p
+            }
+            svc = ""; profiles = ""; group = ""
+        }
+    ' "$PROJECT_DIR/compose.yaml" \
+        | sort -t'|' -k1,1 -k2,2 -k3,3n -k4,4 \
+        | awk -F'|' '
+            { sec[NR] = $1; root[NR] = $2; child[NR] = $3; svc[NR] = $4; par[NR] = $5; n = NR }
+            END {
+                for (i = 1; i <= n; i++) {
+                    if (child[i] == 0) { printf "%s\t%s\n", svc[i], sec[i]; continue }
+                    last = !(i < n && child[i + 1] == 1 && root[i + 1] == root[i])
+                    printf "%s %s\talso starts %s\n", (last ? "`-" : "|-"), svc[i], par[i]
+                }
+            }'
+}
+
 # --- Subcommands ---
 
 cmd_list() {
@@ -234,18 +326,26 @@ cmd_config() {
     known="$(known_profiles)"
     old_enabled="$(services_for_profiles "$old_profiles")"
 
-    # Build the checklist rows: <tag> <status> <on|off>. Checked = currently
-    # enabled (same computation as list, so auto-enabled deps show checked).
+    # Checked = currently enabled (same computation as list, so auto-enabled
+    # dependencies show checked). The tag carries the tree glyphs, so the
+    # service name is its last whitespace-separated word. Fed by a here-doc,
+    # not a pipe, so `set --` lands in this shell.
     count=0
     set --
-    for svc in $known; do
+    tab="$(printf '\t')"
+    while IFS="$tab" read -r tag desc; do
+        [ -n "$tag" ] || continue
+        svc="${tag##* }"
+        in_lines "$known" "$svc" || continue
         if in_lines "$old_enabled" "$svc"; then
-            set -- "$@" "$svc" "enabled" on
+            set -- "$@" "$tag" "$desc" on
         else
-            set -- "$@" "$svc" "disabled" off
+            set -- "$@" "$tag" "$desc" off
         fi
         count=$((count + 1))
-    done
+    done <<EOF
+$(config_rows)
+EOF
     if [ "$count" -eq 0 ]; then
         echo "❌ No optional services declared in compose.yaml" >&2
         exit 1
@@ -259,13 +359,14 @@ cmd_config() {
     # stderr; the fd swap captures them. A non-zero exit means Cancel/Esc.
     if ! selection="$("$dialog_tool" --title "pi-pcloud optional services" \
             --separate-output \
-            --checklist "Choose which optional services run (space toggles, enter applies):" \
-            "$height" 64 "$list_height" "$@" 3>&1 1>&2 2>&3)"; then
+            --checklist "Choose which optional services run (space toggles, enter applies). An indented service also starts the one above it:" \
+            "$height" 72 "$list_height" "$@" 3>&1 1>&2 2>&3)"; then
         echo "Cancelled — no changes."
         return 0
     fi
 
-    selection="$(printf '%s\n' "$selection" | grep -v '^$' || true)"
+    # Back from display tags to service names (drop the tree glyphs).
+    selection="$(printf '%s\n' "$selection" | sed 's/^.* //' | grep -v '^$' || true)"
     new_profiles="$(printf '%s\n' "$selection" | grep -v '^$' | paste -sd, - || true)"
     if [ "$(printf '%s\n' "$selection" | sort)" = "$known" ]; then
         new_profiles=all

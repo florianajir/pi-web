@@ -221,7 +221,18 @@ make enable s=stremio    # Add it to COMPOSE_PROFILES and start it (plus depende
 make disable s=stremio   # Remove it from COMPOSE_PROFILES and stop it
 ```
 
-`make config` opens a whiptail checklist of every optional service (checked = currently enabled, including auto-enabled dependencies); on confirm it rewrites `COMPOSE_PROFILES` and starts/stops whatever changed. `enable`/`disable` do the same for a single service, rewriting the `COMPOSE_PROFILES` line in `.env` (materializing the full explicit list first if it was `all` or unset). Enabling also runs the service's init hooks — `scripts/<service>-pre-start.sh` before the start, `scripts/<service>-bootstrap.sh` / `scripts/<service>-oidc-bootstrap.sh` after — the same scripts the systemd unit runs, so no `make restart` is needed: the stack is immediately consistent, and the unit reads the same `.env` at next boot. All three targets are thin wrappers around `scripts/services.sh`.
+`make config` opens a whiptail checklist of every optional service (checked = currently enabled, including auto-enabled dependencies); on confirm it rewrites `COMPOSE_PROFILES` and starts/stops whatever changed. Rows are grouped into sections and coupled services are shown as a tree — an indented service also starts the one above it:
+
+```
+[*] n8n                    Automation
+[*] `- n8n-runners         also starts n8n
+[*] gluetun                Privacy
+[*] |- kapowarr            also starts gluetun
+[*] |- qbittorrent         also starts gluetun
+[*] `- stremio             also starts gluetun
+```
+
+Sections come from the `homepage.group=` labels and the tree from the `profiles:` lists, both read out of `compose.yaml`, so the checklist cannot drift from the stack. Unchecking a service that another checked service auto-activates changes nothing, and says so. `enable`/`disable` do the same for a single service, rewriting the `COMPOSE_PROFILES` line in `.env` (materializing the full explicit list first if it was `all` or unset). Enabling also runs the service's init hooks — `scripts/<service>-pre-start.sh` before the start, `scripts/<service>-bootstrap.sh` / `scripts/<service>-oidc-bootstrap.sh` after — the same scripts the systemd unit runs, so no `make restart` is needed: the stack is immediately consistent, and the unit reads the same `.env` at next boot. All three targets are thin wrappers around `scripts/services.sh`.
 
 ## Custom Configuration
 
