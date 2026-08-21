@@ -63,16 +63,6 @@ ui_passwordbox() {
         --output-fd 3 3>&1 </dev/tty >/dev/tty
 }
 
-# ui_checklist "text" tag "" ON|OFF [tag "" ON|OFF ...]
-# Prints the selected tags one per line (--separate-output).
-ui_checklist() {
-    local text="$1"
-    shift
-    whiptail --title "$WHIPTAIL_TITLE" --separate-output \
-        --checklist "$text" 24 72 14 "$@" \
-        --output-fd 3 3>&1 </dev/tty >/dev/tty
-}
-
 # Runs on every exit path, including the signal traps below, so a terminal is
 # never left with echo off and the staging file (which holds secrets) never
 # outlives the run.
@@ -584,13 +574,19 @@ write_network_settings() {
 # Which optional services to run, via Docker Compose profiles (each optional
 # service carries a profile named after itself; see docs/CONFIGURATION.md,
 # "Choosing which services run"). An exported COMPOSE_PROFILES wins like every
-# prompt; the checklist needs whiptail; every other path keeps the .env.dist
-# default (all). The profile list is asked of compose itself against the
-# staged .env — never scraped — so it cannot drift from compose.yaml; if that
-# fails, the install proceeds with everything enabled rather than stopping,
-# since `make config` can change the selection at any time.
+# prompt. Anything else — no terminal, no python3, a cancelled screen — keeps
+# the .env.dist default (all) rather than stopping the install, since
+# `make config` can change the selection at any time.
+# The clone owns the picker, so the install offers the very same screen as
+# `make config` later on — sections, nested companions and linked toggling
+# included — instead of a second checklist that would drift from it. It reads
+# the staged .env, whose .env.dist default ticks everything.
+pick_services() {
+    ENV_FILE="$ENV_STAGE" sh "$INSTALL_DIR/scripts/services.sh" pick
+}
+
 select_services() {
-    local profiles="" count=0 picked="" value="" svc=""
+    local value="" rc=0
 
     if [ -n "${COMPOSE_PROFILES:-}" ]; then
         require_safe COMPOSE_PROFILES "$COMPOSE_PROFILES"
@@ -598,34 +594,21 @@ select_services() {
         set_env COMPOSE_PROFILES "$COMPOSE_PROFILES"
         return 0
     fi
-    if ! use_whiptail; then
-        log "Every optional service stays enabled (run 'make config' in $INSTALL_DIR to choose)"
-        return 0
-    fi
 
-    profiles="$(docker compose -f "$INSTALL_DIR/compose.yaml" --env-file "$ENV_STAGE" \
-        config --profiles 2>/dev/null | grep -vx all | sort)" || profiles=""
-    if [ -z "$profiles" ]; then
-        log "WARNING: could not list the service profiles; every optional service stays enabled"
-        return 0
-    fi
+    value="$(pick_services)" || rc="$?"
+    case "$rc" in
+        0) ;;
+        1)
+            log "Selection cancelled; every optional service stays enabled"
+            return 0
+            ;;
+        *)
+            log "Every optional service stays enabled (run 'make config' in $INSTALL_DIR to choose)"
+            return 0
+            ;;
+    esac
 
-    set --
-    for svc in $profiles; do
-        set -- "$@" "$svc" "" ON
-        count=$((count + 1))
-    done
-    if ! picked="$(ui_checklist "Services to enable — core infrastructure (Traefik, Authelia, Pi-hole, Headscale, ...) always runs. Space toggles, Enter confirms; 'make config' can change this later." "$@")"; then
-        log "Selection cancelled; every optional service stays enabled"
-        return 0
-    fi
-
-    if [ "$(printf '%s\n' "$picked" | grep -c .)" -eq "$count" ]; then
-        value="all"
-    else
-        value="$(printf '%s\n' "$picked" | paste -sd, -)"
-        [ -n "$value" ] || log "WARNING: no services selected; only the core infrastructure will run"
-    fi
+    [ -n "$value" ] || log "WARNING: no services selected; only the core infrastructure will run"
     require_safe COMPOSE_PROFILES "$value"
     set_env COMPOSE_PROFILES "$value"
 }

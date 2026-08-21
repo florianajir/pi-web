@@ -14,6 +14,8 @@
 #   enable <service>   Add to COMPOSE_PROFILES, start it, run its init hooks
 #   disable <service>  Remove from COMPOSE_PROFILES, stop and remove it
 #   config             Interactive picker (scripts/services-picker.py)
+#   pick               Same picker, printing the chosen COMPOSE_PROFILES value
+#                      instead of applying it (used by install.sh)
 #
 # enable (and config, for newly-enabled services) runs the same per-service
 # hooks the systemd unit runs around `docker compose up`:
@@ -249,6 +251,68 @@ config_rows() {
         | awk -F'|' '{ printf "%s:%s:%s:%s:%s\n", $4, ($3 == 0 ? $1 : ""), $5, $6, $7 }'
 }
 
+# Runs the picker over the current selection and prints the COMPOSE_PROFILES
+# value it produced (empty means core services only). Status: 0 printed,
+# 1 cancelled, 2 no picker available here. Shared with install.sh through the
+# `pick` subcommand, so a fresh install and `make config` offer the same list,
+# nesting and linked toggling.
+pick_profiles() {
+    _enabled="$1"
+    # A terminal must exist, but it need not be our stdin or stdout: the value
+    # travels through this function's stdout (install.sh captures it) and the
+    # installer itself may be running from `curl | sh`, where stdin is the
+    # script. The picker is wired to /dev/tty for both directions below.
+    { true </dev/tty; } 2>/dev/null || return 2
+    command -v python3 >/dev/null 2>&1 || return 2
+
+    # The picker only chooses: it reads
+    # "service:section:parent:needs:state:description" rows and writes back the
+    # services that stay ticked. Files, not a pipe, because it takes over the
+    # terminal (see scripts/services-picker.py).
+    _rows="$(mktemp)"
+    _picked="$(mktemp)"
+    _known="$(known_profiles)"
+    while IFS=: read -r _svc _section _parent _needs _desc; do
+        [ -n "$_svc" ] || continue
+        in_lines "$_known" "$_svc" || continue
+        if in_lines "$_enabled" "$_svc"; then
+            printf '%s:%s:%s:%s:on:%s\n' "$_svc" "$_section" "$_parent" "$_needs" "$_desc" >>"$_rows"
+        else
+            printf '%s:%s:%s:%s:off:%s\n' "$_svc" "$_section" "$_parent" "$_needs" "$_desc" >>"$_rows"
+        fi
+    done <<EOF
+$(config_rows)
+EOF
+    if [ ! -s "$_rows" ]; then
+        rm -f "$_rows" "$_picked"
+        echo "❌ No optional services declared in compose.yaml" >&2
+        return 2
+    fi
+    if ! python3 "$PROJECT_DIR/scripts/services-picker.py" "$_rows" "$_picked" </dev/tty >/dev/tty; then
+        rm -f "$_rows" "$_picked"
+        return 1
+    fi
+    _selection="$(sort -u "$_picked")"
+    rm -f "$_rows" "$_picked"
+
+    # Everything ticked is written as "all", so a service added by a later
+    # update is enabled too instead of silently missing from an explicit list.
+    if [ "$(printf '%s\n' "$_selection" | grep -v '^$' | sort)" = "$_known" ]; then
+        echo all
+    else
+        printf '%s\n' "$_selection" | grep -v '^$' | paste -sd, - || true
+    fi
+}
+
+# The tick state a picker run should start from: what is enabled today.
+current_enabled() {
+    if has_profiles_line; then
+        services_for_profiles "$(get_env_value COMPOSE_PROFILES)"
+    else
+        services_for_profiles all
+    fi
+}
+
 # --- Subcommands ---
 
 cmd_list() {
@@ -327,63 +391,34 @@ cmd_disable() {
     echo "✅ $svc disabled"
 }
 
+# Print the COMPOSE_PROFILES value the user picks, and nothing else, so
+# install.sh can offer the same screen while owning its own .env writing.
+cmd_pick() {
+    require_env_file
+    _value="$(pick_profiles "$(current_enabled)")" || return "$?"
+    printf '%s\n' "$_value"
+}
+
 cmd_config() {
     require_env_file
-    if [ ! -t 0 ] || [ ! -t 1 ]; then
-        echo "❌ 'config' needs an interactive terminal — run 'make config' from a TTY," >&2
-        echo "   or use 'make enable s=<service>' / 'make disable s=<service>' instead." >&2
-        exit 1
-    fi
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo "❌ 'config' needs python3 (shipped with Raspberry Pi OS). Without it," >&2
-        echo "   use 'make enable s=<service>' / 'make disable s=<service>'." >&2
-        exit 1
-    fi
-
-    if has_profiles_line; then
-        old_profiles="$(get_env_value COMPOSE_PROFILES)"
-    else
-        old_profiles=all
-    fi
     known="$(known_profiles)"
-    old_enabled="$(services_for_profiles "$old_profiles")"
+    old_enabled="$(current_enabled)"
 
-    # The picker only chooses: it reads
-    # "service:section:parent:needs:state:description" rows and
-    # writes back the services that stay ticked. Files, not a pipe, because it
-    # takes over the terminal (see scripts/services-picker.py).
-    rows_file="$(mktemp)"
-    picked_file="$(mktemp)"
-    while IFS=: read -r svc section parent needs desc; do
-        [ -n "$svc" ] || continue
-        in_lines "$known" "$svc" || continue
-        if in_lines "$old_enabled" "$svc"; then
-            printf '%s:%s:%s:%s:on:%s\n' "$svc" "$section" "$parent" "$needs" "$desc" >>"$rows_file"
-        else
-            printf '%s:%s:%s:%s:off:%s\n' "$svc" "$section" "$parent" "$needs" "$desc" >>"$rows_file"
-        fi
-    done <<EOF
-$(config_rows)
-EOF
-    if [ ! -s "$rows_file" ]; then
-        rm -f "$rows_file" "$picked_file"
-        echo "❌ No optional services declared in compose.yaml" >&2
-        exit 1
-    fi
-
-    if python3 "$PROJECT_DIR/scripts/services-picker.py" "$rows_file" "$picked_file"; then
-        selection="$(sort -u "$picked_file")"
-    else
-        rm -f "$rows_file" "$picked_file"
-        echo "Cancelled — no changes."
-        return 0
-    fi
-    rm -f "$rows_file" "$picked_file"
-
-    new_profiles="$(printf '%s\n' "$selection" | grep -v '^$' | paste -sd, - || true)"
-    if [ "$(printf '%s\n' "$selection" | sort)" = "$known" ]; then
-        new_profiles=all
-    fi
+    # `|| rc=$?` keeps set -e out of it: a cancelled picker is a normal outcome.
+    rc=0
+    new_profiles="$(pick_profiles "$old_enabled")" || rc="$?"
+    case "$rc" in
+        1)
+            echo "Cancelled — no changes."
+            return 0
+            ;;
+        2)
+            echo "❌ 'config' needs an interactive terminal and python3 (shipped with" >&2
+            echo "   Raspberry Pi OS). Use 'make enable s=<service>' /" >&2
+            echo "   'make disable s=<service>' instead." >&2
+            exit 1
+            ;;
+    esac
     [ -n "$new_profiles" ] || echo "⚠️  Nothing selected: COMPOSE_PROFILES will be empty — only core services will run"
     write_profiles "$new_profiles"
 
@@ -436,7 +471,7 @@ EOF
 # --- Main ---
 
 usage() {
-    echo "Usage: services.sh {list|enable <service>|disable <service>|config}" >&2
+    echo "Usage: services.sh {list|enable <service>|disable <service>|config|pick}" >&2
 }
 
 cmd="${1:-}"
@@ -446,5 +481,6 @@ case "$cmd" in
     enable) cmd_enable "${1:-}" ;;
     disable) cmd_disable "${1:-}" ;;
     config) cmd_config ;;
+    pick) cmd_pick ;;
     *) usage; exit 1 ;;
 esac

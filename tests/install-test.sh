@@ -271,50 +271,60 @@ ok "exported COMPOSE_PROFILES is written" \
 expect_die "unsafe exported COMPOSE_PROFILES dies" "COMPOSE_PROFILES" \
     'stage_env; COMPOSE_PROFILES="bad\$value" select_services'
 
-# Without whiptail (or a terminal) the .env.dist default stands: everything.
+# The picker itself lives in scripts/services.sh and is covered there; what
+# matters here is how the installer reacts to each of its outcomes, so
+# pick_services is stubbed per case.
+
+# No terminal or no python3 (status 2): the .env.dist default stands.
 stage_env
-use_whiptail() { return 1; }
+pick_services() { return 2; }
 out="$( (unset COMPOSE_PROFILES; select_services) 2>&1 )"
-ok "non-interactive keeps every service" \
+ok "no picker keeps every service" \
     "$(env_line COMPOSE_PROFILES)" "COMPOSE_PROFILES=all"
 case "$out" in
     *"make config"*) ok "  and points at make config" yes yes ;;
     *) ok "  and points at make config" "$out" yes ;;
 esac
 
-# Checklist paths, with compose's profile listing and the dialog stubbed out.
-use_whiptail() { return 0; }
-docker() { printf 'all\nimmich-server\nnextcloud\nstremio\n'; }
-ui_checklist() { printf 'nextcloud\nstremio\n'; }
+# Cancelled (status 1): likewise untouched, with a different reason.
 stage_env
+pick_services() { return 1; }
+out="$( (unset COMPOSE_PROFILES; select_services) 2>&1 )"
+ok "cancelled picker keeps every service" \
+    "$(env_line COMPOSE_PROFILES)" "COMPOSE_PROFILES=all"
+case "$out" in
+    *cancelled*) ok "  and says it was cancelled" yes yes ;;
+    *) ok "  and says it was cancelled" "$out" yes ;;
+esac
+
+# A value comes back: written verbatim, the picker owns the "all" collapse.
+stage_env
+pick_services() { echo "nextcloud,stremio"; }
 (unset COMPOSE_PROFILES; select_services) >/dev/null 2>&1
-ok "partial selection is comma-joined" \
+ok "picked selection is written" \
     "$(env_line COMPOSE_PROFILES)" "COMPOSE_PROFILES=nextcloud,stremio"
 
-ui_checklist() { printf 'immich-server\nnextcloud\nstremio\n'; }
 stage_env
+pick_services() { echo all; }
 (unset COMPOSE_PROFILES; select_services) >/dev/null 2>&1
-ok "full selection collapses to all" \
+ok "everything picked stays all" \
     "$(env_line COMPOSE_PROFILES)" "COMPOSE_PROFILES=all"
 
-ui_checklist() { printf ''; }
 stage_env
-(unset COMPOSE_PROFILES; select_services) >/dev/null 2>&1
-ok "empty selection writes core-only" \
+pick_services() { echo ""; }
+out="$( (unset COMPOSE_PROFILES; select_services) 2>&1 )"
+ok "nothing picked writes core-only" \
     "$(env_line COMPOSE_PROFILES)" "COMPOSE_PROFILES="
+case "$out" in
+    *WARNING*) ok "  and warns about it" yes yes ;;
+    *) ok "  and warns about it" "$out" yes ;;
+esac
 
-ui_checklist() { return 1; }
+# The rule that guards every other value guards this one too.
 stage_env
-(unset COMPOSE_PROFILES; select_services) >/dev/null 2>&1
-ok "cancelled checklist keeps every service" \
-    "$(env_line COMPOSE_PROFILES)" "COMPOSE_PROFILES=all"
-
-docker() { printf ''; }
-ui_checklist() { echo should-not-run; return 1; }
-stage_env
-ok "unlistable profiles keep every service" \
-    "$( (unset COMPOSE_PROFILES; select_services) >/dev/null 2>&1; env_line COMPOSE_PROFILES )" \
-    "COMPOSE_PROFILES=all"
+pick_services() { printf 'bad$value\n'; }
+expect_die "an unsafe picked value dies" "COMPOSE_PROFILES" \
+    '(unset COMPOSE_PROFILES; select_services)'
 
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]
