@@ -219,8 +219,8 @@ An install whose `.env` predates this feature (no `COMPOSE_PROFILES` line) keeps
 ```bash
 make config              # Interactive checklist — the comfortable path
 make services            # List each optional service and whether it is enabled
-make enable s=stremio    # Add it to COMPOSE_PROFILES and start it (plus dependencies)
-make disable s=stremio   # Remove it from COMPOSE_PROFILES and stop it
+make enable stremio      # Add it to COMPOSE_PROFILES and start it (plus dependencies)
+make disable stremio     # Remove it from COMPOSE_PROFILES and stop it
 ```
 
 `make config` opens a terminal picker listing every optional service (ticked = currently enabled, including auto-enabled dependencies); on confirm it rewrites `COMPOSE_PROFILES` and starts/stops whatever changed. Services are listed under the section they belong to, and one that is pointless on its own is indented under the service it belongs to:

@@ -21,10 +21,18 @@ SUDO         := $(if $(filter 0,$(shell id -u)),,sudo)
 # there, so sudo's secure_path no longer covers it either.
 SYSCTL       := $(firstword $(wildcard /usr/sbin/sysctl /sbin/sysctl) sysctl)
 
-ifeq (headscale-register,$(firstword $(MAKECMDGOALS)))
-HEADSCALE_KEY := $(word 2,$(MAKECMDGOALS))
-$(eval $(HEADSCALE_KEY):;@:)
+# A second word on the command line is an argument, not a target: `make enable
+# stremio` reads better than `make enable s=stremio`, and the pi-pcloud command
+# can then pass its own arguments straight through. The stub rule keeps make
+# from trying to build that word as a goal; s=<service> still works.
+ifneq (,$(filter enable disable headscale-register,$(firstword $(MAKECMDGOALS))))
+GOAL_ARG := $(word 2,$(MAKECMDGOALS))
+ifneq (,$(GOAL_ARG))
+$(eval $(GOAL_ARG):;@:)
 endif
+endif
+SERVICE       := $(if $(s),$(s),$(GOAL_ARG))
+HEADSCALE_KEY := $(GOAL_ARG)
 
 help:
 	@echo "Commands:"
@@ -36,8 +44,8 @@ help:
 	@echo "  status           Show systemd status"
 	@echo "  logs             Follow compose logs"
 	@echo "  services         List optional services and whether each is enabled"
-	@echo "  enable s=<name>  Enable an optional service (updates COMPOSE_PROFILES, starts it, runs its init hooks)"
-	@echo "  disable s=<name> Disable an optional service (updates COMPOSE_PROFILES, stops it)"
+	@echo "  enable <name>    Enable an optional service (updates COMPOSE_PROFILES, starts it, runs its init hooks)"
+	@echo "  disable <name>   Disable an optional service (updates COMPOSE_PROFILES, stops it)"
 	@echo "  config           Interactive checklist to choose which services run"
 	@echo "  doctor           Report anything outside its threshold (disk, RAM, temp, containers, backups)"
 	@echo "  preflight        Quick env readiness check"
@@ -216,10 +224,10 @@ services:
 	@/bin/sh scripts/services.sh list
 
 enable:
-	@/bin/sh scripts/services.sh enable "$(s)"
+	@/bin/sh scripts/services.sh enable "$(SERVICE)"
 
 disable:
-	@/bin/sh scripts/services.sh disable "$(s)"
+	@/bin/sh scripts/services.sh disable "$(SERVICE)"
 
 config:
 	@/bin/sh scripts/services.sh config

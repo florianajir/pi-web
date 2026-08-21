@@ -6,12 +6,12 @@
 
 ```bash
 pi-pcloud config             # same as `make config`
-pi-pcloud enable stremio     # same as `make enable s=stremio`
+pi-pcloud enable stremio     # same as `make enable stremio`
 pi-pcloud status             # same as `make status`
 pi-pcloud                    # the command list
 ```
 
-It is a thin dispatcher onto the Makefile — same output, same exit code, and a target added there needs no change here. Tab completion covers both the commands and, after `enable` / `disable`, the service names (bash and zsh; open a new shell after installing).
+It is a thin dispatcher onto the Makefile — same output, same exit code, same arguments (both forms take the service name positionally; `s=<service>` still works with `make` for compatibility), and a target added there needs no change here. Tab completion covers both the commands and, after `enable` / `disable`, the service names (bash and zsh; open a new shell after installing).
 
 The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pull` updates it. Point `PI_PCLOUD_DIR` at another checkout to override which one it drives.
 
@@ -30,8 +30,8 @@ Run these from the pi-pcloud directory (`/opt/pi-pcloud`), or use the `pi-pcloud
 | `make status` | Show stack status and port bindings |
 | `make logs` | Follow live logs |
 | `make services` | List optional services and whether each is enabled (`COMPOSE_PROFILES`) |
-| `make enable s=<service>` | Enable an optional service: update `COMPOSE_PROFILES` in `.env`, start it, run its init hooks |
-| `make disable s=<service>` | Disable an optional service: update `COMPOSE_PROFILES` in `.env` and stop it |
+| `make enable <service>` | Enable an optional service: update `COMPOSE_PROFILES` in `.env`, start it, run its init hooks |
+| `make disable <service>` | Disable an optional service: update `COMPOSE_PROFILES` in `.env` and stop it |
 | `make config` | Interactive checklist to choose which optional services run |
 | `make update` | `git pull` + restart |
 | `make doctor` | Report anything outside its threshold: disk, RAM, swap, temperature, load, containers, restarts, backups |
@@ -72,8 +72,8 @@ make restart
 ```bash
 make services                           # What is enabled right now?
 make config                             # Interactive checklist (whiptail)
-make enable s=stremio                   # Auto-starts gluetun too, runs init hooks
-make disable s=n8n
+make enable stremio                     # Auto-starts gluetun too, runs init hooks
+make disable n8n
 ```
 
 **View service logs:**
