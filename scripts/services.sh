@@ -138,7 +138,7 @@ validate_service() {
     _cmd="$2"
     _known="$3"
     if [ -z "$_svc" ]; then
-        echo "❌ Usage: services.sh $_cmd <service> (make $_cmd s=<service>). Valid services:" >&2
+        echo "❌ Usage: pi-pcloud $_cmd <service> (or make $_cmd <service>). Valid services:" >&2
         printf '%s\n' "$_known" | sed 's/^/  - /' >&2
         exit 1
     fi

@@ -6,11 +6,10 @@
 #   pi-pcloud start | stop | status | logs | doctor | services | ...
 #
 # A dispatcher, not a second implementation: the Makefile stays the single
-# source of truth and every command is forwarded to it, so a target added there
-# is reachable here without touching this file. Only the commands whose
-# arguments read better positionally are translated (`enable stremio` instead
-# of `s=stremio`); everything else is passed through after being checked
-# against make itself.
+# source of truth and every command is forwarded to it verbatim, so a target
+# added there is reachable here without touching this file. Arguments need no
+# translation either — the Makefile takes them positionally — which leaves
+# nothing here to drift.
 #
 # Installed by `make install` as a symlink in /usr/local/bin, so the command
 # follows the checkout it points at: a `git pull` updates it too, and there is
@@ -84,14 +83,6 @@ case "$cmd" in
     # Hidden, for the completion scripts.
     --list-commands) list_commands ;;
     --list-services) list_services ;;
-    enable | disable)
-        [ "$#" -eq 1 ] || die "usage: pi-pcloud $cmd <service>"
-        run_make "$cmd" "s=$1"
-        ;;
-    headscale-register)
-        [ "$#" -eq 1 ] || die "usage: pi-pcloud headscale-register <key>"
-        run_make headscale-register "$1"
-        ;;
     *)
         # Checked by asking make, not by keeping a copy of its target list;
         # only the status matters, so a translated error message cannot break

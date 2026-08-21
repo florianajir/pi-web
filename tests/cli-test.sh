@@ -34,6 +34,7 @@ for arg in "$@"; do
         target="$(eval printf '%s' "\${$#}")"
         case "$target" in
             start | stop | status | logs | config | services | doctor) exit 0 ;;
+            enable | disable | headscale-register) exit 0 ;;
             *) exit 1 ;;
         esac
     fi
@@ -53,21 +54,14 @@ ok "help is forwarded"        "$(cli help)"     "MAKE --no-print-directory -C $R
 ok "a plain command passes"   "$(cli status)"   "MAKE --no-print-directory -C $REPO_DIR status"
 ok "logs passes through"      "$(cli logs)"     "MAKE --no-print-directory -C $REPO_DIR logs"
 
-# The argument shape this command exists for: positional, not s=<service>.
+# Arguments reach make untouched: the Makefile takes them positionally, so
+# there is no s=<service> translation left in the wrapper to get wrong.
 ok "enable takes a service"   "$(cli enable stremio)" \
-    "MAKE --no-print-directory -C $REPO_DIR enable s=stremio"
+    "MAKE --no-print-directory -C $REPO_DIR enable stremio"
 ok "disable takes a service"  "$(cli disable stremio)" \
-    "MAKE --no-print-directory -C $REPO_DIR disable s=stremio"
-
-case "$(cli enable)" in
-    *"usage: pi-pcloud enable"*) ok "enable without a service explains itself" yes yes ;;
-    *) ok "enable without a service explains itself" "$(cli enable)" yes ;;
-esac
-case "$(cli enable a b)" in
-    *"usage: pi-pcloud enable"*) ok "enable refuses two services" yes yes ;;
-    *) ok "enable refuses two services" "$(cli enable a b)" yes ;;
-esac
-
+    "MAKE --no-print-directory -C $REPO_DIR disable stremio"
+ok "enable without a service still forwards" "$(cli enable)" \
+    "MAKE --no-print-directory -C $REPO_DIR enable"
 ok "headscale-register takes a key" "$(cli headscale-register abc123)" \
     "MAKE --no-print-directory -C $REPO_DIR headscale-register abc123"
 
