@@ -1,100 +1,102 @@
+<div align="center">
+
 # pi-pcloud
+
+**Your own private cloud, on a Raspberry Pi.**
+Photos, files, passwords, VPN, ad-blocking DNS, backups and monitoring — one command, no subscription, no vendor.
 
 [![CI](https://github.com/florianajir/pi-pcloud/actions/workflows/ci.yml/badge.svg)](https://github.com/florianajir/pi-pcloud/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/florianajir/pi-pcloud/actions/workflows/codeql.yml/badge.svg)](https://github.com/florianajir/pi-pcloud/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Dependabot](https://badgen.net/badge/icon/dependabot?icon=dependabot&label)](https://github.com/florianajir/pi-pcloud/actions/workflows/dependabot/dependabot-updates)
 
-A production-ready, privacy-focused web stack for Raspberry Pi—from DNS filtering to personal cloud—deployed in minutes.
+[Quick start](#quick-start) · [What you get](#what-you-get) · [Documentation](docs/README.md)
 
-pi-pcloud bundles the hard parts (HTTPS, SSO, private DNS, VPN, backups, and monitoring) into a clean Docker Compose setup you can audit, customize, and run on standard Linux.
+</div>
 
-## Why pi-pcloud?
+---
 
-If you're deciding between approaches, here's the short version:
-
-- **Vs installing apps manually:** pi-pcloud saves days of integration work by shipping a pre-wired stack (Traefik, Authelia, LLDAP, Postgres, Redis, backups, and monitoring) that works together out of the box.
-- **Vs Umbrel or CasaOS:** pi-pcloud is **lightweight and transparent**—no proprietary host OS, no app-store lock-in, just pure Docker Compose and readable config files.
-- **For long-term ownership:** everything is Git-friendly and scriptable, so installs, updates, and recovery stay repeatable.
-
-## Stack Overview
-
-| Category | Services |
-|----------|----------|
-| **Cloud & Storage** | Nextcloud, Immich, n8n, Ntfy, Vaultwarden (Bitwarden-compatible password manager) |
-| **Network & Security** | Traefik (reverse proxy), Tailscale/Headscale + Headplane (VPN), Authelia (SSO), LLDAP (user directory) |
-| **DNS & Filtering** | Pi-hole (ad-blocking), Unbound (recursive DNS) |
-| **Download & Media** | qBittorrent (torrent client), Prowlarr (indexer manager), Kapowarr (comics manager), Kavita (comics/ebook reader), Stremio + Comet (streaming), FlareSolverr (Cloudflare solver), Gluetun (VPN kill-switch gateway) |
-| **AI** | Open WebUI (chat interface), llama.cpp (local Gemma 4 E2B inference, CPU-only), Piper (text-to-speech), Parakeet (multilingual speech-to-text), system status tools |
-| **Monitoring & Backup** | Beszel (metrics & alerts), Uptime Kuma (uptime checks), Homepage (dashboard), Backrest (restic backups), Dockhand (container management) |
-| **Infrastructure** | PostgreSQL, Redis (Valkey), ddns-updater |
-
-You don't have to run all of it: core infrastructure always starts, and every other service can be switched on or off per-install with `make enable` / `make disable` (Docker Compose profiles) — see [Choosing which services run](docs/CONFIGURATION.md#choosing-which-services-run).
-
-## Requirements
-
-**Hardware:**
-- Raspberry Pi 5 (8GB RAM minimum, **16GB RAM recommended** for the full stack)
-- Storage: NVMe SSD HAT recommended (MicroSD cards degrade quickly under continuous I/O)
-- S3-compatible bucket (or equivalent) recommended for off-site Backrest backups
-
-**Prerequisites:**
-- Domain name + Cloudflare account (free tier OK)
-- Cloudflare API token with DNS edit permissions
-- Docker & Docker Compose installed
-
-**Router port forwarding:**
-
-| Port | Protocol | Service | Purpose |
-|------|----------|---------|---------|
-| `443` | TCP | Traefik | HTTPS access to web services |
-| `41641` | UDP | Tailscale/Headscale | WireGuard VPN tunnel |
-| `3478` | UDP | Tailscale/Headscale | STUN — peer-to-peer traversal |
-
-> Only `443` is required for basic HTTPS access. `41641` and `3478` are needed for direct VPN connections via Headscale.
-
-## Quick Start
-
-One-liner — checks prerequisites, clones into `~/pi-pcloud`, prompts for the required settings (network layout and timezone are auto-detected), then deploys:
+## Quick start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/florianajir/pi-pcloud/main/install.sh | sh
 ```
 
-Or manually:
+The installer checks prerequisites, clones the repo, asks only for what it cannot detect (domain, Cloudflare token, admin password), lets you pick which services to run, and deploys. Expect 5–10 minutes on a Pi 5.
 
-```bash
-git clone https://github.com/florianajir/pi-pcloud.git
-cd pi-pcloud
-cp .env.dist .env                   # Edit with your values
-make preflight                      # Verify prerequisites
-make install                        # Deploy stack
-make logs                           # Follow startup logs
-```
+Then open `https://lldap.<HOST_NAME>` to create your users, and `https://auth.<HOST_NAME>` to log in.
 
-After first start, visit `https://lldap.<YOUR_DOMAIN>` (login `admin` / your `PASSWORD`) to create users, then log in to services through the SSO portal at `https://auth.<YOUR_DOMAIN>`.
+Prefer doing it by hand? See the [Installation guide](docs/INSTALLATION.md).
 
-## Usage
+## What you get
+
+- **One login for everything.** Authelia SSO + LLDAP directory, with 2FA on the admin surfaces. Services speak OIDC where they can, forward-auth where they can't.
+- **Real HTTPS, everywhere.** Traefik terminates TLS with wildcard Let's Encrypt certificates issued over the Cloudflare DNS challenge, so nothing but `443` ever has to reach the internet.
+- **Private DNS.** Pi-hole filters ads and trackers for your whole LAN; Unbound resolves recursively from the root servers, so no DNS provider sees your queries.
+- **Reachable from anywhere, exposed to no one.** Headscale runs your own Tailscale control plane; everything but the login portal is restricted to your LAN and your tailnet.
+- **Backups you can restore.** Backrest (restic) snapshots app data and databases nightly, encrypted and deduplicated, to any S3-compatible bucket.
+- **Alerts on your phone.** Beszel watches the hardware, Uptime Kuma watches the services *through* Traefik, and everything pushes to ntfy — split into muteable topics.
+- **A local AI assistant.** Open WebUI on top of llama.cpp, with speech in and out, running entirely on the Pi's CPU. It can even report the machine's own health.
+
+### Why not something else?
+
+| | pi-pcloud | Manual install | Umbrel / CasaOS |
+|---|---|---|---|
+| Setup effort | one command | days of glue work | one command |
+| HTTPS + SSO + DNS pre-wired | ✅ | ❌ | partial |
+| Plain Docker Compose you can read | ✅ | ✅ | ❌ app store |
+| Runs on standard Linux, no custom OS | ✅ | ✅ | ❌ |
+| Reproducible from Git, scriptable | ✅ | depends | ❌ |
+
+## The stack
+
+| Category | Services |
+|----------|----------|
+| **Cloud & storage** | Nextcloud, Immich, Vaultwarden, n8n, ntfy |
+| **Network & access** | Traefik, Authelia, LLDAP, Headscale + Headplane, Tailscale |
+| **DNS & filtering** | Pi-hole, Unbound |
+| **Download & media** | qBittorrent, Prowlarr, Kapowarr, Kavita, Stremio + Comet, FlareSolverr, Gluetun |
+| **AI** | Open WebUI, llama.cpp, Piper (TTS), Parakeet (STT), system-tools |
+| **Monitoring & backup** | Beszel, Uptime Kuma, Homepage, Backrest, Dockhand |
+| **Infrastructure** | PostgreSQL, Redis (Valkey), ddns-updater |
+
+You don't have to run all of it. Core infrastructure always starts; every other service is toggled per-install with `make enable` / `make disable`, or the `make config` checklist — see [Choosing which services run](docs/CONFIGURATION.md#choosing-which-services-run).
+
+## Requirements
+
+| | |
+|---|---|
+| **Hardware** | Raspberry Pi 5, 8 GB RAM minimum — 16 GB recommended for the full stack |
+| **Storage** | NVMe SSD HAT recommended (MicroSD degrades fast under continuous I/O) |
+| **Domain** | A domain on Cloudflare (free tier) + an API token with `Zone → DNS → Edit` |
+| **Software** | Docker and the Compose plugin — the installer offers to add them |
+| **Router** | Forward `443/tcp`. Optionally `41641/udp` and `3478/udp` for direct VPN links |
+| **Off-site backup** | An S3-compatible bucket (optional but recommended) |
+
+## Everyday use
+
+`make install` puts a `pi-pcloud` command on your `PATH`, so these work from any directory (`pi-pcloud status` = `make status`).
 
 | Task | Command |
 |------|---------|
-| Start/stop stack | `make start` / `make stop` |
-| View logs | `make logs` |
-| Stack status | `make status` |
-| Register Tailscale device | `make headscale-register <key>` |
-| Full command reference | See [docs/COMMANDS.md](docs/COMMANDS.md) |
+| Start / stop | `make start` / `make stop` |
+| Follow logs | `make logs` |
+| Health at a glance | `make status`, `make doctor` |
+| Turn a service on/off | `make enable <service>` / `make disable <service>` |
+| Update code and images | `make update` |
+
+Full list: [Commands reference](docs/COMMANDS.md).
 
 ## Documentation
 
-- **[Installation Guide](docs/INSTALLATION.md)** — Detailed setup, hardware requirements, and prerequisites
-- **[Architecture](docs/ARCHITECTURE.md)** — System design, service interactions, networking diagrams
-- **[Security & Authentication](docs/SECURITY.md)** — Authentication flows, OIDC, access control, encryption
-- **[Configuration](docs/CONFIGURATION.md)** — All environment variables, secrets, and customization options
-- **[Monitoring & Alerts](docs/MONITORING.md)** — Beszel setup, alerts, and backup strategy
-- **[Email & Notifications](docs/EMAIL.md)** — SMTP configuration, Ntfy push notifications
-- **[Networking](docs/NETWORKING.md)** — DNS architecture, Tailscale/Headscale, network segmentation
-- **[Tailscale Setup](docs/TAILSCALE.md)** — Connecting devices, MagicDNS, split DNS configuration
-- **[Development](AGENTS.md)** — Guidelines for contributing
+Everything lives in **[docs/](docs/README.md)** — start there. The pages people open first:
+
+[Installation](docs/INSTALLATION.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Security](docs/SECURITY.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
+
+## Contributing
+
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [AGENTS.md](AGENTS.md) for the conventions this repository holds itself to.
 
 ## License
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[MIT](LICENSE) © Florian Ajir
