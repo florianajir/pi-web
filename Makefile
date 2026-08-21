@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs doctor preflight check-env print-required-vars test services enable disable config headscale-register headscale-reset rotate-password rotate-password-full
+.PHONY: help install uninstall start stop restart update status logs doctor preflight check-env print-required-vars test services enable disable config headscale-register headscale-reset rotate-password rotate-password-full
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -41,6 +41,7 @@ help:
 	@echo "  start            Start stack"
 	@echo "  stop             Stop stack"
 	@echo "  restart          Restart stack"
+	@echo "  update           Pull the repository and updated images, rebuild, restart"
 	@echo "  status           Show systemd status"
 	@echo "  logs             Follow compose logs"
 	@echo "  services         List optional services and whether each is enabled"
@@ -199,10 +200,24 @@ stop:
 
 restart: stop start
 
+# Images are refreshed while the stack is still running, so the interruption is
+# one restart instead of a download. `pull` only covers the services the
+# current COMPOSE_PROFILES selects, and skips the five images built here, which
+# `build --pull` rebuilds against their updated bases. Pruning at the end
+# reclaims the layers the recreated containers just released — dangling images
+# only, so nothing a container still references is touched.
 update:
-	@echo "🔄 Update (git pull + restart)"
+	@echo "🔄 Updating pi-pcloud..."
+	@branch=$$(git rev-parse --abbrev-ref HEAD); 	if [ "$$branch" != "main" ]; then echo "  ⚠ on branch $$branch, not main"; fi
+	@echo "📥 Repository..."
 	@git pull --ff-only
+	@echo "📦 Images (the stack keeps running)..."
+	@$(COMPOSE) pull --ignore-buildable
+	@echo "🔨 Locally built images..."
+	@$(COMPOSE) build --pull
 	$(MAKE) restart
+	@echo "🧹 Reclaiming space from the replaced images..."
+	@docker image prune -f | tail -n1
 	@echo "✅ Update complete"
 
 status:
