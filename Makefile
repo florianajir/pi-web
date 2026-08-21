@@ -1,4 +1,4 @@
-.PHONY: help install uninstall start stop restart status logs doctor preflight check-env print-required-vars test headscale-register headscale-reset rotate-password rotate-password-full
+.PHONY: help install uninstall start stop restart status logs doctor preflight check-env print-required-vars test services enable disable config headscale-register headscale-reset rotate-password rotate-password-full
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -30,6 +30,10 @@ help:
 	@echo "  restart          Restart stack"
 	@echo "  status           Show systemd status"
 	@echo "  logs             Follow compose logs"
+	@echo "  services         List optional services and whether each is enabled"
+	@echo "  enable s=<name>  Enable an optional service (updates COMPOSE_PROFILES, starts it, runs its init hooks)"
+	@echo "  disable s=<name> Disable an optional service (updates COMPOSE_PROFILES, stops it)"
+	@echo "  config           Interactive checklist to choose which services run"
 	@echo "  doctor           Report anything outside its threshold (disk, RAM, temp, containers, backups)"
 	@echo "  preflight        Quick env readiness check"
 	@echo "  headscale-register <key> Register a headscale node"
@@ -98,7 +102,8 @@ install: check-env
 	$(SUDO) cp /tmp/$(UNIT) /etc/systemd/system/
 	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/$(WATCH_UNIT) > /tmp/$(WATCH_UNIT)
 	$(SUDO) cp /tmp/$(WATCH_UNIT) /etc/systemd/system/
-	$(SUDO) cp config/systemd/system/nextcloud-cron.service /etc/systemd/system/
+	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/nextcloud-cron.service > /tmp/nextcloud-cron.service
+	$(SUDO) cp /tmp/nextcloud-cron.service /etc/systemd/system/
 	$(SUDO) cp config/systemd/system/nextcloud-cron.timer /etc/systemd/system/
 	$(SUDO) systemctl daemon-reload
 	$(SUDO) systemctl enable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer
@@ -184,6 +189,24 @@ status:
 logs:
 	@echo "📝 Logs (Ctrl+C to exit)"
 	$(COMPOSE) logs -f --tail=100
+
+# Optional services are toggled through Docker Compose profiles: every optional
+# service carries a profile named after itself (plus the catch-all "all"), and
+# COMPOSE_PROFILES in .env selects which run. All the logic (enabled-ness
+# computation, .env rewriting, the per-service pre-start/bootstrap hooks and
+# the interactive checklist) lives in scripts/services.sh — these targets are
+# thin wrappers around it.
+services:
+	@/bin/sh scripts/services.sh list
+
+enable:
+	@/bin/sh scripts/services.sh enable "$(s)"
+
+disable:
+	@/bin/sh scripts/services.sh disable "$(s)"
+
+config:
+	@/bin/sh scripts/services.sh config
 
 # The same endpoint the assistant calls for the `anomalies` topic, so the shell
 # and the chat cannot disagree. Asked from inside the container because

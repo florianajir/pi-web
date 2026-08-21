@@ -5,4 +5,8 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
+# Skip the run when the nextcloud service is disabled via COMPOSE_PROFILES
+# (exit 1 marks the run "skipped", not failed). No EnvironmentFile= here:
+# run-if-enabled.sh reads COMPOSE_PROFILES from the project .env itself.
+ExecCondition=/bin/sh __PROJECT_PATH__/scripts/run-if-enabled.sh nextcloud
 ExecStart=/usr/bin/docker exec -u www-data pi-nextcloud php -f /var/www/html/cron.php

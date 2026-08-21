@@ -14,6 +14,10 @@ Run all commands from the pi-pcloud directory: `/opt/pi-pcloud`
 | `make restart` | Restart all services (after config changes) |
 | `make status` | Show stack status and port bindings |
 | `make logs` | Follow live logs |
+| `make services` | List optional services and whether each is enabled (`COMPOSE_PROFILES`) |
+| `make enable s=<service>` | Enable an optional service: update `COMPOSE_PROFILES` in `.env`, start it, run its init hooks |
+| `make disable s=<service>` | Disable an optional service: update `COMPOSE_PROFILES` in `.env` and stop it |
+| `make config` | Interactive checklist to choose which optional services run |
 | `make update` | `git pull` + restart |
 | `make doctor` | Report anything outside its threshold: disk, RAM, swap, temperature, load, containers, restarts, backups |
 | `make check-env` | Validate required `.env` variables |
@@ -47,6 +51,14 @@ make logs
 **After editing `.env`:**
 ```bash
 make restart
+```
+
+**Toggle optional services** (see [Configuration → Choosing which services run](CONFIGURATION.md#choosing-which-services-run)):
+```bash
+make services                           # What is enabled right now?
+make config                             # Interactive checklist (whiptail)
+make enable s=stremio                   # Auto-starts gluetun too, runs init hooks
+make disable s=n8n
 ```
 
 **View service logs:**

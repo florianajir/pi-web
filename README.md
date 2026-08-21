@@ -28,6 +28,8 @@ If you're deciding between approaches, here's the short version:
 | **Monitoring & Backup** | Beszel (metrics & alerts), Uptime Kuma (uptime checks), Homepage (dashboard), Backrest (restic backups), Dockhand (container management) |
 | **Infrastructure** | PostgreSQL, Redis (Valkey), ddns-updater |
 
+You don't have to run all of it: core infrastructure always starts, and every other service can be switched on or off per-install with `make enable` / `make disable` (Docker Compose profiles) — see [Choosing which services run](docs/CONFIGURATION.md#choosing-which-services-run).
+
 ## Requirements
 
 **Hardware:**
