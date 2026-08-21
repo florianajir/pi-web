@@ -1,141 +1,101 @@
 # Networking & DNS
 
-## DNS Architecture
+## The DNS pipeline
 
-This stack implements a privacy-first, recursive DNS pipeline. No third-party DNS provider sees your LAN queries (public resolvers are configured only as failover if Unbound stops answering — see `PIHOLE_DNS_UPSTREAMS`).
+No third-party resolver sees your LAN queries. Pi-hole filters, Unbound resolves recursively from the root servers; the public resolvers in `PIHOLE_DNS_UPSTREAMS` are failover only, for when Unbound stops answering.
 
 ```mermaid
 sequenceDiagram
-    participant C as Client (LAN / Tailscale)
+    participant C as Client (LAN / tailnet)
     participant P as Pi-hole
     participant U as Unbound
-    participant R as Root & TLD Servers
+    participant R as Root & TLD servers
 
-    C->>P: DNS query (e.g. cloudflare.com)
+    C->>P: DNS query
     alt Domain is blocked
-        P-->>C: Blocked (ad/tracker)
+        P-->>C: Blocked (ad / tracker)
     else Domain is allowed
-        P->>U: Forward query
+        P->>U: Forward
         U->>R: Recursive resolution
         R-->>U: Authoritative answer
         U-->>P: Resolved IP
-        P-->>C: DNS response
+        P-->>C: Response
     end
 ```
-
-**Pi-hole** — ad/tracker filtering, local DNS for `*.<HOST_NAME>`, caching. Listens on the host's port 53 and on its own macvlan IP (`PIHOLE_IP`).
-
-**Unbound** — recursive resolver; walks the delegation tree from the root servers itself, so no upstream provider sees the queries. Reached only by Pi-hole.
 
 | Container | Address | Networks | Role |
 |-----------|---------|----------|------|
 | **Pi-hole** | host `:53` + `${PIHOLE_IP}` (macvlan) | `dns_internal`, `frontend`, `lan` | Filtering, local DNS, web UI on 8082 |
-| **Unbound** | `172.30.53.53:5335` | `dns_internal` (no internet), `dns_egress` | Recursive resolution |
+| **Unbound** | `172.30.53.53:5335` | `dns_internal` (no gateway), `dns_egress` | Recursive resolution |
 
-`dns_internal` is an internal bridge (no gateway); Unbound's internet access for root-server queries goes through the separate `dns_egress` network. Other containers cannot reach Unbound directly, so nothing can bypass Pi-hole's filtering.
+`dns_internal` is an internal bridge with no gateway; Unbound's own internet access for root-server queries goes through the separate `dns_egress` network. No other container can reach Unbound, so nothing can bypass Pi-hole's filtering.
 
-## Local DNS Records
+## Local names
 
-Pi-hole answers `<HOST_NAME>` and every `*.<HOST_NAME>` subdomain with the Pi's LAN IP (`FTLCONF_misc_dnsmasq_lines: address=/${HOST_NAME}/${HOST_LAN_IP}` in `compose.yaml`). Traefik then routes by `Host` header. So on the LAN and on the VPN, `nextcloud.<HOST_NAME>` resolves to the Pi itself — never to a container IP.
+Pi-hole answers `<HOST_NAME>` and every `*.<HOST_NAME>` subdomain with the Pi's LAN IP (`FTLCONF_misc_dnsmasq_lines: address=/${HOST_NAME}/${HOST_LAN_IP}`). Traefik then routes by `Host` header. So on the LAN and on the VPN, `nextcloud.<HOST_NAME>` resolves to the Pi itself — never to a container IP, and always with a valid certificate.
 
-`make install` also writes a `headscale.<HOST_NAME> → ${HOST_LAN_IP}` override into the Pi's own `/etc/hosts`, so the local `tailscale` container can reach its control plane without hairpinning through the WAN.
+`make install` also writes a `headscale.<HOST_NAME> → ${HOST_LAN_IP}` record into the Pi's own `/etc/hosts`, so the local `tailscale` container reaches its control plane without hairpinning through the WAN.
 
-## macvlan Interface (Physical LAN)
+## Pi-hole on the physical LAN
 
-Pi-hole has a dedicated IP on your home LAN so devices can use it as their DNS server directly:
+Pi-hole gets its own address on your home network, so devices can point at it directly:
 
 ```env
-HOST_LAN_PARENT=eth0                    # Physical interface
-HOST_LAN_SUBNET=192.168.1.0/24          # Your home network CIDR
-PIHOLE_IP=192.168.1.250                 # Pi-hole's static IP (outside DHCP range)
+HOST_LAN_PARENT=eth0                    # physical interface — must be wired
+HOST_LAN_SUBNET=192.168.1.0/24
+PIHOLE_IP=192.168.1.250                 # outside the DHCP range
 ```
 
-Set your router's DHCP DNS option to `PIHOLE_IP` (or configure devices manually). A macvlan caveat: the Docker host itself cannot reach a macvlan IP over the parent interface — Pi-hole is also published on the host's port 53 for that.
+Set your router's DHCP DNS option to `PIHOLE_IP`, or configure devices by hand. One macvlan caveat: **the Docker host itself cannot reach a macvlan IP** over the parent interface, which is why Pi-hole is also published on the host's port 53.
 
-## DNS for Containers
+## DNS inside containers
 
-Containers use Docker's embedded resolver (`127.0.0.11`), which forwards to the host's DNS configuration. Exceptions: `prowlarr` and `flaresolverr` pin public resolvers (`dns: 1.1.1.1`) directly in `compose.yaml` so indexer lookups don't depend on — and aren't filtered by — Pi-hole.
+Containers use Docker's embedded resolver (`127.0.0.11`), which forwards to the host's configuration. Two exceptions pin public resolvers directly in `compose.yaml` (`dns: 1.1.1.1`): **`prowlarr`** and **`flaresolverr`**, so indexer lookups neither depend on nor are filtered by Pi-hole.
 
-## DNS from the VPN
+## DNS on the VPN
 
-Headscale pushes DNS to all clients (see `config/headscale/config.yaml`):
+Headscale pushes DNS to every client (`config/headscale/config.yaml`):
 
-- **Global nameserver** `100.64.0.1` — the Pi's own tailnet IP, so every query from a VPN client travels the WireGuard tunnel to Pi-hole. Ad blocking works everywhere.
+- **Global nameserver `100.64.0.1`** — the Pi's own tailnet IP, so every query from a VPN client travels the WireGuard tunnel to Pi-hole. Ad blocking follows the device everywhere.
 - **Split DNS** for `<HOST_NAME>` pointing at the same address, plus **MagicDNS** under `tailnet.<HOST_NAME>`.
 
-Since Pi-hole resolves `*.<HOST_NAME>` to the Pi's IP, all services work from the VPN with valid TLS via Traefik.
+Since Pi-hole resolves `*.<HOST_NAME>` to the Pi, every service works from the VPN with valid TLS. See [Tailscale](TAILSCALE.md).
 
-## Network Isolation
+## Network isolation
 
-| Network | Subnet | Who's on it | Purpose |
-|---------|--------|-------------|---------|
+| Network | Subnet | Members | Purpose |
+|---------|--------|---------|---------|
 | `frontend` | `172.30.11.0/24` (Traefik at `.250`) | Traefik + every routed service | The only network Traefik proxies to |
-| `auth` | internal | Authelia, LLDAP, Postgres, Redis | LDAP and auth traffic never crosses app networks |
-| `nextcloud`, `immich`, `ai`, `vault`, `ntfy` | internal | each app + its backends | Per-app isolation; `vault` deliberately has no path to LLDAP |
+| `auth` | internal | Authelia, LLDAP, Postgres, Redis | LDAP and auth traffic never crosses an app network |
+| `nextcloud`, `immich`, `ai`, `vault`, `ntfy` | internal | each app + its own backends | Per-app isolation; `vault` deliberately has no path to LLDAP |
 | `dns_internal` | `172.30.53.0/24`, no gateway | Pi-hole, Unbound | Nothing else can query Unbound |
 | `dns_egress` | bridge | Unbound, immich-machine-learning | Outbound-only internet access |
 | `lan` | macvlan on `HOST_LAN_PARENT` | Pi-hole | Direct LAN presence for DNS |
 | `n8n_runners` | bridge | n8n, n8n-runners | Task-runner traffic |
 
-**Effect:** a compromised app container cannot query Unbound directly, cannot reach LLDAP, and cannot see another app's database traffic.
-
-## Exposed Ports
+## Ports
 
 | Port | Protocol | Service | Scope |
 |------|----------|---------|-------|
 | 80 | TCP | Traefik | HTTP → HTTPS redirect only |
-| 443 | TCP | Traefik | HTTPS for all web services |
-| 53 | TCP/UDP | Pi-hole | Host + macvlan IP, LAN/VPN DNS |
-| 3478 | UDP | Headscale | STUN (embedded DERP relay) |
+| 443 | TCP | Traefik | HTTPS for every web service |
+| 53 | TCP/UDP | Pi-hole | Host + macvlan IP, for LAN and VPN clients |
+| 3478 | UDP | Headscale | STUN, via the embedded DERP relay |
 | 41641 | UDP | Tailscale (host network) | WireGuard |
 
-Everything else (`5432` Postgres, `6379` Redis, `3890` LDAP, app ports) is `expose`-only inside Docker networks, never published on the host.
+Everything else — Postgres `5432`, Redis `6379`, LDAP `3890`, every app port — is `expose`-only inside Docker networks and never published on the host.
 
-**Router port forwarding:** only `443/tcp` is required for HTTPS access (certificates use the Cloudflare DNS challenge, so 80 need not be reachable from outside). Forward `41641/udp` and `3478/udp` for direct VPN connections; without them traffic falls back to relayed paths.
+**On your router,** only `443/tcp` has to be forwarded: certificates use the Cloudflare DNS challenge, so port 80 need not be reachable from outside. Forward `41641/udp` and `3478/udp` as well for direct VPN connections; without them, traffic still works but rides the relay.
 
-## Cloudflare DNS Records
+## Cloudflare records
 
-ddns-updater maintains two records against your zone, keeping them pointed at your current public IP:
+ddns-updater maintains exactly two records against your zone, pointed at your current public IP. Nothing else needs creating by hand.
 
 ```
 <HOST_NAME>      A   <your-public-ip>
 *.<HOST_NAME>    A   <your-public-ip>
 ```
 
-Nothing else needs to be created by hand.
+---
 
-## Troubleshooting
-
-### DNS not resolving
-
-```bash
-docker compose logs pihole | tail -20
-nslookup example.com <PIHOLE_IP>         # from a LAN device
-```
-
-If devices aren't using Pi-hole, check the router's DHCP DNS setting or set it manually on one device to test.
-
-### Upstream resolution broken
-
-```bash
-docker compose logs unbound | tail -20
-docker compose exec unbound drill @127.0.0.1 -p 5335 cloudflare.com
-```
-
-The Uptime Kuma `dns resolution` monitor covers this chain continuously — see [Monitoring](MONITORING.md#what-is-actually-checked).
-
-### A link or a redirect leads nowhere
-
-Sponsored search results, newsletter links and affiliate links route through ad
-infrastructure, so the block lists catch them and the click dies on a blank page
-instead of just losing an ad. `scripts/pihole-bootstrap.sh` keeps an
-`ALLOW_LISTS` of the known offenders; add the domain there rather than only in
-the web UI, or the next rebuild loses it.
-
-To find the real culprit, check the Pi-hole query log for the click: the blocked
-domain is often not the one you typed. A status of *blocked (CNAME)* means an
-alias is at fault — `g.live.com` was blocked because it points at `g.msn.com`.
-
-### High DNS latency
-
-First queries are slower while Unbound walks the delegation tree; its cache warms up quickly. If latency stays high, check RAM pressure in Beszel and consider trimming very large blocklists in Pi-hole.
+DNS not resolving, links dying on a blank page, high latency? See [Troubleshooting → DNS](TROUBLESHOOTING.md#dns).
