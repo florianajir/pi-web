@@ -281,6 +281,11 @@ cmd_config() {
     for svc in $known; do
         if in_lines "$new_enabled" "$svc"; then
             in_lines "$old_enabled" "$svc" || newly_on="$newly_on $svc"
+            # Unchecked but still enabled: a checked service activates its
+            # profile too, so the box cannot be cleared on its own. Said here
+            # because the row comes back checked on the next run.
+            in_lines "$selection" "$svc" \
+                || echo "⚠️  $svc stays enabled: another selected service auto-activates it"
         else
             if in_lines "$old_enabled" "$svc"; then newly_off="$newly_off $svc"; fi
         fi
