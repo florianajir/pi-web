@@ -228,7 +228,7 @@ Choose which services run — applying starts and stops containers now
 24/24 enabled · Traefik, Authelia, Pi-hole, Headscale, Postgres … always run
 ── Download ──────────────────────────────────────────────────────────────
  [x] prowlarr                   Indexer manager
- [x]   flaresolverr             runs with prowlarr
+ [x]   flaresolverr             Cloudflare challenge solver for Prowlarr
  [x] qbittorrent                Torrent client (VPN protected)
 ── Video ─────────────────────────────────────────────────────────────────
  [x] stremio                    Streaming server (VPN protected)
@@ -241,7 +241,7 @@ Three things drive that layout, all read out of `compose.yaml` so the picker can
 |-------------------|---------|
 | `homepage.group=` | the section the service is listed under (same label the dashboard uses) |
 | `pi-pcloud.companion-of=` | pointless on its own — drawn indented under that service (`comet` under `stremio`, `immich-machine-learning` under `immich-server`) |
-| `homepage.description=` | the one-line description shown beside the service (a sidecar without one shows what it runs with) |
+| `homepage.description=` | the one-line description shown beside the service; without a `homepage.group` it stays off the dashboard, so a sidecar can be described without being listed there |
 | `profiles:` listing other services | cannot run without this one — `gluetun` for the containers sharing its network namespace |
 
 The last two are deliberately different relations. `qbittorrent` needs `gluetun` but is a service in its own right, so it stays under **Download** rather than being buried under the VPN; `comet` only makes sense with `stremio`, so it sits under it.

@@ -326,6 +326,7 @@ services:
     container_name: pi-beszel-agent
     profiles: ["beszel-agent", "all"]
     labels:
+      - "homepage.description=Host metrics collector for Beszel"
       - "pi-pcloud.companion-of=beszel"
     depends_on:
       beszel:
@@ -578,6 +579,7 @@ services:
     container_name: pi-n8n-runners
     profiles: ["n8n-runners", "all"]
     labels:
+      - "homepage.description=Sandboxed task runner for n8n"
       - "pi-pcloud.companion-of=n8n"
     environment:
       - N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679
@@ -761,6 +763,7 @@ services:
     container_name: pi-immich-machine-learning
     profiles: ["immich-machine-learning", "all"]
     labels:
+      - "homepage.description=Face and object recognition for Immich"
       - "pi-pcloud.companion-of=immich-server"
     image: ghcr.io/immich-app/immich-machine-learning:v3.1.0
     networks:
@@ -1303,6 +1306,7 @@ services:
     container_name: pi-flaresolverr
     profiles: ["flaresolverr", "prowlarr", "all"]
     labels:
+      - "homepage.description=Cloudflare challenge solver for Prowlarr"
       - "pi-pcloud.companion-of=prowlarr"
     networks:
       - frontend
