@@ -77,7 +77,6 @@ if [ -z "$defined" ] || service_enabled "$profiles" "$service"; then
     exec "$@"
 fi
 
-# Disabled.
 [ "$#" -gt 0 ] || exit 1
 echo "run-if-enabled: $service disabled (COMPOSE_PROFILES=$profiles), skipping: $*"
 exit 0

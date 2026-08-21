@@ -30,7 +30,7 @@
 # which .env compose happens to read.
 #
 # Host-only: this script is never mounted into containers, so sourcing
-# lib.sh is fine here (see docs/../scripts/lib.sh sharing constraints).
+# lib.sh is fine here (scripts that backrest mounts must not source it).
 
 set -eu
 
@@ -265,7 +265,6 @@ cmd_config() {
         return 0
     fi
 
-    # Compute the new COMPOSE_PROFILES value from the selection.
     selection="$(printf '%s\n' "$selection" | grep -v '^$' || true)"
     new_profiles="$(printf '%s\n' "$selection" | grep -v '^$' | paste -sd, - || true)"
     if [ "$(printf '%s\n' "$selection" | sort)" = "$known" ]; then
