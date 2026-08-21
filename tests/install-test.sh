@@ -259,5 +259,62 @@ for var in $(make -s -C "$REPO_DIR" print-required-vars); do
         "$([ -n "$(read_env_key "$ENV_FILE" "$var")" ] && echo yes || echo no)" yes
 done
 
+# --- select_services --------------------------------------------------------
+
+load_value_rules
+
+# An exported selection wins, is announced, and the .env value rule applies.
+stage_env
+(COMPOSE_PROFILES=stremio,nextcloud select_services) >/dev/null 2>&1
+ok "exported COMPOSE_PROFILES is written" \
+    "$(env_line COMPOSE_PROFILES)" "COMPOSE_PROFILES=stremio,nextcloud"
+expect_die "unsafe exported COMPOSE_PROFILES dies" "COMPOSE_PROFILES" \
+    'stage_env; COMPOSE_PROFILES="bad\$value" select_services'
+
+# Without whiptail (or a terminal) the .env.dist default stands: everything.
+stage_env
+use_whiptail() { return 1; }
+out="$( (unset COMPOSE_PROFILES; select_services) 2>&1 )"
+ok "non-interactive keeps every service" \
+    "$(env_line COMPOSE_PROFILES)" "COMPOSE_PROFILES=all"
+case "$out" in
+    *"make config"*) ok "  and points at make config" yes yes ;;
+    *) ok "  and points at make config" "$out" yes ;;
+esac
+
+# Checklist paths, with compose's profile listing and the dialog stubbed out.
+use_whiptail() { return 0; }
+docker() { printf 'all\nimmich-server\nnextcloud\nstremio\n'; }
+ui_checklist() { printf 'nextcloud\nstremio\n'; }
+stage_env
+(unset COMPOSE_PROFILES; select_services) >/dev/null 2>&1
+ok "partial selection is comma-joined" \
+    "$(env_line COMPOSE_PROFILES)" "COMPOSE_PROFILES=nextcloud,stremio"
+
+ui_checklist() { printf 'immich-server\nnextcloud\nstremio\n'; }
+stage_env
+(unset COMPOSE_PROFILES; select_services) >/dev/null 2>&1
+ok "full selection collapses to all" \
+    "$(env_line COMPOSE_PROFILES)" "COMPOSE_PROFILES=all"
+
+ui_checklist() { printf ''; }
+stage_env
+(unset COMPOSE_PROFILES; select_services) >/dev/null 2>&1
+ok "empty selection writes core-only" \
+    "$(env_line COMPOSE_PROFILES)" "COMPOSE_PROFILES="
+
+ui_checklist() { return 1; }
+stage_env
+(unset COMPOSE_PROFILES; select_services) >/dev/null 2>&1
+ok "cancelled checklist keeps every service" \
+    "$(env_line COMPOSE_PROFILES)" "COMPOSE_PROFILES=all"
+
+docker() { printf ''; }
+ui_checklist() { echo should-not-run; return 1; }
+stage_env
+ok "unlistable profiles keep every service" \
+    "$( (unset COMPOSE_PROFILES; select_services) >/dev/null 2>&1; env_line COMPOSE_PROFILES )" \
+    "COMPOSE_PROFILES=all"
+
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]

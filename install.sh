@@ -12,11 +12,13 @@
 # lib.sh in a subshell (sourcing it here would clobber this script's log/die).
 #
 # Safe to re-run: an existing clone is fast-forwarded, an existing .env is
-# never touched, and .env only appears once fully configured. Prompts read
-# from /dev/tty (stdin is the script itself when piped from curl); any value
-# already exported skips its prompt or overrides its auto-detection, which
-# allows unattended installs (these need passwordless sudo, as `make install`
-# applies sysctl/systemd changes).
+# never touched, and .env only appears once fully configured. Prompts use
+# whiptail dialogs when it is installed and a terminal is present, and fall
+# back to plain prompts otherwise; both read from /dev/tty (stdin is the
+# script itself when piped from curl). Any value already exported skips its
+# prompt or overrides its auto-detection, which allows unattended installs
+# (these need passwordless sudo, as `make install` applies sysctl/systemd
+# changes).
 set -eu
 
 REPO_URL="${PI_PCLOUD_REPO:-https://github.com/florianajir/pi-pcloud.git}"
@@ -36,6 +38,41 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # in dash (the script aborts instead of returning a failure status).
 interactive() { { true </dev/tty; } 2>/dev/null; }
 
+# Dialog prompts, used whenever whiptail and a terminal are both available;
+# every caller keeps the plain-prompt fallback so minimal hosts install the
+# same. whiptail draws its UI on stdout, so the UI is pinned to /dev/tty and
+# the answer travels over fd 3 (--output-fd), leaving command substitution
+# free for the result. A cancelled dialog (Esc/Cancel) returns non-zero; the
+# callers map that to an empty answer and re-prompt — Ctrl+C stays the only
+# way to abort, so a stray Esc cannot discard the answers already given.
+WHIPTAIL_TITLE="pi-pcloud installer"
+use_whiptail() { have whiptail && interactive; }
+
+ui_yesno() {
+    whiptail --title "$WHIPTAIL_TITLE" --defaultno --yesno "$1" 10 72 \
+        </dev/tty >/dev/tty
+}
+
+ui_inputbox() {
+    whiptail --title "$WHIPTAIL_TITLE" --inputbox "$1" 10 72 "$2" \
+        --output-fd 3 3>&1 </dev/tty >/dev/tty
+}
+
+ui_passwordbox() {
+    whiptail --title "$WHIPTAIL_TITLE" --passwordbox "$1" 10 72 \
+        --output-fd 3 3>&1 </dev/tty >/dev/tty
+}
+
+# ui_checklist "text" tag "" ON|OFF [tag "" ON|OFF ...]
+# Prints the selected tags one per line (--separate-output).
+ui_checklist() {
+    local text="$1"
+    shift
+    whiptail --title "$WHIPTAIL_TITLE" --separate-output \
+        --checklist "$text" 24 72 14 "$@" \
+        --output-fd 3 3>&1 </dev/tty >/dev/tty
+}
+
 # Runs on every exit path, including the signal traps below, so a terminal is
 # never left with echo off and the staging file (which holds secrets) never
 # outlives the run.
@@ -52,6 +89,10 @@ trap 'exit 143' TERM
 
 confirm() {
     local answer=""
+    if use_whiptail; then
+        ui_yesno "$1" || return 1
+        return 0
+    fi
     printf '%s [y/N]: ' "$1" >/dev/tty
     IFS= read -r answer </dev/tty || answer=""
     case "$answer" in
@@ -117,27 +158,42 @@ ask() {
         return 0
     fi
 
+    local invalid=""
     while :; do
-        if [ -n "$default" ] && [ -z "$secret" ]; then
-            printf '%s [%s]: ' "$label" "$default" >/dev/tty
-        else
-            printf '%s: ' "$label" >/dev/tty
-        fi
+        if use_whiptail; then
+            # A rejected answer is re-asked in the same dialog, reason first.
+            local text="$label"
+            [ -z "$invalid" ] || text="$invalid
 
-        if [ -n "$secret" ]; then
-            stty -echo </dev/tty
-            IFS= read -r value </dev/tty || die "no input available on /dev/tty for $var"
-            stty echo </dev/tty
-            printf '\n' >/dev/tty
+$label"
+            if [ -n "$secret" ]; then
+                value="$(ui_passwordbox "$text")" || value=""
+            else
+                value="$(ui_inputbox "$text" "$default")" || value=""
+            fi
         else
-            IFS= read -r value </dev/tty || die "no input available on /dev/tty for $var"
+            [ -z "$invalid" ] || log "$invalid"
+            if [ -n "$default" ] && [ -z "$secret" ]; then
+                printf '%s [%s]: ' "$label" "$default" >/dev/tty
+            else
+                printf '%s: ' "$label" >/dev/tty
+            fi
+
+            if [ -n "$secret" ]; then
+                stty -echo </dev/tty
+                IFS= read -r value </dev/tty || die "no input available on /dev/tty for $var"
+                stty echo </dev/tty
+                printf '\n' >/dev/tty
+            else
+                IFS= read -r value </dev/tty || die "no input available on /dev/tty for $var"
+            fi
         fi
 
         [ -n "$value" ] || value="$default"
         if [ -z "$value" ]; then
-            log "$var cannot be empty"
+            invalid="$var cannot be empty"
         elif ! value_is_safe "$value"; then
-            log "$var $VALUE_RULES"
+            invalid="$var $VALUE_RULES"
         else
             break
         fi
@@ -525,6 +581,55 @@ write_network_settings() {
     esac
 }
 
+# Which optional services to run, via Docker Compose profiles (each optional
+# service carries a profile named after itself; see docs/CONFIGURATION.md,
+# "Choosing which services run"). An exported COMPOSE_PROFILES wins like every
+# prompt; the checklist needs whiptail; every other path keeps the .env.dist
+# default (all). The profile list is asked of compose itself against the
+# staged .env — never scraped — so it cannot drift from compose.yaml; if that
+# fails, the install proceeds with everything enabled rather than stopping,
+# since `make config` can change the selection at any time.
+select_services() {
+    local profiles="" count=0 picked="" value="" svc=""
+
+    if [ -n "${COMPOSE_PROFILES:-}" ]; then
+        require_safe COMPOSE_PROFILES "$COMPOSE_PROFILES"
+        log "Using the exported COMPOSE_PROFILES=$COMPOSE_PROFILES"
+        set_env COMPOSE_PROFILES "$COMPOSE_PROFILES"
+        return 0
+    fi
+    if ! use_whiptail; then
+        log "Every optional service stays enabled (run 'make config' in $INSTALL_DIR to choose)"
+        return 0
+    fi
+
+    profiles="$(docker compose -f "$INSTALL_DIR/compose.yaml" --env-file "$ENV_STAGE" \
+        config --profiles 2>/dev/null | grep -vx all | sort)" || profiles=""
+    if [ -z "$profiles" ]; then
+        log "WARNING: could not list the service profiles; every optional service stays enabled"
+        return 0
+    fi
+
+    set --
+    for svc in $profiles; do
+        set -- "$@" "$svc" "" ON
+        count=$((count + 1))
+    done
+    if ! picked="$(ui_checklist "Services to enable — core infrastructure (Traefik, Authelia, Pi-hole, Headscale, ...) always runs. Space toggles, Enter confirms; 'make config' can change this later." "$@")"; then
+        log "Selection cancelled; every optional service stays enabled"
+        return 0
+    fi
+
+    if [ "$(printf '%s\n' "$picked" | grep -c .)" -eq "$count" ]; then
+        value="all"
+    else
+        value="$(printf '%s\n' "$picked" | paste -sd, -)"
+        [ -n "$value" ] || log "WARNING: no services selected; only the core infrastructure will run"
+    fi
+    require_safe COMPOSE_PROFILES "$value"
+    set_env COMPOSE_PROFILES "$value"
+}
+
 configure_env() {
     if [ -f "$ENV_FILE" ]; then
         log "Keeping existing $ENV_FILE"
@@ -563,6 +668,7 @@ configure_env() {
         eval "value=\${$var:-}"
         set_env "$var" "$value"
     done
+    select_services
     write_network_settings
     mv "$ENV_STAGE" "$ENV_FILE"
     ENV_STAGE=""
