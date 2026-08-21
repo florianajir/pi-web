@@ -1,0 +1,105 @@
+#!/bin/sh
+# The stack's command line, reachable from anywhere.
+#
+#   pi-pcloud config
+#   pi-pcloud enable stremio
+#   pi-pcloud start | stop | status | logs | doctor | services | ...
+#
+# A dispatcher, not a second implementation: the Makefile stays the single
+# source of truth and every command is forwarded to it, so a target added there
+# is reachable here without touching this file. Only the commands whose
+# arguments read better positionally are translated (`enable stremio` instead
+# of `s=stremio`); everything else is passed through after being checked
+# against make itself.
+#
+# Installed by `make install` as a symlink in /usr/local/bin, so the command
+# follows the checkout it points at: a `git pull` updates it too, and there is
+# no rendered copy to drift.
+
+set -eu
+
+SELF="$0"
+usage_hint="Run 'pi-pcloud' with no argument for the command list."
+
+die() {
+    printf 'pi-pcloud: %s\n' "$*" >&2
+    exit 1
+}
+
+# The project directory, in this order:
+#   1. PI_PCLOUD_DIR, the documented override (install.sh honours it too)
+#   2. where this script really lives, following the /usr/local/bin symlink,
+#      which also covers running it straight out of a checkout
+#   3. the installed systemd unit, for a copied rather than symlinked script
+project_dir() {
+    if [ -n "${PI_PCLOUD_DIR:-}" ]; then
+        printf '%s' "$PI_PCLOUD_DIR"
+        return 0
+    fi
+
+    _real="$(readlink -f "$SELF" 2>/dev/null || true)"
+    if [ -n "$_real" ]; then
+        _candidate="$(dirname "$(dirname "$_real")")"
+        if [ -f "$_candidate/Makefile" ] && [ -f "$_candidate/compose.yaml" ]; then
+            printf '%s' "$_candidate"
+            return 0
+        fi
+    fi
+
+    _unit="$(systemctl show -p WorkingDirectory --value pi-pcloud.service 2>/dev/null || true)"
+    # systemd prefixes the value with '!' when the setting is marked as such.
+    _unit="${_unit#!}"
+    if [ -n "$_unit" ] && [ -f "$_unit/Makefile" ]; then
+        printf '%s' "$_unit"
+        return 0
+    fi
+    return 1
+}
+
+DIR="$(project_dir)" || die "could not find the pi-pcloud checkout — set PI_PCLOUD_DIR=/path/to/pi-pcloud"
+[ -f "$DIR/Makefile" ] || die "$DIR is not a pi-pcloud checkout (no Makefile)"
+
+# Every command name comes from the Makefile, so this list cannot go stale.
+list_commands() {
+    grep -oE '^[a-z][a-z0-9-]*:' "$DIR/Makefile" | tr -d ':' | sort -u
+}
+
+# Service names for `enable`/`disable`, read straight out of compose.yaml
+# (no docker call, so completion stays instant).
+list_services() {
+    sh "$DIR/scripts/services.sh" names 2>/dev/null || true
+}
+
+# --no-print-directory: the wrapper is the interface, so make's "Entering
+# directory" noise would leak an implementation detail into every command.
+run_make() {
+    exec make --no-print-directory -C "$DIR" "$@"
+}
+
+cmd="${1:-}"
+[ "$#" -eq 0 ] || shift
+
+case "$cmd" in
+    "" | help | -h | --help) run_make help ;;
+    # Hidden, for the completion scripts.
+    --list-commands) list_commands ;;
+    --list-services) list_services ;;
+    enable | disable)
+        [ "$#" -eq 1 ] || die "usage: pi-pcloud $cmd <service>"
+        run_make "$cmd" "s=$1"
+        ;;
+    headscale-register)
+        [ "$#" -eq 1 ] || die "usage: pi-pcloud headscale-register <key>"
+        run_make headscale-register "$1"
+        ;;
+    *)
+        # Checked by asking make, not by keeping a copy of its target list;
+        # only the status matters, so a translated error message cannot break
+        # the check. -n never runs a recipe.
+        if ! make --no-print-directory -C "$DIR" -n "$cmd" >/dev/null 2>&1; then
+            printf 'pi-pcloud: unknown command %s\n%s\n' "$cmd" "$usage_hint" >&2
+            exit 2
+        fi
+        run_make "$cmd" "$@"
+        ;;
+esac

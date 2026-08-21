@@ -8,6 +8,11 @@ PROJECT_PATH := $(shell pwd)
 UNIT         := pi-pcloud.service
 WATCH_UNIT   := pi-pcloud-authelia-ntfy.service
 COMPOSE      := docker compose
+# The pi-pcloud command and its completions. /usr/local/bin is on PATH for both
+# users and sudo; the completion directories are Debian's own.
+BIN_LINK        := /usr/local/bin/pi-pcloud
+BASH_COMPLETION := /usr/share/bash-completion/completions/pi-pcloud
+ZSH_COMPLETION  := /usr/share/zsh/vendor-completions/_pi-pcloud
 # Empty when make already runs as root: root-only images often ship without a
 # sudo binary at all (install.sh applies the same rule to its own commands).
 SUDO         := $(if $(filter 0,$(shell id -u)),,sudo)
@@ -74,6 +79,7 @@ print-required-vars:
 test:
 	@sh tests/install-test.sh
 	@sh tests/check-env-test.sh
+	@sh tests/cli-test.sh
 
 preflight: check-env
 	@echo "🔍 Preflight...";
@@ -108,6 +114,14 @@ install: check-env
 	$(SUDO) systemctl daemon-reload
 	$(SUDO) systemctl enable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer
 	@echo "✅ Systemd units installed"
+	@echo "🔗 Installing the pi-pcloud command..."
+# A symlink, not a copy: the command follows this checkout, so a git pull
+# updates it and there is no rendered duplicate to drift.
+	$(SUDO) ln -sfn $(PROJECT_PATH)/scripts/pi-pcloud $(BIN_LINK)
+	$(SUDO) mkdir -p $(dir $(BASH_COMPLETION)) $(dir $(ZSH_COMPLETION))
+	$(SUDO) cp config/completion/pi-pcloud.bash $(BASH_COMPLETION)
+	$(SUDO) cp config/completion/_pi-pcloud $(ZSH_COMPLETION)
+	@echo "✅ pi-pcloud available on PATH (new shells get completion)"
 	@if [ "$(SKIP_START)" = "1" ]; then \
 		echo "⏭️  SKIP_START=1 set; not starting stack"; \
 	else \
@@ -151,6 +165,8 @@ uninstall:
 	-$(SUDO) $(SYSCTL) --system >/dev/null
 	@echo "🌐 Removing local DNS overrides from /etc/hosts..."
 	-$(SUDO) sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts
+	@echo "🧹 Removing the pi-pcloud command..."
+	-$(SUDO) rm -f $(BIN_LINK) $(BASH_COMPLETION) $(ZSH_COMPLETION)
 	@echo "🧹 Removing systemd units..."
 	-$(SUDO) systemctl disable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer 2>/dev/null || true
 	-$(SUDO) rm -f /etc/systemd/system/$(UNIT)

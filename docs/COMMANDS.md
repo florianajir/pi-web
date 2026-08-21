@@ -1,8 +1,23 @@
 # Commands Reference
 
-Run all commands from the pi-pcloud directory: `/opt/pi-pcloud`
+## The `pi-pcloud` command
+
+`make install` puts a `pi-pcloud` command on `PATH`, so everything below is reachable from any directory:
+
+```bash
+pi-pcloud config             # same as `make config`
+pi-pcloud enable stremio     # same as `make enable s=stremio`
+pi-pcloud status             # same as `make status`
+pi-pcloud                    # the command list
+```
+
+It is a thin dispatcher onto the Makefile — same output, same exit code, and a target added there needs no change here. Tab completion covers both the commands and, after `enable` / `disable`, the service names (bash and zsh; open a new shell after installing).
+
+The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pull` updates it. Point `PI_PCLOUD_DIR` at another checkout to override which one it drives.
 
 ## Make Commands
+
+Run these from the pi-pcloud directory (`/opt/pi-pcloud`), or use the `pi-pcloud` command above from anywhere.
 
 | Command | Description |
 |---------|-------------|
