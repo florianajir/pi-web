@@ -78,16 +78,30 @@ write_profiles() {
     else
         printf 'COMPOSE_PROFILES=%s\n' "$1" >> "$ENV_FILE"
     fi
-    echo "✏️  COMPOSE_PROFILES=$1"
+    echo "✏️  Updated COMPOSE_PROFILES in $(basename "$ENV_FILE")"
 }
 
-# Mutating docker compose command (stop/rm). Dry mode prints instead.
+# Mutating docker compose command. Dry mode prints instead.
 run_compose() {
     if is_dry_run; then
         echo "DRY-RUN: docker compose $*"
     else
         compose "$@"
     fi
+}
+
+# Same, with the output held back and replayed only if the command fails:
+# `stop` and `rm` each draw a progress block and `rm` announces every container
+# it is about to remove, which repeats what we just printed ourselves.
+run_compose_quiet() {
+    if is_dry_run; then
+        echo "DRY-RUN: docker compose $*"
+        return 0
+    fi
+    _out="$(compose "$@" 2>&1)" || {
+        printf '%s\n' "$_out" >&2
+        return 1
+    }
 }
 
 # `docker compose up` with the selection passed explicitly, so the started
@@ -308,8 +322,8 @@ cmd_disable() {
         echo "⚠️  $svc is still auto-enabled by another enabled service's profile — it will come back on the next stack restart"
     fi
     echo "🛑 Stopping and removing $svc..."
-    run_compose stop "$svc"
-    run_compose rm -f "$svc"
+    run_compose_quiet stop "$svc"
+    run_compose_quiet rm -f "$svc"
     echo "✅ $svc disabled"
 }
 
@@ -391,27 +405,32 @@ EOF
         return 0
     fi
 
-    for svc in $newly_on; do
-        run_hook "$svc-pre-start.sh"
-    done
+    # Only the services that were just enabled are started, so disabling
+    # something does not redraw the whole stack (and does not rebuild images
+    # to reach a state it is already in).
+    if [ -n "$newly_on" ]; then
+        for svc in $newly_on; do
+            run_hook "$svc-pre-start.sh"
+        done
+        echo "🚀 Starting$newly_on..."
+        # shellcheck disable=SC2086 # service names, split on purpose
+        run_compose_up_with "$new_profiles" up -d $newly_on
+    fi
 
-    echo "🚀 Applying selection (docker compose up -d)..."
-    run_compose_up_with "$new_profiles" up -d
-
-    for svc in $newly_off; do
-        echo "🛑 Stopping and removing $svc..."
-        run_compose stop "$svc"
-        run_compose rm -f "$svc"
-    done
+    if [ -n "$newly_off" ]; then
+        echo "🛑 Stopping and removing$newly_off..."
+        # shellcheck disable=SC2086 # service names, split on purpose
+        run_compose_quiet stop $newly_off
+        # shellcheck disable=SC2086 # service names, split on purpose
+        run_compose_quiet rm -f $newly_off
+    fi
 
     for svc in $newly_on; do
         run_hook "$svc-bootstrap.sh"
         run_hook "$svc-oidc-bootstrap.sh"
     done
 
-    echo "✅ Applied. COMPOSE_PROFILES=${new_profiles:-<empty: core only>}"
-    [ -z "$newly_on" ] || echo "   enabled:$newly_on"
-    [ -z "$newly_off" ] || echo "   disabled:$newly_off"
+    echo "✅ Applied${newly_on:+ · enabled:$newly_on}${newly_off:+ · disabled:$newly_off}"
 }
 
 # --- Main ---
