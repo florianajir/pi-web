@@ -134,19 +134,23 @@ validate_service() {
 
 # --- Checklist layout ---
 
-# One row per optional service, as "<service>:<section>:<parent>", ordered by
-# section; <parent> is set when the service only runs with another one, which
-# is what the picker renders as an indented child. Everything is derived from
-# compose.yaml, so the checklist cannot drift from the stack: a service's
-# `profiles:` list names the dependents that auto-activate it (gluetun carries
-# its netns tenants, n8n carries n8n-runners), which is what makes a pair a
-# tree, and its `homepage.group=` label gives the section. A label-less service
-# borrows its first child's section (flaresolverr sits with prowlarr), else the
-# section of the service it shares a name prefix with (immich-machine-learning
-# sits with immich-server), else "Other". Sorting goes through sort(1) because
-# mawk has no asort. Fields are colon-separated, not tab-separated: `read` folds
-# runs of IFS whitespace, which would swallow the empty field every row carries
-# (a section has no parent, a child has no section).
+# One row per optional service, as "<service>:<section>:<companion-of>:<needs>",
+# ordered by section. Three things come out of compose.yaml, so the picker can
+# never drift from the stack:
+#   homepage.group=            the section the service is listed under
+#   pi-pcloud.companion-of=    the service it is pointless without, which is
+#                              what the picker draws it indented beneath
+#   profiles:                  a service listing others in its own profile list
+#                              is a dependency they cannot run without (gluetun
+#                              for the containers sharing its network
+#                              namespace), reported as <needs>
+# The last two are different relations on purpose: qbittorrent needs gluetun but
+# is a service in its own right, listed under Download, while comet only makes
+# sense under stremio. Both propagate when a box is toggled; only companion-of
+# nests. A service with no section label borrows its companion's, else "Other".
+# Sorting goes through sort(1) because mawk has no asort. Fields are
+# colon-separated, not tab-separated: `read` folds runs of IFS whitespace, which
+# would swallow the empty fields a row carries.
 config_rows() {
     awk '
         /^services:[ \t]*$/ { in_services = 1; next }
@@ -169,62 +173,52 @@ config_rows() {
             sub(/"[ \t]*$/, "", group)
             next
         }
+        /pi-pcloud\.companion-of=/ {
+            companion = $0
+            sub(/.*pi-pcloud\.companion-of=/, "", companion)
+            sub(/"[ \t]*$/, "", companion)
+            next
+        }
         END {
             collect()
             for (i = 1; i <= n; i++) {
                 cnt = split(prof[i], part, ",")
                 for (j = 1; j <= cnt; j++)
                     if (part[j] != "" && part[j] != "all" && part[j] != name[i])
-                        parent[part[j]] = name[i]
+                        needs[part[j]] = needs[part[j]] " " name[i]
             }
             for (i = 1; i <= n; i++) {
-                if (name[i] in parent) continue
                 g = grp[i]
-                for (k = 1; k <= n && g == ""; k++)
-                    if ((name[k] in parent) && parent[name[k]] == name[i] && grp[k] != "")
-                        g = grp[k]
-                if (g == "") {
-                    pre = name[i]
-                    sub(/-.*$/, "", pre)
-                    for (k = 1; k <= n && g == ""; k++)
-                        if (k != i && grp[k] != "" && index(name[k], pre "-") == 1)
-                            g = grp[k]
-                }
+                if (g == "" && comp[i] != "")
+                    for (k = 1; k <= n; k++)
+                        if (name[k] == comp[i] && grp[k] != "") g = grp[k]
                 if (g == "") g = "Other"
                 section[name[i]] = g
             }
-            for (i = 1; i <= n; i++)
-                if (name[i] in parent)
-                    printf "%s|%s|1|%s|%s\n", section[parent[name[i]]], parent[name[i]], name[i], parent[name[i]]
-                else
-                    printf "%s|%s|0|%s|\n", section[name[i]], name[i], name[i]
+            for (i = 1; i <= n; i++) {
+                root = comp[i] != "" ? comp[i] : name[i]
+                child = comp[i] != "" ? 1 : 0
+                sub(/^ /, "", needs[name[i]])
+                printf "%s|%s|%d|%s|%s|%s\n", section[name[i]], root, child, name[i], comp[i], needs[name[i]]
+            }
         }
         function collect() {
             if (svc != "" && profiles != "") {
                 n++
                 name[n] = svc
                 grp[n] = group
+                comp[n] = companion
                 p = profiles
                 sub(/^[^[]*\[/, "", p)
                 sub(/\].*$/, "", p)
                 gsub(/["\t ]/, "", p)
                 prof[n] = p
             }
-            svc = ""; profiles = ""; group = ""
+            svc = ""; profiles = ""; group = ""; companion = ""
         }
     ' "$PROJECT_DIR/compose.yaml" \
         | sort -t'|' -k1,1 -k2,2 -k3,3n -k4,4 \
-        | awk -F'|' '
-            { sec[NR] = $1; root[NR] = $2; child[NR] = $3; svc[NR] = $4; par[NR] = $5; n = NR }
-            END {
-                for (i = 1; i <= n; i++)
-                    if (child[i] == 0) {
-                        section = sec[i]
-                        gsub(/:/, " ", section)
-                        printf "%s:%s:\n", svc[i], section
-                    } else
-                        printf "%s::%s\n", svc[i], par[i]
-            }'
+        | awk -F'|' '{ printf "%s:%s:%s:%s\n", $4, ($3 == 0 ? $1 : ""), $5, $6 }'
 }
 
 # --- Subcommands ---
@@ -326,18 +320,18 @@ cmd_config() {
     known="$(known_profiles)"
     old_enabled="$(services_for_profiles "$old_profiles")"
 
-    # The picker only chooses: it reads "service:section:parent:state" rows and
+    # The picker only chooses: it reads "service:section:parent:needs:state" and
     # writes back the services that stay ticked. Files, not a pipe, because it
     # takes over the terminal (see scripts/services-picker.py).
     rows_file="$(mktemp)"
     picked_file="$(mktemp)"
-    while IFS=: read -r svc section parent; do
+    while IFS=: read -r svc section parent needs; do
         [ -n "$svc" ] || continue
         in_lines "$known" "$svc" || continue
         if in_lines "$old_enabled" "$svc"; then
-            printf '%s:%s:%s:on\n' "$svc" "$section" "$parent" >>"$rows_file"
+            printf '%s:%s:%s:%s:on\n' "$svc" "$section" "$parent" "$needs" >>"$rows_file"
         else
-            printf '%s:%s:%s:off\n' "$svc" "$section" "$parent" >>"$rows_file"
+            printf '%s:%s:%s:%s:off\n' "$svc" "$section" "$parent" "$needs" >>"$rows_file"
         fi
     done <<EOF
 $(config_rows)
