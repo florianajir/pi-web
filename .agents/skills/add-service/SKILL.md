@@ -95,6 +95,14 @@ Add `homepage.group` / `name` / `icon` / `href` / `description` labels, plus a
 `homepage.widget.*` block when a widget exists for the service — API keys are wired
 by `scripts/homepage-widgets-bootstrap.sh`.
 
+`homepage.group` doubles as the section the service is listed under in
+`make config`, and `homepage.description` is the line shown beside it there. If
+the service is pointless on its own (an addon, a worker, a sidecar), also add
+`pi-pcloud.companion-of=<service>` so the picker nests it under the one it
+belongs to and toggles the two together — and still give it a description: a
+`homepage.*` label without `homepage.group` is discovered but never rendered,
+so it stays off the dashboard.
+
 ## 10. First-run setup
 
 Do it in `scripts/<service>-bootstrap.sh` (or `-pre-start.sh`), sourcing

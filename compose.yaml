@@ -157,8 +157,10 @@ services:
     depends_on:
       immich-server:
         condition: service_healthy
+        required: false
       nextcloud:
         condition: service_healthy
+        required: false
       postgres:
         condition: service_healthy
       authelia:
@@ -273,6 +275,7 @@ services:
     <<: *service-defaults
     image: henrygd/beszel:0.18.8
     container_name: pi-beszel
+    profiles: ["beszel", "beszel-agent", "all"]
     networks:
       - frontend
     expose:
@@ -321,6 +324,10 @@ services:
       dockerfile: Dockerfile
     image: pi-beszel-agent:local
     container_name: pi-beszel-agent
+    profiles: ["beszel-agent", "all"]
+    labels:
+      - "homepage.description=Host metrics collector for Beszel"
+      - "pi-pcloud.companion-of=beszel"
     depends_on:
       beszel:
         condition: service_healthy
@@ -355,6 +362,7 @@ services:
     <<: *service-defaults
     image: louislam/uptime-kuma:2
     container_name: pi-uptime-kuma
+    profiles: ["uptime-kuma", "all"]
     networks:
       - frontend
       - ntfy
@@ -394,6 +402,7 @@ services:
     <<: *service-defaults
     image: fnsys/dockhand:v1.0.42
     container_name: pi-dockhand
+    profiles: ["dockhand", "all"]
     networks:
       - frontend
     expose:
@@ -510,6 +519,7 @@ services:
     <<: *service-defaults
     image: n8nio/n8n:2.35.3
     container_name: pi-n8n
+    profiles: ["n8n", "n8n-runners", "all"]
     expose:
       - 5678
     labels:
@@ -567,6 +577,10 @@ services:
     <<: *service-defaults
     image: n8nio/runners:2.35.3
     container_name: pi-n8n-runners
+    profiles: ["n8n-runners", "all"]
+    labels:
+      - "homepage.description=Sandboxed task runner for n8n"
+      - "pi-pcloud.companion-of=n8n"
     environment:
       - N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679
       - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN:-n8n-runner-secret}
@@ -587,6 +601,7 @@ services:
     <<: *service-defaults
     image: ghcr.io/tale/headplane:0.7.0
     container_name: pi-headplane
+    profiles: ["headplane", "all"]
     networks:
       - frontend
     extra_hosts:
@@ -746,6 +761,10 @@ services:
   immich-machine-learning:
     <<: *service-defaults
     container_name: pi-immich-machine-learning
+    profiles: ["immich-machine-learning", "all"]
+    labels:
+      - "homepage.description=Face and object recognition for Immich"
+      - "pi-pcloud.companion-of=immich-server"
     image: ghcr.io/immich-app/immich-machine-learning:v3.1.0
     networks:
       - dns_egress
@@ -770,6 +789,7 @@ services:
   immich-server:
     <<: *service-defaults
     container_name: pi-immich
+    profiles: ["immich-server", "all"]
     image: ghcr.io/immich-app/immich-server:v3.1.0
     volumes:
       - ${DATA_LOCATION:-./data}/immich:/data
@@ -826,6 +846,7 @@ services:
     <<: *service-defaults
     image: nextcloud:34.0.3-apache
     container_name: pi-nextcloud
+    profiles: ["nextcloud", "all"]
     environment:
       - NEXTCLOUD_ADMIN_USER=${ADMIN_USER:-admin}
       - NEXTCLOUD_ADMIN_PASSWORD=${PASSWORD}
@@ -978,6 +999,7 @@ services:
     <<: *service-defaults
     image: qmcgaw/gluetun:v3
     container_name: pi-gluetun
+    profiles: ["gluetun", "qbittorrent", "stremio", "kapowarr", "all"]
     cap_add:
       - NET_ADMIN
     devices:
@@ -1059,6 +1081,7 @@ services:
     <<: *service-defaults
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: pi-qbittorrent
+    profiles: ["qbittorrent", "all"]
     network_mode: "service:gluetun"
     depends_on:
       gluetun:
@@ -1103,6 +1126,7 @@ services:
     <<: *service-defaults
     image: stremio/server:v4.21.0
     container_name: pi-stremio
+    profiles: ["stremio", "all"]
     network_mode: "service:gluetun"
     depends_on:
       gluetun:
@@ -1132,6 +1156,7 @@ services:
     # No semver image tags are published; pin latest (currently v2.54.1) by digest.
     image: ghcr.io/g0ldyy/comet:latest@sha256:dca62133336e02784d02aaad861381820674d1c8e3e98a03797610b81ee4defe
     container_name: pi-comet
+    profiles: ["comet", "all"]
     networks:
       - frontend
     expose:
@@ -1162,6 +1187,7 @@ services:
       - comet_data:/data
     labels:
       - "homepage.group=Video"
+      - "pi-pcloud.companion-of=stremio"
       - "homepage.name=Comet"
       - "homepage.href=https://comet.${HOST_NAME:-pi.lan}"
       - "homepage.description=Stremio debrid addon"
@@ -1189,6 +1215,7 @@ services:
     <<: *service-defaults
     image: lscr.io/linuxserver/prowlarr:2.5.2
     container_name: pi-prowlarr
+    profiles: ["prowlarr", "all"]
     networks:
       - frontend
     dns:
@@ -1231,6 +1258,7 @@ services:
     <<: *service-defaults
     image: mrcas/kapowarr:v1.3.1
     container_name: pi-kapowarr
+    profiles: ["kapowarr", "all"]
     # Same gluetun namespace as qBittorrent (localhost:8080) so torrent path mapping
     # is an identity mapping; GetComics direct downloads also go through the VPN.
     network_mode: "service:gluetun"
@@ -1276,6 +1304,10 @@ services:
     <<: *service-defaults
     image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
     container_name: pi-flaresolverr
+    profiles: ["flaresolverr", "prowlarr", "all"]
+    labels:
+      - "homepage.description=Cloudflare challenge solver for Prowlarr"
+      - "pi-pcloud.companion-of=prowlarr"
     networks:
       - frontend
     dns:
@@ -1300,6 +1332,7 @@ services:
     <<: *service-defaults
     image: lscr.io/linuxserver/kavita:0.9.0
     container_name: pi-kavita
+    profiles: ["kavita", "all"]
     networks:
       - frontend
     extra_hosts:
@@ -1405,6 +1438,7 @@ services:
     <<: *service-defaults
     image: vaultwarden/server:1.37.1
     container_name: pi-vaultwarden
+    profiles: ["vaultwarden", "all"]
     networks:
       - frontend
       - vault
@@ -1599,6 +1633,7 @@ services:
     <<: *service-defaults
     image: ghcr.io/ggml-org/llama.cpp:server-b10481
     container_name: pi-llama-cpp
+    profiles: ["llama-cpp", "all"]
     networks:
       - ai
     expose:
@@ -1669,6 +1704,7 @@ services:
       dockerfile: Dockerfile
     image: pi-piper:local
     container_name: pi-piper
+    profiles: ["piper", "all"]
     networks:
       - ai
     expose:
@@ -1716,6 +1752,7 @@ services:
       dockerfile: Dockerfile
     image: pi-parakeet:local
     container_name: pi-parakeet
+    profiles: ["parakeet", "all"]
     networks:
       - ai
     expose:
@@ -1758,6 +1795,7 @@ services:
       dockerfile: Dockerfile
     image: pi-system-tools:local
     container_name: pi-system-tools
+    profiles: ["system-tools", "all"]
     networks:
       - ai
       # `devices` reads headscale's node API, which only listens on frontend.
@@ -1817,6 +1855,7 @@ services:
     <<: *service-defaults
     image: ghcr.io/open-webui/open-webui:v0.11.0
     container_name: pi-open-webui
+    profiles: ["open-webui", "all"]
     networks:
       - frontend
       - ai
@@ -1869,12 +1908,14 @@ services:
         condition: service_healthy
       llama-cpp:
         condition: service_started
+        required: false
       # service_started, not service_healthy: system-tools is on the relaxed
       # healthcheck (120s interval, no start_interval), so Docker's first probe
       # lands at t=120s and the chat UI would wait for it on every boot - for a
       # tool server that is only ever called mid-conversation.
       system-tools:
         condition: service_started
+        required: false
     healthcheck:
       <<: *healthcheck-relaxed
       test: ["CMD", "curl", "-fsS", "http://localhost:8080"]

@@ -25,6 +25,14 @@ failure modes a docker check is blind to - a dropped Traefik route answers 404
 while the container is happily running, and a backup that never started reports
 nothing at all.
 
+Optional services are profile-gated (COMPOSE_PROFILES in .env). Every monitor
+is still created, but a monitor owned by a disabled service is paused rather
+than deleted - pausing keeps its heartbeat history - and resumed when the
+service is enabled again. The enabled-service list is computed on the host by
+uptime-kuma-bootstrap.sh (docker compose is the authority on profiles) and
+passed in as ENABLED_SERVICES; when it is empty or missing, nothing is paused
+or resumed, so a plumbing failure can never silence real alerting.
+
 Uses direct Socket.IO calls for Uptime Kuma 2.x compatibility.
 """
 
@@ -190,6 +198,28 @@ ROUTES = [
 # healthy. A dropped router answers 404 and a broken backend 5xx: both are down.
 ROUTE_STATUSCODES = ["200-299", "301", "302", "307", "308"]
 
+# Subdomain -> compose service owning the route, where the two names differ.
+# A subdomain absent from this map is assumed to be named after its service
+# (nextcloud, kavita, ntfy, homepage, qbittorrent all are).
+ROUTE_SERVICES = {
+    "auth": "authelia",
+    "immich": "immich-server",
+    "vault": "vaultwarden",
+}
+
+# Synthetic (non-container) monitor -> the compose service whose profile gates
+# it. dns/TLS belong to profile-less core services, so compose always lists
+# them and those two never pause in practice; "vpn public ip" follows gluetun,
+# which compose enables whenever any of its dependent profiles is on; "backup
+# freshness" follows system-tools because that is the container serving its
+# probe endpoint (backrest itself is core, but the probe dies with the tool).
+SPECIAL_MONITOR_SERVICES = {
+    "vpn public ip": "gluetun",
+    "dns resolution": "pihole",
+    "TLS certificate": "traefik",
+    "backup freshness": "system-tools",
+}
+
 
 def log(msg):
     ts = time.strftime("%H:%M:%S")
@@ -229,6 +259,74 @@ def get_container_names_from_compose(project_dir):
             if match:
                 containers.append(match.group(1))
     return containers
+
+
+def get_service_containers_from_compose(project_dir):
+    """Map compose service name -> list of its container_name values.
+
+    A stateful line parse (kept dependency-free, like
+    get_container_names_from_compose): inside the top-level `services:` block,
+    a two-space-indented `name:` line selects the current service and every
+    container_name line attaches to it. Other top-level blocks (x-* anchors,
+    volumes, networks) are skipped so their two-space keys cannot be mistaken
+    for services.
+    """
+    compose_path = os.path.join(project_dir, "compose.yaml")
+    if not os.path.isfile(compose_path):
+        log(f"ERROR: compose.yaml not found at {compose_path}")
+        return {}
+    services = {}
+    in_services = False
+    current = None
+    with open(compose_path) as f:
+        for line in f:
+            if re.match(r"^services:\s*$", line):
+                in_services = True
+                current = None
+                continue
+            if re.match(r"^[A-Za-z0-9_-]+:", line):  # another top-level block
+                in_services = False
+                current = None
+                continue
+            if not in_services:
+                continue
+            match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+            if match:
+                current = match.group(1)
+                services.setdefault(current, [])
+                continue
+            match = re.match(r"^\s+container_name:\s*(\S+)", line)
+            if match and current:
+                services[current].append(match.group(1))
+    return services
+
+
+def parse_enabled_services(raw):
+    """ENABLED_SERVICES ("a,b,c") -> set of service names, or None when unknown.
+
+    Empty means unknown, never "none enabled": the bootstrap only runs when
+    uptime-kuma itself is an enabled service, so a genuinely computed list is
+    never empty and an empty value can only be a plumbing failure.
+    """
+    services = {part.strip() for part in raw.split(",") if part.strip()}
+    return services or None
+
+
+def route_service(subdomain):
+    """Compose service that owns the `route <subdomain>` monitor."""
+    return ROUTE_SERVICES.get(subdomain, subdomain)
+
+
+def monitor_should_be_active(service, enabled_services):
+    """Whether a monitor should run, given the compose service that owns it.
+
+    `service` is None for monitors not owned by a single service (groups,
+    unmapped containers): those always run. An unknown enabled set (None)
+    also pauses nothing - see parse_enabled_services.
+    """
+    if enabled_services is None or service is None:
+        return True
+    return service in enabled_services
 
 
 def get_host_name_from_traefik():
@@ -588,6 +686,52 @@ class UptimeKumaBootstrap:
             raise Exception(r.get("msg", "Failed to edit monitor"))
         return r
 
+    def pause_monitor(self, monitor_id):
+        """Pause a monitor, keeping its heartbeat history.
+        Server signature: pauseMonitor(monitorID, callback)
+        """
+        r = self._call("pauseMonitor", monitor_id)
+        if not r.get("ok"):
+            raise Exception(r.get("msg", "Failed to pause monitor"))
+        return r
+
+    def resume_monitor(self, monitor_id):
+        """Resume a paused monitor.
+        Server signature: resumeMonitor(monitorID, callback)
+        """
+        r = self._call("resumeMonitor", monitor_id)
+        if not r.get("ok"):
+            raise Exception(r.get("msg", "Failed to resume monitor"))
+        return r
+
+    def reconcile_monitor_active(self, name, monitor_id, should_be_active):
+        """Pause or resume one monitor so it tracks its service's compose profile.
+
+        Runs right after ensure_monitor. The current state comes from the
+        monitorList snapshot taken at login; a monitor added in this run is
+        not in it, and the server starts new monitors active, so missing means
+        active. ensure_monitor edits cannot flip the state in between (the
+        server's editMonitor never assigns `active`), so the snapshot stays
+        truthful and only real transitions emit a call - an idempotent re-run
+        over a converged instance stays quiet.
+        """
+        if monitor_id is None:
+            return
+        existing = self.monitors.get(name)
+        currently_active = bool(existing.get("active", True)) if existing else True
+        if currently_active == should_be_active:
+            return
+        try:
+            if should_be_active:
+                self.resume_monitor(monitor_id)
+                log(f"Resumed monitor '{name}' (service enabled again)")
+            else:
+                self.pause_monitor(monitor_id)
+                log(f"Paused monitor '{name}' (service disabled via COMPOSE_PROFILES)")
+        except Exception as e:
+            action = "resume" if should_be_active else "pause"
+            log(f"WARNING: Failed to {action} monitor '{name}': {e}")
+
     @staticmethod
     def _comparable(value):
         """Normalise a field so server-side and desired representations compare equal."""
@@ -605,8 +749,12 @@ class UptimeKumaBootstrap:
         re-shape an instance that was already bootstrapped: reparenting the flat
         list into groups, retuning intervals, or moving a monitor to another
         alert tier all happen through here. `active` is deliberately never part
-        of `desired`, and editMonitor does not touch it either, so monitors the
-        user paused by hand stay paused.
+        of `desired`, and the server-side editMonitor never assigns it (it only
+        restarts a monitor that is already active), so this method never flips
+        a paused monitor back on. Pause state is owned by
+        reconcile_monitor_active, which runs after this and tracks
+        COMPOSE_PROFILES; monitors it does not manage (groups) keep whatever
+        the user set by hand.
         """
         existing = self.monitors.get(name)
         if existing:
@@ -982,6 +1130,22 @@ def main():
         else:
             log(f"Found {len(container_names)} containers to monitor")
 
+        # Profile-disabled services keep their monitors, paused. The enabled
+        # list is computed by the host-side wrapper (docker compose is the
+        # authority on COMPOSE_PROFILES) and handed over via ENABLED_SERVICES.
+        enabled_services = parse_enabled_services(env("ENABLED_SERVICES"))
+        if enabled_services is None:
+            log("WARNING: ENABLED_SERVICES is empty or unset; treating every "
+                "service as enabled - no monitor will be paused or resumed")
+        else:
+            log(f"Enabled services ({len(enabled_services)}): "
+                + ", ".join(sorted(enabled_services)))
+        container_services = {
+            container: service
+            for service, containers in get_service_containers_from_compose(project_dir).items()
+            for container in containers
+        }
+
         for container_name in container_names:
             if container_name == "pi-uptime-kuma":
                 continue
@@ -992,8 +1156,14 @@ def main():
                     f"falling back to '{group['name']}'")
             notification_id = tier_ids.get(group["tier"]) if group["notify"] == "children" else None
             try:
-                api.ensure_container_monitor(
+                monitor_id = api.ensure_container_monitor(
                     container_name, docker_host_id, group_ids[group["name"]], group, notification_id,
+                )
+                api.reconcile_monitor_active(
+                    monitor_display_name(container_name), monitor_id,
+                    monitor_should_be_active(
+                        container_services.get(container_name), enabled_services,
+                    ),
                 )
             except Exception as e:
                 log(f"WARNING: Failed to ensure monitor for {container_name}: {e}")
@@ -1009,16 +1179,26 @@ def main():
             for subdomain, group_name in ROUTES:
                 group = groups_by_name[group_name]
                 try:
-                    api.ensure_route_monitor(
+                    monitor_id = api.ensure_route_monitor(
                         subdomain, host_name, group_ids[group_name], group, tier_for(group),
+                    )
+                    api.reconcile_monitor_active(
+                        f"route {subdomain}", monitor_id,
+                        monitor_should_be_active(route_service(subdomain), enabled_services),
                     )
                 except Exception as e:
                     log(f"WARNING: Failed to ensure route monitor for {subdomain}: {e}")
 
             group = groups_by_name["External Chain"]
             try:
-                api.ensure_tls_monitor(
+                monitor_id = api.ensure_tls_monitor(
                     host_name, group_ids["External Chain"], group, tier_for(group),
+                )
+                api.reconcile_monitor_active(
+                    "TLS certificate", monitor_id,
+                    monitor_should_be_active(
+                        SPECIAL_MONITOR_SERVICES["TLS certificate"], enabled_services,
+                    ),
                 )
             except Exception as e:
                 log(f"WARNING: Failed to ensure TLS certificate monitor: {e}")
@@ -1029,7 +1209,13 @@ def main():
         if resolver_ip:
             group = groups_by_name["Core"]
             try:
-                api.ensure_dns_monitor(resolver_ip, group_ids["Core"], group, tier_for(group))
+                monitor_id = api.ensure_dns_monitor(resolver_ip, group_ids["Core"], group, tier_for(group))
+                api.reconcile_monitor_active(
+                    "dns resolution", monitor_id,
+                    monitor_should_be_active(
+                        SPECIAL_MONITOR_SERVICES["dns resolution"], enabled_services,
+                    ),
+                )
             except Exception as e:
                 log(f"WARNING: Failed to ensure DNS monitor: {e}")
         else:
@@ -1037,7 +1223,13 @@ def main():
 
         group = groups_by_name["Remote Access"]
         try:
-            api.ensure_vpn_monitor(group_ids["Remote Access"], group, tier_for(group))
+            monitor_id = api.ensure_vpn_monitor(group_ids["Remote Access"], group, tier_for(group))
+            api.reconcile_monitor_active(
+                "vpn public ip", monitor_id,
+                monitor_should_be_active(
+                    SPECIAL_MONITOR_SERVICES["vpn public ip"], enabled_services,
+                ),
+            )
         except Exception as e:
             log(f"WARNING: Failed to ensure VPN monitor: {e}")
 
@@ -1045,8 +1237,14 @@ def main():
         # a missed backup is worth its own message rather than a group aggregate.
         group = groups_by_name["Personal Data"]
         try:
-            api.ensure_backup_freshness_monitor(
+            monitor_id = api.ensure_backup_freshness_monitor(
                 group_ids["Personal Data"], group, tier_for(group),
+            )
+            api.reconcile_monitor_active(
+                "backup freshness", monitor_id,
+                monitor_should_be_active(
+                    SPECIAL_MONITOR_SERVICES["backup freshness"], enabled_services,
+                ),
             )
         except Exception as e:
             log(f"WARNING: Failed to ensure backup freshness monitor: {e}")

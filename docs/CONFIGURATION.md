@@ -182,6 +182,74 @@ These are auto-generated; no manual configuration needed:
 |------|---------|--------------|
 | `config/headplane/headscale_api_key` | Headplane → Headscale admin API access | `scripts/headscale-init.sh` |
 
+## Choosing which services run
+
+Every optional service in `compose.yaml` carries a [Docker Compose profile](https://docs.docker.com/compose/how-tos/profiles/) named after itself (plus a catch-all `all` profile). The `COMPOSE_PROFILES` variable in `.env` selects which ones run:
+
+```env
+# Everything (the default — also the behavior when the line is absent):
+COMPOSE_PROFILES=all
+
+# Or a comma-separated selection:
+COMPOSE_PROFILES=immich-server,nextcloud,stremio,open-webui,llama-cpp
+
+# Explicitly empty = core services only:
+COMPOSE_PROFILES=
+```
+
+An install whose `.env` predates this feature (no `COMPOSE_PROFILES` line) keeps running everything: the systemd unit defaults the variable to `all`. Manual `docker compose` invocations do not get that default, so add `COMPOSE_PROFILES=all` to your `.env` when upgrading.
+
+**Core services always run** (they have no profile): `ddns-updater`, `backrest`, `traefik`, `unbound`, `pihole`, `headscale`, `tailscale`, `ntfy`, `lldap`, `authelia`, `postgres`, `redis`, `homepage`. Pi-hole + Unbound stay core because subdomain DNS resolution (the Pi-hole wildcard record pointing `*.<HOST_NAME>` at the Pi) depends on them, and Headscale + Tailscale stay core because they provide remote access to everything else.
+
+**Optional services** (profile = service name): `beszel`, `beszel-agent`, `uptime-kuma`, `dockhand`, `n8n`, `n8n-runners`, `headplane`, `immich-machine-learning`, `immich-server`, `nextcloud`, `gluetun`, `qbittorrent`, `stremio`, `comet`, `prowlarr`, `kapowarr`, `flaresolverr`, `kavita`, `vaultwarden`, `llama-cpp`, `piper`, `parakeet`, `system-tools`, `open-webui`.
+
+**Some services auto-enable their dependencies** — the dependency carries the dependent's profile too, so enabling one starts both:
+
+| Enabling | Also starts |
+|----------|-------------|
+| `qbittorrent`, `stremio`, or `kapowarr` | `gluetun` (their VPN network namespace) |
+| `n8n-runners` | `n8n` |
+| `beszel-agent` | `beszel` |
+| `prowlarr` | `flaresolverr` |
+
+**Manage the selection with make** (or edit `COMPOSE_PROFILES` by hand and `make restart`):
+
+```bash
+make config              # Interactive checklist — the comfortable path
+make services            # List each optional service and whether it is enabled
+make enable s=stremio    # Add it to COMPOSE_PROFILES and start it (plus dependencies)
+make disable s=stremio   # Remove it from COMPOSE_PROFILES and stop it
+```
+
+`make config` opens a terminal picker listing every optional service (ticked = currently enabled, including auto-enabled dependencies); on confirm it rewrites `COMPOSE_PROFILES` and starts/stops whatever changed. Services are listed under the section they belong to, and one that is pointless on its own is indented under the service it belongs to:
+
+```
+Choose which services run — applying starts and stops containers now
+24/24 enabled · Traefik, Authelia, Pi-hole, Headscale, Postgres … always run
+── Download ──────────────────────────────────────────────────────────────
+ [x] prowlarr                   Indexer manager
+ [x]   flaresolverr             Cloudflare challenge solver for Prowlarr
+ [x] qbittorrent                Torrent client (VPN protected)
+── Video ─────────────────────────────────────────────────────────────────
+ [x] stremio                    Streaming server (VPN protected)
+ [x]   comet                    Stremio debrid addon
+```
+
+Three things drive that layout, all read out of `compose.yaml` so the picker cannot drift from the stack:
+
+| In `compose.yaml` | Meaning |
+|-------------------|---------|
+| `homepage.group=` | the section the service is listed under (same label the dashboard uses) |
+| `pi-pcloud.companion-of=` | pointless on its own — drawn indented under that service (`comet` under `stremio`, `immich-machine-learning` under `immich-server`) |
+| `homepage.description=` | the one-line description shown beside the service; without a `homepage.group` it stays off the dashboard, so a sidecar can be described without being listed there |
+| `profiles:` listing other services | cannot run without this one — `gluetun` for the containers sharing its network namespace |
+
+The last two are deliberately different relations. `qbittorrent` needs `gluetun` but is a service in its own right, so it stays under **Download** rather than being buried under the VPN; `comet` only makes sense with `stremio`, so it sits under it.
+
+Toggling propagates along both relations, transitively, so the screen always shows a set the stack can actually run: unticking `gluetun` unticks `qbittorrent`, `kapowarr`, `stremio` and — through `stremio` — `comet`; ticking `comet` ticks `stremio` and `gluetun` back. The footer names whatever moved.
+
+The picker is `scripts/services-picker.py` — Python's standard-library `curses`, so nothing to install on Raspberry Pi OS, and it only chooses: reading `compose.yaml`, writing `.env` and running the hooks all stay in `scripts/services.sh`. On a host without `python3`, use `make enable` / `make disable`, which need no TUI at all. `enable`/`disable` do the same for a single service, rewriting the `COMPOSE_PROFILES` line in `.env` (materializing the full explicit list first if it was `all` or unset). Enabling also runs the service's init hooks — `scripts/<service>-pre-start.sh` before the start, `scripts/<service>-bootstrap.sh` / `scripts/<service>-oidc-bootstrap.sh` after — the same scripts the systemd unit runs, so no `make restart` is needed: the stack is immediately consistent, and the unit reads the same `.env` at next boot. All three targets are thin wrappers around `scripts/services.sh`.
+
 ## Custom Configuration
 
 ### Overriding Defaults
@@ -197,40 +265,11 @@ To customize, either:
 
 Changes require: `make restart`
 
-### Disabling Containers with `compose.override.yaml`
+### Disabling Containers
 
-Use `compose.override.yaml` to disable optional services without editing `compose.yaml`.
+Optional services are toggled through built-in Compose profiles — see [Choosing which services run](#choosing-which-services-run) and `make enable` / `make disable`. A `compose.override.yaml` is no longer needed for this (and note that `profiles:` lists *merge* across compose files, so an override can only add activation profiles, never remove the built-in ones).
 
-`docker compose` automatically loads:
-- `compose.yaml`
-- `compose.override.yaml` (if present)
-
-To disable a service by default, assign it to a profile that you do not enable (for example `disabled`):
-
-```yaml
-services:
-  n8n:
-    profiles:
-      - disabled
-
-  n8n-runners:
-    profiles:
-      - disabled
-
-  open-webui:
-    profiles:
-      - disabled
-```
-
-With this override in place:
-- `make start` / `make restart` keeps those services stopped
-- The rest of the stack starts normally
-
-To re-enable one temporarily, start it with its profile explicitly enabled.
-
-To make it permanent again, remove the `profiles` block for that service from `compose.override.yaml` and restart the stack.
-
-Verify what is running with `make status` (or `docker compose ps`).
+Verify what is running with `make services` and `make status` (or `docker compose ps`).
 
 ### Adding New Services
 

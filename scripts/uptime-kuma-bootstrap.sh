@@ -13,6 +13,19 @@ PYTHON_IMAGE="python:3.12-slim"
 MAX_RETRIES=90
 RETRY_INTERVAL=2
 
+# Enabled compose services, comma-separated. `docker compose config --services`
+# applies the COMPOSE_PROFILES line from .env on its own; a .env without the
+# line is the legacy everything-enabled layout, which maps to the "all"
+# profile. Empty output (compose failure) makes the python side keep every
+# monitor active rather than pausing anything.
+enabled_services_csv() {
+    if grep -q '^COMPOSE_PROFILES=' "$ENV_FILE"; then
+        compose config --services 2>/dev/null | tr '\n' ',' | sed 's/,$//'
+    else
+        (cd "$PROJECT_DIR" && COMPOSE_PROFILES=all docker compose config --services) 2>/dev/null | tr '\n' ',' | sed 's/,$//'
+    fi
+}
+
 main() {
     log "=== Uptime Kuma Bootstrap ==="
 
@@ -34,6 +47,15 @@ main() {
     HOST_NAME="${HOST_NAME:-$(get_env_value HOST_NAME)}"
     [ -n "$HOST_NAME" ] || log "WARNING: HOST_NAME not resolved; TLS certificate monitor will be skipped"
 
+    # Computed here because the bootstrap container has no docker CLI: monitors
+    # of profile-disabled services get paused (not deleted) by the python side.
+    ENABLED_SERVICES="$(enabled_services_csv)"
+    if [ -n "$ENABLED_SERVICES" ]; then
+        log "Enabled services: $ENABLED_SERVICES"
+    else
+        log "WARNING: could not determine enabled services; no monitors will be paused or resumed"
+    fi
+
     # Run bootstrap Python script inside a temporary container on the frontend
     # network so it can reach pi-uptime-kuma:3001 and pi-ntfy by container name.
     docker run --rm \
@@ -46,6 +68,7 @@ main() {
         -e PROJECT_DIR=/project \
         -e UPTIME_KUMA_URL=http://pi-uptime-kuma:3001 \
         -e HOST_NAME="$HOST_NAME" \
+        -e ENABLED_SERVICES="$ENABLED_SERVICES" \
         "$PYTHON_IMAGE" \
         sh -c 'pip install --quiet --disable-pip-version-check "python-socketio[client]" && python /bootstrap.py'
 }
