@@ -145,7 +145,7 @@ jobs:
           test -f ./config/headscale/policy.hujson
 
       - name: Log in to ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
