@@ -32,3 +32,27 @@ These are the ones that get changes sent back. [AGENTS.md](AGENTS.md) has the fu
 ### Adding a service
 
 Follow the [add-service checklist](.agents/skills/add-service/SKILL.md): Compose profile, Traefik labels, Authelia OIDC client, shared Postgres/Redis, ntfy, Uptime Kuma, Backrest, Homepage labels and the systemd bootstrap hook.
+
+### Brand assets
+
+Two files in `docs/assets/` are the only sources for the project's artwork:
+
+| File | Used by |
+|---|---|
+| `banner.png` | the README header |
+| `logo.png` | the mark — source for every homepage icon |
+
+Everything in `config/homepage/icons/` is generated. After changing `logo.png`, re-render
+the set (needs ImageMagick) and commit the result:
+
+```bash
+scripts/homepage-favicon.sh
+```
+
+`logo-mask.svg` is the exception: it is the hand-maintained monochrome silhouette Safari
+needs for `rel="mask-icon"`, and the script only copies it into place.
+
+Re-rendering an existing icon takes effect immediately — the bind mounts are per-file and
+ImageMagick rewrites them in place. Adding a *new* filename needs `docker compose up -d
+homepage`, because Next.js indexes `public/` once at boot and 404s anything that appeared
+afterwards.

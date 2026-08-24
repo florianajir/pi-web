@@ -963,7 +963,8 @@ services:
       - ./config/homepage/icons:/app/public/icons:ro
       # Overriding the files the server-rendered HTML points at, rather than
       # `favicon:` in settings.yaml, which only applies after hydration and left
-      # the tab flickering. Regenerate with scripts/homepage-favicon.sh.
+      # the tab flickering. Regenerate from docs/assets/logo.png with
+      # scripts/homepage-favicon.sh.
       - ./config/homepage/icons/favicon.ico:/app/public/favicon.ico:ro
       - ./config/homepage/icons/favicon-16x16.png:/app/public/favicon-16x16.png:ro
       - ./config/homepage/icons/favicon-32x32.png:/app/public/favicon-32x32.png:ro
@@ -979,7 +980,9 @@ services:
     labels:
       - "homepage.group=Dashboard"
       - "homepage.name=Homepage"
-      - "homepage.icon=homepage.png"
+      # The one tile that stands for this stack rather than a third-party app, so
+      # it uses the pi-pcloud mark from the icons mount instead of dashboard-icons.
+      - "homepage.icon=/icons/logo.png"
       - "homepage.href=https://homepage.${HOST_NAME:-pi.lan}"
       - "homepage.description=Service dashboard"
       - "traefik.enable=true"

@@ -1,6 +1,6 @@
 <div align="center">
 
-# pi-pcloud
+<img src="docs/assets/banner.png" alt="pi-pcloud — your cloud, your data, your control" width="820">
 
 **Your own private cloud, on a Raspberry Pi.**
 Photos, files, passwords, VPN, ad-blocking DNS, backups and monitoring — one command, no subscription, no vendor.
