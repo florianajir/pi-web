@@ -621,7 +621,8 @@ main() {
         if [ "$IMMICH_ROLE_OK" = "1" ]; then recreate immich-server pi-immich; else note "… Skipped recreating immich-server - its Postgres role didn't rotate"; fi
         if [ "$NEXTCLOUD_ROLE_OK" = "1" ]; then recreate nextcloud; else note "… Skipped recreating nextcloud - its Postgres role/dbpassword didn't rotate cleanly"; fi
         # Vaultwarden reads DATABASE_URL from env, so the recreate is what actually
-        # applies the new role password - and it picks up ADMIN_TOKEN at the same time.
+        # applies the new role password. Its ADMIN_TOKEN is independent of PASSWORD
+        # and deliberately untouched here - see scripts/vaultwarden-pre-start.sh.
         if [ "$VAULTWARDEN_ROLE_OK" = "1" ]; then recreate vaultwarden; else note "… Skipped recreating vaultwarden - its Postgres role didn't rotate"; fi
         # backrest bundles all five roles above into one environment.
         if [ "$NEXTCLOUD_ROLE_OK" = "1" ] && [ "$AUTHELIA_ROLE_OK" = "1" ] && [ "$LLDAP_ROLE_OK" = "1" ] && [ "$OPEN_WEBUI_ROLE_OK" = "1" ] && [ "$VAULTWARDEN_ROLE_OK" = "1" ]; then

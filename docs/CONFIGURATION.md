@@ -130,7 +130,7 @@ qBittorrent's credentials (`ADMIN_USER` / `PASSWORD`) are applied on first start
 
 ## Auto-generated secrets
 
-These need no configuration and must not be edited by hand. `scripts/authelia-pre-start.sh` generates them on first start with mode `600` under `${DATA_LOCATION}/authelia-config/secrets/`, and `scripts/headscale-init.sh` generates `config/headplane/headscale_api_key`. Full inventory: [Security → Secrets](SECURITY.md#secrets).
+These need no configuration and must not be edited by hand. `scripts/authelia-pre-start.sh` generates most of them on first start with mode `600` under `${DATA_LOCATION}/authelia-config/secrets/`, joined there by `scripts/vaultwarden-pre-start.sh` for the Vaultwarden `/admin` token; `scripts/headscale-init.sh` generates `config/headplane/headscale_api_key`. Full inventory: [Security → Secrets](SECURITY.md#secrets).
 
 ## Choosing which services run
 

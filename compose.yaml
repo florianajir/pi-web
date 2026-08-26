@@ -1461,9 +1461,10 @@ services:
     # So the SSO_AUTHORITY discovery call resolves to Traefik from inside frontend.
     extra_hosts:
       - "auth.${HOST_NAME:-pi.lan}:172.30.11.250"
-    # SSO_CLIENT_SECRET has no *_FILE variant, so the mounted secret is exported
-    # before handing over to the image's own /start.sh. Same trick as open-webui.
-    entrypoint: ["sh", "-c", "export SSO_CLIENT_SECRET=$(cat /run/secrets/oidc_vaultwarden_secret) && exec /start.sh"]
+    # Neither SSO_CLIENT_SECRET nor ADMIN_TOKEN has a *_FILE variant, so the mounted
+    # secrets are exported before handing over to the image's own /start.sh. Same
+    # trick as open-webui. Both values are hex/PHC, so they need no quoting.
+    entrypoint: ["sh", "-c", "export SSO_CLIENT_SECRET=$(cat /run/secrets/oidc_vaultwarden_secret) ADMIN_TOKEN=$(cat /run/secrets/admin_token_hash) && exec /start.sh"]
     environment:
       - DOMAIN=https://vault.${HOST_NAME:-pi.lan}
       - DATABASE_URL=postgresql://vaultwarden:${PASSWORD}@postgres/vaultwarden
@@ -1471,9 +1472,8 @@ services:
       # let anyone on the tailnet create a vault. Invite from /admin instead.
       - SIGNUPS_ALLOWED=false
       - INVITATIONS_ALLOWED=true
-      # Plaintext, not an Argon2 PHC hash: a hash would need regenerating on every
-      # PASSWORD rotation, whereas this follows .env on the next container recreate.
-      - ADMIN_TOKEN=${PASSWORD}
+      # ADMIN_TOKEN is exported by the entrypoint from an Argon2id digest generated
+      # by scripts/vaultwarden-pre-start.sh - deliberately not derived from PASSWORD.
       # This does NOT remove the master password: that key encrypts the vault
       # itself and never reaches the identity provider.
       - SSO_ENABLED=true
@@ -1499,6 +1499,7 @@ services:
     volumes:
       - ${DATA_LOCATION:-./data}/vaultwarden:/data
       - ${DATA_LOCATION:-./data}/authelia-config/secrets/oidc_vaultwarden_secret.txt:/run/secrets/oidc_vaultwarden_secret:ro
+      - ${DATA_LOCATION:-./data}/authelia-config/secrets/vaultwarden_admin_token_hash:/run/secrets/admin_token_hash:ro
     depends_on:
       postgres:
         condition: service_healthy
