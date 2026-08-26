@@ -197,7 +197,9 @@ make rotate-password-full    # the above, plus every Postgres role and every ser
 
 Editing `.env` alone is **not enough**: LLDAP does not reset an existing admin's password to match the env var on startup. `make rotate-password` performs the actual LDAP password-modify operation and updates Authelia's `ldap_password` secret — and since everything logs in through Authelia SSO, that is the credential a leaked `PASSWORD` actually exposes.
 
-`rotate-password-full` additionally covers Nextcloud, Pi-hole, qBittorrent, Prowlarr, Kapowarr, Beszel, ntfy and Dockhand. See the header comment of `scripts/rotate-password.sh` for the ordering constraints it handles (Nextcloud's `config.php` dbpassword, Authelia's `db_password` secret versus its `AUTHELIA_DB_PASSWORD` env var); doing these by hand out of order breaks things.
+`rotate-password-full` additionally covers Nextcloud, Vaultwarden, Pi-hole, qBittorrent, Prowlarr, Kapowarr, Beszel, ntfy and Dockhand. See the header comment of `scripts/rotate-password.sh` for the ordering constraints it handles (Nextcloud's `config.php` dbpassword, Authelia's `db_password` secret versus its `AUTHELIA_DB_PASSWORD` env var); doing these by hand out of order breaks things.
+
+Every service holding a Postgres role must be rotated *and* recreated together, since the role password and the connection string in the container's environment have to move as one. A role that is rotated without its container being recreated does not fail immediately — the running container keeps its established connection — it fails at the *next* recreate, which may be an unrelated reboot or image bump long afterwards. `vaultwarden` was missing from both lists until it was added; if you add another Postgres-backed service, wire it into `rotate_postgres_roles()`, give it a `*_ROLE_OK` gate, and add it to Backrest's gate, which needs every role it dumps.
 
 **A regular user** resets their own password from the Authelia portal (**Account → Change password**) or has it reset from the LLDAP admin UI.
 

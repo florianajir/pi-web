@@ -25,11 +25,11 @@
 #     Postgres role password is still valid (i.e. BEFORE rotating the
 #     `nextcloud` role), or Nextcloud loses its DB connection in the gap.
 #   - .env's PASSWORD feeds Postgres connection strings for lldap,
-#     immich-server, open-webui, and backrest, AND local-login fallbacks for
-#     pihole/homepage/comet. Writing a new PASSWORD into .env without also
-#     rotating the Postgres roles those services hold poisons .env for a
-#     FUTURE, unrelated container recreate (a reboot, `make restart`, an image
-#     bump) to break on - so --skip-postgres mode never touches .env at all.
+#     immich-server, open-webui, vaultwarden, and backrest, AND local-login
+#     fallbacks for pihole/homepage/comet. Writing a new PASSWORD into .env
+#     without also rotating the Postgres roles those services hold poisons .env
+#     for a FUTURE, unrelated container recreate (a reboot, `make restart`, an
+#     image bump) to break on - so --skip-postgres mode never touches .env at all.
 #   - The authelia-config/secrets directory can end up owned by root (this
 #     stack's systemd unit runs docker compose as root, and some root-run init
 #     path can flip ownership between edits). Secret-file writes below try a
@@ -84,10 +84,10 @@ confirm() {
         echo "   .env is NOT touched and no Postgres role or other service is rotated."
     else
         echo "⚠️  This will rotate PASSWORD everywhere it's persisted:"
-        echo "   Postgres roles (postgres, immich, nextcloud, authelia, lldap, open-webui),"
-        echo "   the LLDAP admin account (LDAP password-modify, not env), Authelia's"
-        echo "   ldap_password + db_password secrets, Nextcloud (DB + admin login),"
-        echo "   Pi-hole, Beszel, ntfy, qBittorrent, Prowlarr, Kapowarr, Dockhand,"
+        echo "   Postgres roles (postgres, immich, nextcloud, authelia, lldap, open-webui,"
+        echo "   vaultwarden), the LLDAP admin account (LDAP password-modify, not env),"
+        echo "   Authelia's ldap_password + db_password secrets, Nextcloud (DB + admin"
+        echo "   login), Pi-hole, Beszel, ntfy, qBittorrent, Prowlarr, Kapowarr, Dockhand,"
         echo "   and recreates the containers that bake it into their environment."
     fi
     echo "   Active sessions on Authelia/Nextcloud/etc. may be interrupted."
@@ -174,6 +174,7 @@ rotate_postgres_roles() {
     if ! container_is_running "pi-postgres"; then
         note "✘ SKIPPED all postgres roles (pi-postgres not running)"
         IMMICH_ROLE_OK=0; AUTHELIA_ROLE_OK=0; LLDAP_ROLE_OK=0; OPEN_WEBUI_ROLE_OK=0
+        VAULTWARDEN_ROLE_OK=0
         return 0
     fi
     rotate_postgres_role postgres postgres
@@ -181,6 +182,7 @@ rotate_postgres_roles() {
     rotate_postgres_role authelia authelia      && AUTHELIA_ROLE_OK=1   || AUTHELIA_ROLE_OK=0
     rotate_postgres_role lldap lldap            && LLDAP_ROLE_OK=1      || LLDAP_ROLE_OK=0
     rotate_postgres_role open-webui open-webui  && OPEN_WEBUI_ROLE_OK=1 || OPEN_WEBUI_ROLE_OK=0
+    rotate_postgres_role vaultwarden vaultwarden && VAULTWARDEN_ROLE_OK=1 || VAULTWARDEN_ROLE_OK=0
     # nextcloud is rotated in rotate_nextcloud_db_password(), after config.php
     # is updated - see the ordering note there.
 }
@@ -618,11 +620,14 @@ main() {
         if [ "$OPEN_WEBUI_ROLE_OK" = "1" ]; then recreate open-webui; else note "… Skipped recreating open-webui - its Postgres role didn't rotate"; fi
         if [ "$IMMICH_ROLE_OK" = "1" ]; then recreate immich-server pi-immich; else note "… Skipped recreating immich-server - its Postgres role didn't rotate"; fi
         if [ "$NEXTCLOUD_ROLE_OK" = "1" ]; then recreate nextcloud; else note "… Skipped recreating nextcloud - its Postgres role/dbpassword didn't rotate cleanly"; fi
-        # backrest bundles all four roles above into one environment.
-        if [ "$NEXTCLOUD_ROLE_OK" = "1" ] && [ "$AUTHELIA_ROLE_OK" = "1" ] && [ "$LLDAP_ROLE_OK" = "1" ] && [ "$OPEN_WEBUI_ROLE_OK" = "1" ]; then
+        # Vaultwarden reads DATABASE_URL from env, so the recreate is what actually
+        # applies the new role password - and it picks up ADMIN_TOKEN at the same time.
+        if [ "$VAULTWARDEN_ROLE_OK" = "1" ]; then recreate vaultwarden; else note "… Skipped recreating vaultwarden - its Postgres role didn't rotate"; fi
+        # backrest bundles all five roles above into one environment.
+        if [ "$NEXTCLOUD_ROLE_OK" = "1" ] && [ "$AUTHELIA_ROLE_OK" = "1" ] && [ "$LLDAP_ROLE_OK" = "1" ] && [ "$OPEN_WEBUI_ROLE_OK" = "1" ] && [ "$VAULTWARDEN_ROLE_OK" = "1" ]; then
             recreate backrest
         else
-            note "… Skipped recreating backrest - not every DB role it backs up (nextcloud/authelia/lldap/open-webui) rotated cleanly; its scheduled backups keep using their current, still-consistent passwords"
+            note "… Skipped recreating backrest - not every DB role it backs up (nextcloud/authelia/lldap/open-webui/vaultwarden) rotated cleanly; its scheduled backups keep using their current, still-consistent passwords"
         fi
         recreate pihole
         recreate beszel

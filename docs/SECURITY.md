@@ -111,7 +111,8 @@ flowchart LR
     R[Request] --> TLS["TLS termination"]
     TLS --> Compress["gzip"]
     Compress --> Headers["security-headers"]
-    Headers --> LAN{"lan\n(IP allowlist)"}
+    Headers --> Frame["frame-deny\n(per router)"]
+    Frame --> LAN{"lan\n(IP allowlist)"}
     LAN -->|denied| Block[403]
     LAN -->|allowed| Auth{"authelia\n(forward-auth)"}
     Auth -->|no session| Login["redirect to portal"]
@@ -123,9 +124,12 @@ flowchart LR
 | Header | Value | Why |
 |--------|-------|-----|
 | `Strict-Transport-Security` | `max-age=15552000; includeSubDomains` | Force HTTPS for 180 days |
-| `X-Frame-Options` | `DENY` | Clickjacking |
 | `X-Content-Type-Options` | `nosniff` | MIME sniffing |
 | `Referrer-Policy` | `same-origin` | Referrer leakage |
+
+**`X-Frame-Options` is separate, and per router.** An entrypoint middleware wraps every router's own middlewares, so its response headers win and no router can opt out. Vaultwarden has to opt out — its `*-connector.html` pages must carry no frame header at all — so the policy lives in a standalone `frame-deny` middleware that each router lists instead. Every router gets `DENY` except Vaultwarden's, which uses `SAMEORIGIN` on the main router and nothing on the connector router (see [Vaultwarden](#vaultwarden)).
+
+List `frame-deny@docker` **first** in a router's chain. Middlewares listed later sit further inside, and anything that short-circuits — the `lan` 403, an Authelia portal redirect, the Stremio redirect — returns without reaching them, so a frame middleware placed last silently omits the header on exactly those responses. Adding a new router means adding it there too; nothing enforces this automatically.
 
 **Rate limiting** — `rate-limit-auth` is applied to LLDAP only (`lldap.*`), after the forward-auth middleware: 10 req/s average per source IP, burst 20, to blunt credential stuffing.
 
@@ -158,7 +162,9 @@ Users enrol at the Authelia portal under **Security**, with **TOTP** (any authen
 
 Served at `https://vault.<HOST_NAME>`. Its data lives in the shared PostgreSQL instance (database and role `vaultwarden`, created by `config/postgres/init-databases.sh`), so it is dumped by `scripts/db-backup.sh vaultwarden` from a Backrest snapshot hook like every other database here. Only attachments, sends and the RSA signing key stay on disk, in `${DATA_LOCATION}/vaultwarden`. It reaches PostgreSQL over its own internal `vault` network, which deliberately does not include LLDAP.
 
-**Accounts.** `SIGNUPS_ALLOWED` is `false`: the router sits behind the LAN allowlist only, so open registration would let anyone on the LAN or the tailnet create a vault. `INVITATIONS_ALLOWED` stays `true`, and `ADMIN_TOKEN` is set to `PASSWORD`, so `/admin` is where you invite people. The token is plaintext rather than an Argon2 PHC hash — Vaultwarden logs a startup warning about it — because a hash would have to be regenerated on every rotation, while a plain `${PASSWORD}` reference simply follows `.env` the next time the container is recreated. `scripts/rotate-password.sh` does not recreate Vaultwarden, so a rotated token only takes effect on the next reboot, `make restart` or image bump. Bear in mind `/admin` inherits this router's middleware, which is the LAN allowlist and nothing else: anyone on the LAN or the tailnet who knows `PASSWORD` reaches it.
+**Accounts.** `SIGNUPS_ALLOWED` is `false`: the router sits behind the LAN allowlist only, so open registration would let anyone on the LAN or the tailnet create a vault. `INVITATIONS_ALLOWED` stays `true`, and `ADMIN_TOKEN` is set to `PASSWORD`, so `/admin` is where you invite people. The token is plaintext rather than an Argon2 PHC hash — Vaultwarden logs a startup warning about it — because a hash would have to be regenerated on every rotation, while a plain `${PASSWORD}` reference simply follows `.env`. `scripts/rotate-password.sh` recreates Vaultwarden, so a rotation applies the new token at the same time as the new database password. Bear in mind `/admin` inherits this router's middleware, which is the LAN allowlist and nothing else: anyone on the LAN or the tailnet who knows `PASSWORD` reaches it.
+
+**Frame headers.** Vaultwarden sets its own `X-Frame-Options` and CSP, and its `/admin` diagnostics validate them end to end — so a reverse proxy that overwrites them shows up there as an `HTTP Response validation` error. Its API needs `SAMEORIGIN`, and `webauthn-connector.html` / `sso-connector.html` need *no* frame header, because the browser extension frames them from a `chrome-extension://` origin that any value would block. That is why these two routers are exempt from `frame-deny` ([above](#the-middleware-chain)); the connector router exists purely to carve those paths out.
 
 **SSO, with consequences.** Authentication is federated to Authelia (client `vaultwarden`, callback `https://vault.<HOST_NAME>/identity/connect/oidc-signin`, which Vaultwarden derives from `DOMAIN` and is not configurable). Two things follow:
 
