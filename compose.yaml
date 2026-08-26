@@ -1439,7 +1439,7 @@ services:
 
   vaultwarden:
     <<: *service-defaults
-    image: vaultwarden/server:1.37.1
+    image: vaultwarden/server:1.37.2
     container_name: pi-vaultwarden
     profiles: ["vaultwarden", "all"]
     networks:
