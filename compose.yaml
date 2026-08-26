@@ -196,6 +196,10 @@ services:
       - CLOUDFLARE_DNS_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN:-}
     command:
       - "--log.level=INFO"
+      # Without this, an ipallowlist rejection is invisible: it never reaches the
+      # backend's own log, so a bare 403 has no recorded client address to blame.
+      - "--accesslog=true"
+      - "--accesslog.format=json"
       - "--api.dashboard=true"
       - "--ping=true"
       - "--entrypoints.web.address=:80/tcp"
@@ -1460,6 +1464,9 @@ services:
       # let anyone on the tailnet create a vault. Invite from /admin instead.
       - SIGNUPS_ALLOWED=false
       - INVITATIONS_ALLOWED=true
+      # Plaintext, not an Argon2 PHC hash: a hash would need regenerating on every
+      # PASSWORD rotation, whereas this follows .env on the next container recreate.
+      - ADMIN_TOKEN=${PASSWORD}
       # This does NOT remove the master password: that key encrypts the vault
       # itself and never reaches the identity provider.
       - SSO_ENABLED=true
