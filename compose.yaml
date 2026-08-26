@@ -400,7 +400,7 @@ services:
 
   dockhand:
     <<: *service-defaults
-    image: fnsys/dockhand:v1.0.42
+    image: fnsys/dockhand:v1.0.43
     container_name: pi-dockhand
     profiles: ["dockhand", "all"]
     networks:
