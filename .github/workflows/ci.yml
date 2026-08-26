@@ -133,6 +133,9 @@ jobs:
           set -euo pipefail
           sh ./scripts/authelia-pre-start.sh
           sh ./scripts/headscale-pre-start.sh
+          # vaultwarden is in COMPOSE_PROFILES above, and its ADMIN_TOKEN digest is a
+          # bind-mounted file: without this the daemon would create a directory there.
+          sh ./scripts/vaultwarden-pre-start.sh
 
           # Make all generated files world-readable so docker compose (and the Docker
           # daemon) can open env_files regardless of the runner's umask or ownership.
@@ -141,6 +144,8 @@ jobs:
           # Guard against bind-mount path type mismatches in CI
           test -f ./config/headplane/config.yaml
           test ! -d ./config/headplane/config.yaml
+          test -f /tmp/pi-pcloud-ci-data/authelia-config/secrets/vaultwarden_admin_token_hash
+          test ! -d /tmp/pi-pcloud-ci-data/authelia-config/secrets/vaultwarden_admin_token_hash
           test -f ./config/headscale/config.yaml
           test -f ./config/headscale/policy.hujson
 
