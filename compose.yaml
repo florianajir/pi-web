@@ -177,7 +177,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.backrest.rule=Host(`backrest.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.backrest.entrypoints=websecure"
-      - "traefik.http.routers.backrest.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.backrest.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.routers.backrest.tls=true"
       - "traefik.http.services.backrest.loadbalancer.server.port=9898"
     healthcheck:
@@ -196,6 +196,10 @@ services:
       - CLOUDFLARE_DNS_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN:-}
     command:
       - "--log.level=INFO"
+      # Without this, an ipallowlist rejection is invisible: it never reaches the
+      # backend's own log, so a bare 403 has no recorded client address to blame.
+      - "--accesslog=true"
+      - "--accesslog.format=json"
       - "--api.dashboard=true"
       - "--ping=true"
       - "--entrypoints.web.address=:80/tcp"
@@ -231,14 +235,18 @@ services:
       - "traefik.http.middlewares.security-headers.headers.stsSeconds=15552000"
       - "traefik.http.middlewares.security-headers.headers.stsIncludeSubdomains=true"
       - "traefik.http.middlewares.security-headers.headers.forceSTSHeader=true"
-      - "traefik.http.middlewares.security-headers.headers.frameDeny=true"
       - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
       - "traefik.http.middlewares.security-headers.headers.referrerPolicy=same-origin"
+      # Deliberately NOT in security-headers: that one is applied at the websecure
+      # entrypoint, which wraps every router's own middlewares, so nothing downstream
+      # can opt out of it. Vaultwarden needs to (see its labels), so the frame policy
+      # lives here and is attached per router instead.
+      - "traefik.http.middlewares.frame-deny.headers.frameDeny=true"
       - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}"
       - "traefik.http.middlewares.rate-limit-auth.ratelimit.average=10"
       - "traefik.http.middlewares.rate-limit-auth.ratelimit.burst=20"
       - "traefik.http.middlewares.rate-limit-auth.ratelimit.period=1s"
-      - "traefik.http.routers.traefik.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.traefik.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.rule=Host(`traefik.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.traefik.service=api@internal"
@@ -306,10 +314,11 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.beszel.rule=Host(`beszel.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.beszel.entrypoints=websecure"
-      - "traefik.http.routers.beszel.middlewares=lan@docker"
+      - "traefik.http.routers.beszel.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.routers.beszel.tls=true"
       - "traefik.http.routers.beszel-agentconnect.rule=Host(`beszel.${HOST_NAME:-pi.lan}`) && PathPrefix(`/api/beszel/agent-connect`)"
       - "traefik.http.routers.beszel-agentconnect.entrypoints=websecure"
+      - "traefik.http.routers.beszel-agentconnect.middlewares=frame-deny@docker"
       - "traefik.http.routers.beszel-agentconnect.priority=100"
       - "traefik.http.routers.beszel-agentconnect.tls=true"
       - "traefik.http.services.beszel.loadbalancer.server.port=8090"
@@ -391,7 +400,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.uptime-kuma.rule=Host(`uptime.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.uptime-kuma.entrypoints=websecure"
-      - "traefik.http.routers.uptime-kuma.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.uptime-kuma.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.routers.uptime-kuma.tls=true"
       - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
     deploy: *cpu-request-small
@@ -424,7 +433,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.dockhand.rule=Host(`dockhand.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.dockhand.entrypoints=websecure"
-      - "traefik.http.routers.dockhand.middlewares=lan@docker"
+      - "traefik.http.routers.dockhand.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.routers.dockhand.tls=true"
       - "traefik.http.services.dockhand.loadbalancer.server.port=3000"
     healthcheck:
@@ -508,7 +517,7 @@ services:
       - "traefik.http.routers.pihole.rule=Host(`pihole.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.pihole.entrypoints=websecure"
       - "traefik.http.routers.pihole.tls=true"
-      - "traefik.http.routers.pihole.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.pihole.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.services.pihole.loadbalancer.server.port=8082"
     cpuset: "0-1"
     deploy: *cpu-request-medium
@@ -533,7 +542,7 @@ services:
       - "traefik.http.routers.n8n.rule=Host(`n8n.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.n8n.entrypoints=websecure"
       - "traefik.http.routers.n8n.tls=true"
-      - "traefik.http.routers.n8n.middlewares=lan@docker"
+      - "traefik.http.routers.n8n.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.services.n8n.loadbalancer.server.port=5678"
     environment:
       - N8N_HOST=n8n.${HOST_NAME:-pi.lan}
@@ -639,7 +648,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.headplane.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && PathPrefix(`/admin`)"
       - "traefik.http.routers.headplane.entrypoints=websecure"
-      - "traefik.http.routers.headplane.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.headplane.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.routers.headplane.tls=true"
       - "traefik.http.routers.headplane.tls.certresolver=cloudflare"
       - "traefik.http.services.headplane.loadbalancer.server.port=3000"
@@ -648,7 +657,7 @@ services:
       - "traefik.http.routers.headplane-wasm.tls=true"
       - "traefik.http.routers.headplane-wasm.tls.certresolver=cloudflare"
       - "traefik.http.routers.headplane-wasm.service=headplane"
-      - "traefik.http.routers.headplane-wasm.middlewares=wasm-path@docker"
+      - "traefik.http.routers.headplane-wasm.middlewares=frame-deny@docker,wasm-path@docker"
       - "traefik.http.middlewares.wasm-path.replacepathregex.regex=/(wasm_exec.js|hp_ssh.wasm)"
       - "traefik.http.middlewares.wasm-path.replacepathregex.replacement=/admin/$$1"
     healthcheck:
@@ -704,10 +713,10 @@ services:
       - "traefik.http.routers.headscale.tls.certresolver=cloudflare"
       - "traefik.http.routers.headscale.tls.domains[0].main=${HOST_NAME:-pi.lan}"
       - "traefik.http.routers.headscale.tls.domains[0].sans=*.${HOST_NAME:-pi.lan}"
-      - "traefik.http.routers.headscale.middlewares=cors"
+      - "traefik.http.routers.headscale.middlewares=frame-deny@docker,cors"
       - "traefik.http.routers.rewrite.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && Path(`/`)"
       - "traefik.http.routers.rewrite.service=headscale"
-      - "traefik.http.routers.rewrite.middlewares=rewrite"
+      - "traefik.http.routers.rewrite.middlewares=frame-deny@docker,rewrite"
       - "traefik.http.services.headscale.loadbalancer.server.port=8080"
       - "traefik.http.middlewares.rewrite.addprefix.prefix=/admin"
       - "traefik.http.middlewares.cors.headers.accesscontrolallowheaders=*"
@@ -829,11 +838,12 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.immich.rule=Host(`immich.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.immich.entrypoints=websecure"
-      - "traefik.http.routers.immich.middlewares=lan@docker"
+      - "traefik.http.routers.immich.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.routers.immich.tls=true"
       - "traefik.http.routers.immich.priority=10"
       - "traefik.http.routers.immich-public.rule=Host(`immich.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/share`) || PathPrefix(`/s/`) || PathPrefix(`/_app`) || PathPrefix(`/api`))"
       - "traefik.http.routers.immich-public.entrypoints=websecure"
+      - "traefik.http.routers.immich-public.middlewares=frame-deny@docker"
       - "traefik.http.routers.immich-public.tls=true"
       - "traefik.http.routers.immich-public.priority=20"
       - "traefik.http.services.immich.loadbalancer.server.port=2283"
@@ -902,12 +912,13 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`)"
-      - "traefik.http.routers.nextcloud.middlewares=lan@docker"
+      - "traefik.http.routers.nextcloud.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.routers.nextcloud.entrypoints=websecure"
       - "traefik.http.routers.nextcloud.tls=true"
       - "traefik.http.routers.nextcloud.priority=10"
       - "traefik.http.routers.nextcloud-public.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/s/`) || PathPrefix(`/public.php`) || PathPrefix(`/avatar/`) || PathPrefix(`/dist/`) || PathPrefix(`/apps/`) || PathPrefix(`/js/`) || PathPrefix(`/core/`) || PathPrefix(`/themes/`) || PathPrefix(`/remote.php/dav/calendars/`) || PathPrefix(`/remote.php/dav/public-calendars/`))"
       - "traefik.http.routers.nextcloud-public.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud-public.middlewares=frame-deny@docker"
       - "traefik.http.routers.nextcloud-public.tls=true"
       - "traefik.http.routers.nextcloud-public.priority=20"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
@@ -989,7 +1000,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.homepage.rule=Host(`homepage.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.homepage.entrypoints=websecure"
-      - "traefik.http.routers.homepage.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.homepage.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.routers.homepage.tls=true"
       - "traefik.http.services.homepage.loadbalancer.server.port=3000"
     depends_on:
@@ -1039,31 +1050,31 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.qbittorrent.rule=Host(`qbittorrent.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.qbittorrent.entrypoints=websecure"
-      - "traefik.http.routers.qbittorrent.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.qbittorrent.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.routers.qbittorrent.tls=true"
       - "traefik.http.routers.qbittorrent.service=qbittorrent"
       - "traefik.http.services.qbittorrent.loadbalancer.server.port=8080"
       - "traefik.http.routers.kapowarr.rule=Host(`kapowarr.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.kapowarr.entrypoints=websecure"
-      - "traefik.http.routers.kapowarr.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.kapowarr.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.routers.kapowarr.tls=true"
       - "traefik.http.routers.kapowarr.service=kapowarr"
       - "traefik.http.services.kapowarr.loadbalancer.server.port=5656"
       - "traefik.http.routers.stremio-root.rule=Host(`stremio.${HOST_NAME:-pi.lan}`) && Path(`/`)"
       - "traefik.http.routers.stremio-root.entrypoints=websecure"
-      - "traefik.http.routers.stremio-root.middlewares=lan@docker,stremio-webui-redirect@docker"
+      - "traefik.http.routers.stremio-root.middlewares=frame-deny@docker,lan@docker,stremio-webui-redirect@docker"
       - "traefik.http.routers.stremio-root.priority=30"
       - "traefik.http.routers.stremio-root.tls=true"
       - "traefik.http.routers.stremio-root.service=noop@internal"
       - "traefik.http.routers.stremio-local.rule=Host(`stremio.${HOST_NAME:-pi.lan}`) && ClientIP(`${HOST_LAN_SUBNET:-192.168.1.0/24}`)"
       - "traefik.http.routers.stremio-local.entrypoints=websecure"
-      - "traefik.http.routers.stremio-local.middlewares=lan@docker"
+      - "traefik.http.routers.stremio-local.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.routers.stremio-local.priority=20"
       - "traefik.http.routers.stremio-local.tls=true"
       - "traefik.http.routers.stremio-local.service=stremio"
       - "traefik.http.routers.stremio.rule=Host(`stremio.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.stremio.entrypoints=websecure"
-      - "traefik.http.routers.stremio.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.stremio.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.routers.stremio.priority=10"
       - "traefik.http.routers.stremio.tls=true"
       - "traefik.http.routers.stremio.service=stremio"
@@ -1095,7 +1106,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.qbittorrent.rule=Host(`qbittorrent.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.qbittorrent.entrypoints=websecure"
-      - "traefik.http.routers.qbittorrent.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.qbittorrent.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.routers.qbittorrent.tls=true"
       - "traefik.http.routers.qbittorrent.service=qbittorrent"
       - "traefik.http.services.qbittorrent.loadbalancer.server.port=8080"
@@ -1201,7 +1212,7 @@ services:
       # manifest/stream endpoints programmatically and cannot pass an interactive SSO login.
       - "traefik.http.routers.comet.rule=Host(`comet.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.comet.entrypoints=websecure"
-      - "traefik.http.routers.comet.middlewares=lan@docker"
+      - "traefik.http.routers.comet.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.routers.comet.tls=true"
       - "traefik.http.services.comet.loadbalancer.server.port=8000"
     healthcheck:
@@ -1231,7 +1242,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.prowlarr.rule=Host(`prowlarr.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.prowlarr.entrypoints=websecure"
-      - "traefik.http.routers.prowlarr.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.prowlarr.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.routers.prowlarr.tls=true"
       - "traefik.http.services.prowlarr.loadbalancer.server.port=9696"
       - "homepage.group=Download"
@@ -1273,7 +1284,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.kapowarr.rule=Host(`kapowarr.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.kapowarr.entrypoints=websecure"
-      - "traefik.http.routers.kapowarr.middlewares=lan@docker,authelia@docker"
+      - "traefik.http.routers.kapowarr.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.routers.kapowarr.tls=true"
       - "traefik.http.routers.kapowarr.service=kapowarr"
       - "traefik.http.services.kapowarr.loadbalancer.server.port=5656"
@@ -1370,7 +1381,7 @@ services:
       # so lan@docker only — no authelia in front (same rationale as Immich).
       - "traefik.http.routers.kavita.rule=Host(`kavita.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.kavita.entrypoints=websecure"
-      - "traefik.http.routers.kavita.middlewares=lan@docker"
+      - "traefik.http.routers.kavita.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.routers.kavita.tls=true"
       - "traefik.http.services.kavita.loadbalancer.server.port=5000"
     healthcheck:
@@ -1427,7 +1438,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.ntfy.rule=Host(`ntfy.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.ntfy.entrypoints=websecure"
-      - "traefik.http.routers.ntfy.middlewares=lan@docker"
+      - "traefik.http.routers.ntfy.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.routers.ntfy.tls=true"
       - "traefik.http.services.ntfy.loadbalancer.server.port=80"
     healthcheck:
@@ -1450,9 +1461,10 @@ services:
     # So the SSO_AUTHORITY discovery call resolves to Traefik from inside frontend.
     extra_hosts:
       - "auth.${HOST_NAME:-pi.lan}:172.30.11.250"
-    # SSO_CLIENT_SECRET has no *_FILE variant, so the mounted secret is exported
-    # before handing over to the image's own /start.sh. Same trick as open-webui.
-    entrypoint: ["sh", "-c", "export SSO_CLIENT_SECRET=$(cat /run/secrets/oidc_vaultwarden_secret) && exec /start.sh"]
+    # Neither SSO_CLIENT_SECRET nor ADMIN_TOKEN has a *_FILE variant, so the mounted
+    # secrets are exported before handing over to the image's own /start.sh. Same
+    # trick as open-webui. Both values are hex/PHC, so they need no quoting.
+    entrypoint: ["sh", "-c", "export SSO_CLIENT_SECRET=$(cat /run/secrets/oidc_vaultwarden_secret) ADMIN_TOKEN=$(cat /run/secrets/admin_token_hash) && exec /start.sh"]
     environment:
       - DOMAIN=https://vault.${HOST_NAME:-pi.lan}
       - DATABASE_URL=postgresql://vaultwarden:${PASSWORD}@postgres/vaultwarden
@@ -1460,6 +1472,8 @@ services:
       # let anyone on the tailnet create a vault. Invite from /admin instead.
       - SIGNUPS_ALLOWED=false
       - INVITATIONS_ALLOWED=true
+      # ADMIN_TOKEN is exported by the entrypoint from an Argon2id digest generated
+      # by scripts/vaultwarden-pre-start.sh - deliberately not derived from PASSWORD.
       # This does NOT remove the master password: that key encrypts the vault
       # itself and never reaches the identity provider.
       - SSO_ENABLED=true
@@ -1485,6 +1499,7 @@ services:
     volumes:
       - ${DATA_LOCATION:-./data}/vaultwarden:/data
       - ${DATA_LOCATION:-./data}/authelia-config/secrets/oidc_vaultwarden_secret.txt:/run/secrets/oidc_vaultwarden_secret:ro
+      - ${DATA_LOCATION:-./data}/authelia-config/secrets/vaultwarden_admin_token_hash:/run/secrets/admin_token_hash:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -1503,10 +1518,24 @@ services:
       # Deliberately no authelia@docker: forward-auth breaks the browser extension
       # and mobile clients, which cannot complete the interactive portal. They are
       # authenticated through OIDC instead (see SSO_* above).
+      # The websecure entrypoint's security-headers sets X-Frame-Options: DENY on
+      # every response, which Vaultwarden's own diagnostics flag: it replaces the
+      # SAMEORIGIN the API needs, and adds the header to the *-connector.html pages
+      # that must have none - those are framed by the browser extension from a
+      # chrome-extension:// origin, which any X-Frame-Options value would block.
+      # Restoring per-router requires re-emitting the header after the entrypoint.
+      - "traefik.http.middlewares.vaultwarden-frame.headers.customresponseheaders.X-Frame-Options=SAMEORIGIN"
       - "traefik.http.routers.vaultwarden.rule=Host(`vault.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.vaultwarden.entrypoints=websecure"
-      - "traefik.http.routers.vaultwarden.middlewares=lan@docker"
+      - "traefik.http.routers.vaultwarden.middlewares=vaultwarden-frame@docker,lan@docker"
       - "traefik.http.routers.vaultwarden.tls=true"
+      # Longer rule than the catch-all above, so Traefik's rule-length priority
+      # picks it for the connector pages without an explicit priority.
+      - "traefik.http.routers.vaultwarden-connector.rule=Host(`vault.${HOST_NAME:-pi.lan}`) && (Path(`/webauthn-connector.html`) || Path(`/sso-connector.html`))"
+      - "traefik.http.routers.vaultwarden-connector.entrypoints=websecure"
+      - "traefik.http.routers.vaultwarden-connector.middlewares=lan@docker"
+      - "traefik.http.routers.vaultwarden-connector.tls=true"
+      - "traefik.http.routers.vaultwarden-connector.service=vaultwarden"
       - "traefik.http.services.vaultwarden.loadbalancer.server.port=80"
     deploy: *cpu-request-tiny
     mem_limit: 256m
@@ -1561,7 +1590,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.lldap.rule=Host(`lldap.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.lldap.entrypoints=websecure"
-      - "traefik.http.routers.lldap.middlewares=lan@docker,rate-limit-auth@docker,authelia@docker"
+      - "traefik.http.routers.lldap.middlewares=frame-deny@docker,lan@docker,rate-limit-auth@docker,authelia@docker"
       - "traefik.http.routers.lldap.tls=true"
       - "traefik.http.services.lldap.loadbalancer.server.port=17170"
     deploy: *cpu-request-small
@@ -1612,7 +1641,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.authelia.rule=Host(`auth.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.authelia.entrypoints=websecure"
-      - "traefik.http.routers.authelia.middlewares=security-headers@docker"
+      - "traefik.http.routers.authelia.middlewares=frame-deny@docker,security-headers@docker"
       - "traefik.http.routers.authelia.tls=true"
       - "traefik.http.services.authelia.loadbalancer.server.port=9091"
       - "traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/authz/forward-auth"
@@ -1933,7 +1962,7 @@ services:
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.open-webui.rule=Host(`ai.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.open-webui.entrypoints=websecure"
-      - "traefik.http.routers.open-webui.middlewares=lan@docker"
+      - "traefik.http.routers.open-webui.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.routers.open-webui.tls=true"
       - "traefik.http.services.open-webui.loadbalancer.server.port=8080"
     deploy: *cpu-request-small

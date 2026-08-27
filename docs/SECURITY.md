@@ -111,7 +111,8 @@ flowchart LR
     R[Request] --> TLS["TLS termination"]
     TLS --> Compress["gzip"]
     Compress --> Headers["security-headers"]
-    Headers --> LAN{"lan\n(IP allowlist)"}
+    Headers --> Frame["frame-deny\n(per router)"]
+    Frame --> LAN{"lan\n(IP allowlist)"}
     LAN -->|denied| Block[403]
     LAN -->|allowed| Auth{"authelia\n(forward-auth)"}
     Auth -->|no session| Login["redirect to portal"]
@@ -123,9 +124,12 @@ flowchart LR
 | Header | Value | Why |
 |--------|-------|-----|
 | `Strict-Transport-Security` | `max-age=15552000; includeSubDomains` | Force HTTPS for 180 days |
-| `X-Frame-Options` | `DENY` | Clickjacking |
 | `X-Content-Type-Options` | `nosniff` | MIME sniffing |
 | `Referrer-Policy` | `same-origin` | Referrer leakage |
+
+**`X-Frame-Options` is separate, and per router.** An entrypoint middleware wraps every router's own middlewares, so its response headers win and no router can opt out. Vaultwarden has to opt out — its `*-connector.html` pages must carry no frame header at all — so the policy lives in a standalone `frame-deny` middleware that each router lists instead. Every router gets `DENY` except Vaultwarden's, which uses `SAMEORIGIN` on the main router and nothing on the connector router (see [Vaultwarden](#vaultwarden)).
+
+List `frame-deny@docker` **first** in a router's chain. Middlewares listed later sit further inside, and anything that short-circuits — the `lan` 403, an Authelia portal redirect, the Stremio redirect — returns without reaching them, so a frame middleware placed last silently omits the header on exactly those responses. Adding a new router means adding it there too; nothing enforces this automatically.
 
 **Rate limiting** — `rate-limit-auth` is applied to LLDAP only (`lldap.*`), after the forward-auth middleware: 10 req/s average per source IP, burst 20, to blunt credential stuffing.
 
@@ -158,7 +162,17 @@ Users enrol at the Authelia portal under **Security**, with **TOTP** (any authen
 
 Served at `https://vault.<HOST_NAME>`. Its data lives in the shared PostgreSQL instance (database and role `vaultwarden`, created by `config/postgres/init-databases.sh`), so it is dumped by `scripts/db-backup.sh vaultwarden` from a Backrest snapshot hook like every other database here. Only attachments, sends and the RSA signing key stay on disk, in `${DATA_LOCATION}/vaultwarden`. It reaches PostgreSQL over its own internal `vault` network, which deliberately does not include LLDAP.
 
-**Accounts.** `SIGNUPS_ALLOWED` is `false`: the router sits behind the LAN allowlist only, so open registration would let anyone on the LAN or the tailnet create a vault. `INVITATIONS_ALLOWED` stays `true`. The `/admin` panel is disabled — no `ADMIN_TOKEN` — so manage people through LLDAP and organisation invitations.
+**Accounts.** `SIGNUPS_ALLOWED` is `false`: the router sits behind the LAN allowlist only, so open registration would let anyone on the LAN or the tailnet create a vault. `INVITATIONS_ALLOWED` stays `true`, and `ADMIN_TOKEN` is set, so `/admin` is where you invite people. Read the token with:
+
+```bash
+sudo cat ${DATA_LOCATION}/authelia-config/secrets/vaultwarden_admin_token
+```
+
+**The admin token is not `PASSWORD`.** `scripts/vaultwarden-pre-start.sh` generates a random token on first start and hands the container only its Argon2id digest, so the plaintext never appears in `compose.yaml`, the container's environment or `docker inspect`. That matters because `/admin` inherits this router's middleware — the LAN allowlist and nothing else, no Authelia forward-auth — so reusing the SSO password would make a `PASSWORD` leak an admin-panel compromise as well. Like the OIDC client secrets and the ntfy passwords, `rotate-password.sh` deliberately leaves it alone; to change it, delete both files and restart.
+
+Vaultwarden accepts a plaintext `ADMIN_TOKEN` but logs a NOTICE about it on every start, and hashing has to happen outside the container because neither tool that can produce a PHC string reads the secret from stdin: `vaultwarden hash` wants a TTY, and Authelia's `crypto hash generate` wants `--password` on argv. The script borrows Authelia's CLI through a throwaway `docker run`, at its default `m=65536,t=3,p=4` — the same cost as Vaultwarden's own `bitwarden` preset.
+
+**Frame headers.** Vaultwarden sets its own `X-Frame-Options` and CSP, and its `/admin` diagnostics validate them end to end — so a reverse proxy that overwrites them shows up there as an `HTTP Response validation` error. Its API needs `SAMEORIGIN`, and `webauthn-connector.html` / `sso-connector.html` need *no* frame header, because the browser extension frames them from a `chrome-extension://` origin that any value would block. That is why these two routers are exempt from `frame-deny` ([above](#the-middleware-chain)); the connector router exists purely to carve those paths out.
 
 **SSO, with consequences.** Authentication is federated to Authelia (client `vaultwarden`, callback `https://vault.<HOST_NAME>/identity/connect/oidc-signin`, which Vaultwarden derives from `DOMAIN` and is not configurable). Two things follow:
 
@@ -171,7 +185,7 @@ Do **not** stack `authelia@docker` forward-auth on this router — the Bitwarden
 
 ## Secrets
 
-Generated on first start by `scripts/authelia-pre-start.sh`, mode `600`, under `${DATA_LOCATION}/authelia-config/secrets/`, never committed:
+Generated on first start, mode `600`, under `${DATA_LOCATION}/authelia-config/secrets/`, never committed. All but the last two come from `scripts/authelia-pre-start.sh`:
 
 | Secret | Purpose |
 |--------|---------|
@@ -183,6 +197,8 @@ Generated on first start by `scripts/authelia-pre-start.sh`, mode `600`, under `
 | `oidc_<client>_secret.txt` + `_hash` | Per-client shared secrets — plaintext mounted into the client, PBKDF2 hash for Authelia. One pair per client in the table above |
 | `db_password` | Authelia's Postgres password |
 | `ldap_password` | LLDAP bind password |
+| `vaultwarden_admin_token` | Vaultwarden `/admin` token, plaintext — the one you type. Written by `scripts/vaultwarden-pre-start.sh`, never mounted into any container |
+| `vaultwarden_admin_token_hash` | Argon2id digest of the above, the only form Vaultwarden receives |
 
 OIDC client secrets are injected into services through read-only Docker volumes — never through environment variables or baked into images.
 

@@ -177,3 +177,11 @@ journalctl -t pi-traefik           # same lines, survives container recreation
 ```
 
 Journald caps itself at 10% of the disk or 4 GB by default. Tune `SystemMaxUse=` in `/etc/systemd/journald.conf`, or reclaim with `journalctl --vacuum-time=30d`.
+
+Traefik additionally emits a JSON access log to the same journal — one object per request, carrying `ClientAddr`, `RequestHost`, `RouterName` and `DownstreamStatus`. It is the only record of a request a middleware rejected before it reached a backend, which is what makes an allowlist 403 attributable ([Troubleshooting → Access](TROUBLESHOOTING.md#access)):
+
+```bash
+journalctl -t pi-traefik -n 200 | grep '"DownstreamStatus":403'
+```
+
+This is the stack's chattiest log source, so it is the first thing to weigh if the journal cap starts biting.

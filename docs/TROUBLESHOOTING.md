@@ -26,6 +26,21 @@ make logs       # follow everything
 
 **A service returns 403.** The `lan` middleware refused your source IP. Either you are reaching it from outside your LAN and tailnet, or the request hairpinned through your router and arrived with the WAN address. Check `ALLOW_IP_RANGES` in `.env` against the network you are actually on.
 
+Traefik's access log records the address it actually saw, which is the one the allowlist judged — read it rather than guessing:
+
+```bash
+journalctl -t pi-traefik -n 200 | grep '"DownstreamStatus":403' | tail
+```
+
+To confirm the middleware is the culprit rather than the service, compare the two paths — bypassing DNS and the router should succeed where the hostname fails:
+
+```bash
+curl -k -o /dev/null -w '%{http_code}\n' -H "Host: vault.<HOST_NAME>" https://127.0.0.1/   # 200 = service is fine
+curl -k -o /dev/null -w '%{http_code}\n' https://vault.<HOST_NAME>/                        # 403 = allowlist
+```
+
+A split verdict means the client resolved the public address instead of the Pi-hole one and hairpinned back with the WAN source. This is stack-wide, not per-service: every router carries `lan`, so check a second hostname before suspecting one container. Browser DNS-over-HTTPS ("Secure DNS") is a common trigger, since it silently bypasses Pi-hole even on the LAN — see [DNS](#dns).
+
 **A service returns a generic 404 from Traefik.** Its router is gone. For qBittorrent, Prowlarr, Kapowarr and Stremio the usual cause is **gluetun being unhealthy** — they share its network namespace, so when it drops, all of their Traefik routes vanish at once rather than erroring individually. `docker compose ps gluetun` and `docker compose logs gluetun`.
 
 **Nothing resolves from outside.** Check that DNS points at your public IP and that 443 is forwarded:
