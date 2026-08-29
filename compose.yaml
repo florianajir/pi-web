@@ -1138,7 +1138,7 @@ services:
 
   stremio:
     <<: *service-defaults
-    image: stremio/server:v4.21.0
+    image: stremio/server:v4.21.1
     container_name: pi-stremio
     profiles: ["stremio", "all"]
     network_mode: "service:gluetun"
