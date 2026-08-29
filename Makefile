@@ -250,12 +250,15 @@ update:
 	@$(SUDO) systemctl try-restart $(WATCH_UNIT)
 # `up -d` compares a container's image and spec, not the contents of the files
 # bind-mounted into it, so a config the pull rewrote would sit on disk unread.
-# That is the one case where the old down/up did necessary work. (A config
-# edited by hand is still `make restart`; the diff cannot see it.)
+# That is the one case where the old down/up did necessary work. scripts/ is in
+# the path list too: the generated configs (headscale, backrest, headplane,
+# authelia) are gitignored, so a pull that re-renders one shows up only as a
+# change to the *-pre-start.sh that writes it. (A config edited by hand is
+# still `make restart`; the diff cannot see it.)
 # `systemctl restart`, not `$(MAKE) restart`: make runs any recipe line
 # mentioning $(MAKE) even under `--dry-run`.
-	@if [ -n "$(HEAD_BEFORE_PULL)" ] && ! git diff --quiet $(HEAD_BEFORE_PULL) HEAD -- config/; then \
-		echo "🔁 The pull changed config/; restarting so services read it..."; \
+	@if [ -n "$(HEAD_BEFORE_PULL)" ] && ! git diff --quiet $(HEAD_BEFORE_PULL) HEAD -- config/ scripts/; then \
+		echo "🔁 The pull changed config/ or scripts/; restarting so services read it..."; \
 		$(SUDO) systemctl restart $(UNIT); \
 	else \
 		echo "🚀 Applying changes (only what moved is recreated)..."; \

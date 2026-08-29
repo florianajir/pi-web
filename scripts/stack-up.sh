@@ -116,26 +116,20 @@ run_hook() {
 # `up -d` refuses when a network or volume *definition* changed: compose can
 # only apply that by removing the object, which needs the stack down. Without
 # the fallback an update aborts here, images pulled and host files applied.
+#
+# The output is captured rather than streamed: a pipeline into tee reports
+# tee's status, and dash has no pipefail, so streaming would mean carrying
+# compose's own status out of a subshell — and losing it there would report a
+# failure that never happened, which under systemd means ExecStop tearing down
+# a healthy stack.
 start_containers() {
-    _out="$(mktemp)"
-    _rc="$(mktemp)"
-    # shellcheck disable=SC2064 # expand the paths now, not at trap time
-    trap "rm -f '$_out' '$_rc'" EXIT INT TERM
-
-    # tee keeps compose's progress on screen, but dash has no pipefail and the
-    # pipeline's status is tee's — so carry compose's own out through a file.
-    # `|| _status=$?` also keeps set -e from killing the subshell first.
-    {
-        _status=0
-        compose up -d --remove-orphans 2>&1 || _status=$?
-        echo "$_status" >"$_rc"
-    } | tee "$_out"
-
-    if [ "$(cat "$_rc")" = 0 ]; then
+    if _out="$(compose up -d --remove-orphans 2>&1)"; then
+        printf '%s\n' "$_out"
         return 0
     fi
+    printf '%s\n' "$_out" >&2
 
-    case "$(cat "$_out")" in
+    case "$_out" in
         *"has incorrect"* | *"needs to be recreated"*) ;;
         *) die "docker compose up failed" ;;
     esac

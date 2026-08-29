@@ -57,7 +57,7 @@ Images are refreshed while the stack is still running, so nothing is interrupted
 
 Two cases still take the stack down, both because compose cannot apply them any other way:
 
-- **The pull changed something under `config/`.** `up -d` compares a container's image and spec, not the *contents* of the files bind-mounted into it, so a rewritten `unbound.conf` or a re-rendered `configuration.yml` would sit on disk unread. When `git diff` shows `config/` moved, `make update` restarts for real. (Editing a config by hand is still `make restart` — the update has no way to see it.)
+- **The pull changed something under `config/` or `scripts/`.** `up -d` compares a container's image and spec, not the *contents* of the files bind-mounted into it, so a rewritten `unbound.conf` would sit on disk unread. `scripts/` counts because the generated configs (headscale, backrest, headplane, authelia) are gitignored: a pull that re-renders one shows up only as a change to the `*-pre-start.sh` that writes it. (Editing a config by hand is still `make restart` — the update has no way to see it.)
 - **A network or volume definition moved** — an upstream subnet or driver option. `up -d` refuses outright there; `stack-up.sh` recognises the error, takes the stack down once and brings it back, rather than aborting with the new images already pulled.
 
 `make restart` is still there to force a full restart at any time.
