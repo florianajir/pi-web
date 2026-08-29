@@ -97,7 +97,7 @@ Two consequences specific to this stack: **group membership travels in the `grou
 | Pi-hole | ✓ | ✓ | — | LAN-only + admin + 2FA |
 | Backrest | ✓ | ✓ | — | LAN-only + admin + 2FA |
 | LLDAP | ✓ | ✓ | — | LAN-only + 2FA + its own auth + `rate-limit-auth` |
-| Stremio | ✓ | ✓ | — | LAN-only + SSO; a higher-priority router bypasses SSO for LAN source IPs, since streaming clients can't do the portal |
+| Stremio | ✓ | — | — | LAN-only; streaming clients and cast receivers can't do the portal |
 | Comet | ✓ | — | — | LAN-only; Stremio fetches manifests programmatically |
 
 Services with their own account system (Immich, Kavita) deliberately do **not** stack forward-auth on top of OIDC — their apps and clients cannot complete an interactive portal.

@@ -70,8 +70,25 @@ in_lines() {
     printf '%s\n' "$1" | grep -qx "$2"
 }
 
+# 0 if the comma-separated selection lists <name> exactly.
+selection_has() {
+    case ",$(printf '%s' "$1" | tr -d ' ')," in
+        *",$2,"*) return 0 ;;
+    esac
+    return 1
+}
+
 # Rewrite (or append) the COMPOSE_PROFILES line. Dry mode prints instead.
 write_profiles() {
+    # stremio and stremio-lan are one server in two networking modes, sharing a
+    # data volume and the same Traefik host rules. Refused here rather than in
+    # stack-up.sh alone, so a bad pick never reaches .env and leaves the stack
+    # unable to start (see docs/CONFIGURATION.md).
+    if selection_has "$1" stremio && selection_has "$1" stremio-lan; then
+        echo "❌ stremio and stremio-lan cannot both run: same server, two networking" >&2
+        echo "   modes, one data volume. Keep stremio (VPN) or stremio-lan (casting)." >&2
+        return 1
+    fi
     if is_dry_run; then
         echo "DRY-RUN: would write to $ENV_FILE: COMPOSE_PROFILES=$1"
         return 0
@@ -298,7 +315,14 @@ EOF
 
     # Everything ticked is written as "all", so a service added by a later
     # update is enabled too instead of silently missing from an explicit list.
-    if [ "$(printf '%s\n' "$_selection" | grep -v '^$' | sort)" = "$_known" ]; then
+    # Compared against the profiles "all" actually covers, not every declared
+    # one: a profile deliberately outside it (stremio-lan) must stay explicit,
+    # otherwise ticking it would collapse to "all" and silently not run it.
+    _allsvc="$(mktemp)"
+    services_for_profiles all | sort >"$_allsvc"
+    _known_in_all="$(printf '%s\n' "$_known" | grep -Fxf "$_allsvc" || true)"
+    rm -f "$_allsvc"
+    if [ "$(printf '%s\n' "$_selection" | grep -v '^$' | sort)" = "$_known_in_all" ]; then
         echo all
     else
         printf '%s\n' "$_selection" | grep -v '^$' | paste -sd, - || true

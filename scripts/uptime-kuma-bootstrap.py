@@ -133,6 +133,7 @@ GROUPS = [
         "containers": [
             "pi-qbittorrent",
             "pi-stremio",
+            "pi-stremio-lan",
             "pi-comet",
             "pi-prowlarr",
             "pi-kapowarr",

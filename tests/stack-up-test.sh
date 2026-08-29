@@ -143,6 +143,29 @@ lacks    "and still gates the others"         "$out" "HOOK prowlarr-pre-start.sh
 # Defined but empty is core-only — what docker compose itself does with it.
 out="$(run "")"
 contains "core hooks still run when empty"    "$out" "HOOK ntfy-pre-start.sh"
+
+# --- stremio / stremio-lan are exclusive ------------------------------------
+#
+# One server in two networking modes, sharing a data volume and the same Traefik
+# host rules. Refused before anything starts rather than left to fight at runtime.
+
+run_rc stremio,stremio-lan
+ok       "both stremio modes are refused"     "$rc" 1
+contains "and the reason is named"            "$out" "stremio-lan"
+
+run_rc stremio
+ok       "stremio alone is fine"              "$rc" 0
+
+run_rc stremio-lan
+ok       "stremio-lan alone is fine"          "$rc" 0
+
+# "all" does not carry stremio-lan, so the catch-all must not trip the guard.
+run_rc all
+ok       "all is not treated as both"         "$rc" 0
+
+# Exact entries only: the substring must not make stremio-lan match stremio.
+run_rc stremio-lan,comet
+ok       "no substring match on the guard"    "$rc" 0
 lacks    "empty selects no optional service"  "$out" "HOOK kavita-oidc-bootstrap.sh"
 
 # --- ordering and the compose call ------------------------------------------

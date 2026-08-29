@@ -51,6 +51,7 @@ Defaults suit a `192.168.1.0/24` LAN. The installer auto-detects all of these.
 | `HOST_LAN_SUBNET` | `192.168.1.0/24` | Your home network CIDR |
 | `HOST_LAN_GATEWAY` | `192.168.1.1` | Your router's IP |
 | `PIHOLE_IP` | `192.168.1.250` | Pi-hole's own LAN address — in the subnet, outside the DHCP range |
+| `STREMIO_IP` | `192.168.1.251` | Only for the `stremio-lan` profile — Stremio's own LAN address, so it can discover cast renderers. Same constraints as `PIHOLE_IP` |
 | `PIHOLE_DNS_UPSTREAMS` | `172.30.53.53#5335;1.1.1.1;9.9.9.9` | Unbound first; the public resolvers are failover only |
 | `ALLOW_IP_RANGES` | `127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16` | Comma-separated CIDRs allowed to reach the services |
 
@@ -144,13 +145,16 @@ COMPOSE_PROFILES=                                             # core services on
 
 **Core services always run** (they carry no profile): `traefik`, `authelia`, `lldap`, `postgres`, `redis`, `pihole`, `unbound`, `headscale`, `tailscale`, `ntfy`, `backrest`, `ddns-updater`, `homepage`. Pi-hole and Unbound stay core because subdomain resolution depends on the Pi-hole wildcard record; Headscale and Tailscale stay core because they provide remote access to everything else.
 
-**Optional services:** `beszel`, `beszel-agent`, `uptime-kuma`, `dockhand`, `n8n`, `n8n-runners`, `headplane`, `immich-server`, `immich-machine-learning`, `nextcloud`, `gluetun`, `qbittorrent`, `stremio`, `comet`, `prowlarr`, `kapowarr`, `flaresolverr`, `kavita`, `vaultwarden`, `llama-cpp`, `piper`, `parakeet`, `system-tools`, `open-webui`.
+**Optional services:** `beszel`, `beszel-agent`, `uptime-kuma`, `dockhand`, `n8n`, `n8n-runners`, `headplane`, `immich-server`, `immich-machine-learning`, `nextcloud`, `gluetun`, `qbittorrent`, `stremio`, `stremio-lan`, `comet`, `prowlarr`, `kapowarr`, `flaresolverr`, `kavita`, `vaultwarden`, `llama-cpp`, `piper`, `parakeet`, `system-tools`, `open-webui`.
+
+`stremio` and `stremio-lan` are the same server in two networking modes and are **mutually exclusive** — they share one data volume and the same Traefik host rules, and `stack-up.sh` refuses a selection containing both. `stremio` is the default (VPN); pick `stremio-lan` only to cast to a DLNA/UPnP renderer, and read the trade-off in [Networking → Casting](NETWORKING.md#casting-to-a-dlna-renderer) first. `stremio-lan` is not part of `all`.
 
 **Some services pull in their dependencies** — the dependency carries the dependent's profile too, so enabling one starts both:
 
 | Enabling | Also starts |
 |----------|-------------|
 | `qbittorrent`, `stremio` or `kapowarr` | `gluetun` (their VPN network namespace) |
+| `stremio-lan` | nothing — it is deliberately off the VPN |
 | `n8n-runners` | `n8n` |
 | `beszel-agent` | `beszel` |
 | `prowlarr` | `flaresolverr` |
