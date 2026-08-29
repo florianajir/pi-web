@@ -55,6 +55,9 @@ ROOT_GROUP = "pi-pcloud"
 # several hundred MB of SQLite for graphs nobody reads past a quarter.
 KEEP_DATA_PERIOD_DAYS = 90
 
+# Ceiling on the wait for the server to announce which login path applies.
+LOGIN_MODE_WAIT_SECONDS = 15
+
 # ntfy notification tiers. All four publish to the same topic (the "monitoring"
 # topic granted to the uptime-kuma ntfy user by scripts/ntfy-pre-start.sh); only
 # the priority differs, which is what drives the phone's do-not-disturb
@@ -428,14 +431,30 @@ class UptimeKumaBootstrap:
             try:
                 self.sio.connect(self.url, transports=["websocket"], wait_timeout=self.timeout)
                 self._connected.wait(timeout=self.timeout)
-                # Give the server time to emit autoLogin or setup.
-                time.sleep(2)
+                self._wait_for_login_mode()
                 return
             except Exception as e:
                 last_err = e
                 time.sleep(2)
         log(f"ERROR: Could not connect: {last_err}")
         sys.exit(1)
+
+    def _wait_for_login_mode(self):
+        """Wait for autoLogin (auth disabled) or setup (fresh instance).
+
+        Both arrive on the server's own schedule, and a container that has just
+        been recreated routinely takes longer than a flat sleep: falling through
+        early means attempting the password login, which is not the intended
+        path once auth is disabled, and that exits the bootstrap. An instance
+        with auth still enabled emits neither event, so this is a ceiling rather
+        than a wait.
+        """
+        deadline = time.time() + LOGIN_MODE_WAIT_SECONDS
+        while time.time() < deadline:
+            if self._auto_logged_in.is_set() or self._need_setup.is_set():
+                return
+            time.sleep(0.2)
+        log(f"No autoLogin or setup within {LOGIN_MODE_WAIT_SECONDS}s; assuming auth is enabled")
 
     def disconnect(self):
         try:
