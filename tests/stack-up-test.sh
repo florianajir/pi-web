@@ -79,23 +79,52 @@ hook_entries | sed 's/.*://' | sort -u | while read -r name; do
     printf '#!/bin/sh\necho "HOOK %s"\n' "$name" >"$WORK/scripts/$name"
 done
 
-printf '#!/bin/sh\necho "DOCKER $*"\n' >"$WORK/bin/docker"
+# The stub announces every call, and fails the next `up` once when the control
+# file exists — enough to exercise the down/up fallback without looping.
+cat >"$WORK/bin/docker" <<STUB
+#!/bin/sh
+echo "DOCKER \$*"
+if [ "\$1" = compose ] && [ "\$2" = up ] && [ -f "$WORK/fail-up" ]; then
+    cat "$WORK/fail-up"
+    rm -f "$WORK/fail-up"
+    exit 1
+fi
+exit 0
+STUB
 chmod +x "$WORK/bin/docker"
 PATH="$WORK/bin:$PATH"
 export PATH
 
-# run <compose-profiles-line> : the .env line to write, or "none" for a file
-# with no COMPOSE_PROFILES at all. COMPOSE_PROFILES is unset in the
-# environment, the way make (unlike systemd) leaves it.
-run() {
+# run_rc <compose-profiles-line> [args...] : write the .env line ("none" for a
+# file with no COMPOSE_PROFILES at all), run the script exactly once — the
+# docker stub's failure mode is one-shot, so a second run would not see it —
+# and leave its output in $out and its exit status in $rc. COMPOSE_PROFILES is
+# unset in the environment, the way make (unlike systemd) leaves it.
+run_rc() {
     if [ "$1" = none ]; then
         : >"$WORK/.env"
     else
         printf 'COMPOSE_PROFILES=%s\n' "$1" >"$WORK/.env"
     fi
     shift
-    env -u COMPOSE_PROFILES sh "$WORK/scripts/stack-up.sh" "$@" 2>&1 || true
+    out="$(env -u COMPOSE_PROFILES sh "$WORK/scripts/stack-up.sh" "$@" 2>&1)" && rc=0 || rc=$?
 }
+
+# Same, for the cases that only care about the output.
+run() {
+    run_rc "$@"
+    printf '%s\n' "$out"
+}
+
+# --- no arguments -----------------------------------------------------------
+#
+# Refused rather than ignored, so a caller that thinks it is passing an option
+# (the Makefile used to pass --remove-orphans) is told, instead of silently
+# getting a different start than the unit's.
+
+run_rc all --remove-orphans
+ok       "an argument is refused"             "$rc" 1
+contains "and named"                          "$out" "takes no arguments"
 
 # --- gating -----------------------------------------------------------------
 
@@ -110,6 +139,13 @@ lacks    "an unselected service is skipped"   "$out" "HOOK prowlarr-pre-start.sh
 out="$(run none)"
 contains "no line at all means everything"    "$out" "HOOK prowlarr-pre-start.sh"
 
+# A quoted value is what a verbatim .env read hands back; Compose, systemd and
+# run-if-enabled.sh all strip the quotes, so this must too — otherwise the
+# selection matches nothing while --remove-orphans deletes the containers.
+out="$(run '"qbittorrent"')"
+contains "a quoted value is unquoted"         "$out" "HOOK qbittorrent-pre-start.sh"
+lacks    "and still gates the others"         "$out" "HOOK prowlarr-pre-start.sh"
+
 # Defined but empty is core-only — what docker compose itself does with it.
 out="$(run "")"
 contains "core hooks still run when empty"    "$out" "HOOK ntfy-pre-start.sh"
@@ -117,7 +153,9 @@ lacks    "empty selects no optional service"  "$out" "HOOK kavita-oidc-bootstrap
 
 # --- ordering and the compose call ------------------------------------------
 
-out="$(run all --remove-orphans)"
+# --remove-orphans is not a caller's argument: both the unit and the Makefile
+# have to get the same behaviour, so the script passes it itself.
+out="$(run all)"
 contains "compose is asked to start the stack" "$out" "DOCKER compose up -d --remove-orphans"
 
 # Configuration is rendered before anything starts, bootstraps only after.
@@ -132,31 +170,59 @@ ok "pre-start, then up, then bootstrap" \
 # pre-start failure must stop the start, a bootstrap failure must not.
 
 printf '#!/bin/sh\nexit 1\n' >"$WORK/scripts/ntfy-pre-start.sh"
-printf 'COMPOSE_PROFILES=all\n' >"$WORK/.env"
-out="$(env -u COMPOSE_PROFILES sh "$WORK/scripts/stack-up.sh" 2>&1)" && rc=0 || rc=$?
+run_rc all
 ok       "a failed pre-start hook fails the start" "$rc" 1
 lacks    "and nothing is started"                  "$out" "DOCKER compose up"
 printf '#!/bin/sh\necho "HOOK ntfy-pre-start.sh"\n' >"$WORK/scripts/ntfy-pre-start.sh"
 
 printf '#!/bin/sh\nexit 1\n' >"$WORK/scripts/pihole-bootstrap.sh"
-out="$(env -u COMPOSE_PROFILES sh "$WORK/scripts/stack-up.sh" 2>&1)" && rc=0 || rc=$?
+run_rc all
 ok       "a failed bootstrap does not fail the start" "$rc" 0
 contains "it warns instead"                           "$out" "pihole-bootstrap.sh failed"
 contains "and the later bootstraps still run"         "$out" "HOOK homepage-widgets-bootstrap.sh"
 
 # --- a hook that went missing -----------------------------------------------
 #
-# Same rule as a failure: fatal before the start, a warning after it.
+# Same rule as a failure: fatal before the start, a warning after it. And for a
+# disabled service, nothing at all — the unit's `run-if-enabled.sh <svc> <cmd>`
+# returned 0 without ever reaching the script, so an absent hook for a service
+# that is off must stay a non-event.
 
 rm -f "$WORK/scripts/kavita-oidc-bootstrap.sh"
-out="$(env -u COMPOSE_PROFILES sh "$WORK/scripts/stack-up.sh" 2>&1)" && rc=0 || rc=$?
-ok       "a missing bootstrap only warns"                "$rc" 0
-contains "and it is named"                               "$out" "kavita-oidc-bootstrap.sh is missing"
+run_rc all
+ok       "a missing bootstrap does not fail the start"    "$rc" 0
+contains "it is named"                                    "$out" "kavita-oidc-bootstrap.sh is missing"
+
+rm -f "$WORK/scripts/prowlarr-pre-start.sh"
+run_rc qbittorrent
+ok       "a disabled service's missing hook is ignored"   "$rc" 0
+lacks    "and is not reported as missing"                 "$out" "prowlarr-pre-start.sh is missing"
+contains "the start goes ahead"                           "$out" "DOCKER compose up"
+printf '#!/bin/sh\necho "HOOK prowlarr-pre-start.sh"\n' >"$WORK/scripts/prowlarr-pre-start.sh"
 
 rm -f "$WORK/scripts/backrest-pre-start.sh"
-out="$(env -u COMPOSE_PROFILES sh "$WORK/scripts/stack-up.sh" 2>&1)" && rc=0 || rc=$?
-ok       "a missing pre-start hook fails the start"      "$rc" 1
-lacks    "and nothing is started either"                 "$out" "DOCKER compose up"
+run_rc all
+ok       "a missing pre-start hook fails the start"       "$rc" 1
+lacks    "and nothing is started either"                  "$out" "DOCKER compose up"
+printf '#!/bin/sh\necho "HOOK backrest-pre-start.sh"\n' >"$WORK/scripts/backrest-pre-start.sh"
+
+# --- a network or volume definition that moved ------------------------------
+#
+# compose cannot apply that in place; it has to be allowed to take the stack
+# down, or an update aborts with the images already pulled.
+
+printf 'network pi-web_default was found but has incorrect label\n' >"$WORK/fail-up"
+out="$(run all)"
+contains "the failure is diagnosed"      "$out" "needs the stack down"
+contains "compose is allowed a down"     "$out" "DOCKER compose down --remove-orphans"
+ok "and the up is retried after it" \
+    "$(printf '%s\n' "$out" | grep -c 'DOCKER compose up -d --remove-orphans')" 2
+
+# Any other failure is a real one and must not be papered over with a restart.
+printf 'error: pull access denied for ghcr.io/nope\n' >"$WORK/fail-up"
+run_rc all
+ok       "an unrelated failure stops the start" "$rc" 1
+lacks    "without taking the stack down"        "$out" "DOCKER compose down"
 
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]

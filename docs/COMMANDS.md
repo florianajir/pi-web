@@ -53,7 +53,14 @@ The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pul
 
 Images are refreshed while the stack is still running, so nothing is interrupted until the very end. It pulls only what the current `COMPOSE_PROFILES` selects, rebuilds the images built from `config/*/Dockerfile` against their updated bases, and finishes with `docker image prune -f` — dangling layers only, nothing a container still references. Expect several minutes on a Pi when base images have moved.
 
-**It does not restart the stack.** The last step is `docker compose up -d`, which recreates only the containers whose image or configuration actually changed — a single new image no longer costs a full-stack outage, and services that did not move are never touched. The whole start sequence (the pre-start hooks that render configuration, the `up`, then the bootstraps) lives in `scripts/stack-up.sh`, which is also `pi-pcloud.service`'s `ExecStart`: an update re-runs exactly what boot runs, so the two cannot drift. To force a genuine full restart, `make restart` is still there.
+**It usually does not restart the stack.** The last step is `docker compose up -d --remove-orphans`, which recreates only the containers whose image or configuration actually changed — a single new image no longer costs a full-stack outage, and services that did not move are never touched. The whole start sequence (the pre-start hooks that render configuration, the `up`, then the bootstraps) lives in `scripts/stack-up.sh`, which is also `pi-pcloud.service`'s `ExecStart`: an update re-runs exactly what boot runs, so the two cannot drift.
+
+Two cases still take the stack down, both because compose cannot apply them any other way:
+
+- **The pull changed something under `config/`.** `up -d` compares a container's image and spec, not the *contents* of the files bind-mounted into it, so a rewritten `unbound.conf` or a re-rendered `configuration.yml` would sit on disk unread. When `git diff` shows `config/` moved, `make update` restarts for real. (Editing a config by hand is still `make restart` — the update has no way to see it.)
+- **A network or volume definition moved** — an upstream subnet or driver option. `up -d` refuses outright there; `stack-up.sh` recognises the error, takes the stack down once and brings it back, rather than aborting with the new images already pulled.
+
+`make restart` is still there to force a full restart at any time.
 
 It also re-runs `install-system`, because a pull can change files this repository copies **outside** itself: the systemd units, the sysctl drop-in, the shell completions. Those copies would otherwise sit stale until the next `make install`. And it validates `.env` against the required-variable list *first*, so a variable added upstream is caught before anything is applied rather than after.
 

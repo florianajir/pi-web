@@ -9,10 +9,9 @@
 # Makefile. Compose then recreates only the containers whose image or
 # configuration actually moved; everything else keeps running.
 #
-# Usage: stack-up.sh [extra `docker compose up` arguments]
-#   e.g. stack-up.sh --remove-orphans   (what the Makefile passes: an update
-#   should drop containers the pull or a profile change removed, the way the
-#   old down/up did)
+# Takes no arguments: everything it does must be identical whether systemd or
+# the Makefile calls it, so nothing here is left for the caller to pass — or to
+# forget.
 #
 # Host-only, never mounted into a container, so sourcing lib.sh is fine here.
 
@@ -20,6 +19,8 @@ set -eu
 
 # shellcheck source=scripts/lib.sh disable=SC1091
 . "$(dirname "$0")/lib.sh"
+
+[ "$#" -eq 0 ] || die "takes no arguments (got: $*)"
 
 # systemd hands us COMPOSE_PROFILES through EnvironmentFile=.env, falling back
 # to its own Environment=all for installs whose .env predates per-service
@@ -29,7 +30,16 @@ set -eu
 # value is kept as-is — that means core-only, not "everything".
 if [ -z "${COMPOSE_PROFILES+x}" ]; then
     if grep -qE '^COMPOSE_PROFILES=' "$ENV_FILE" 2>/dev/null; then
-        COMPOSE_PROFILES="$(get_env_value COMPOSE_PROFILES)"
+        # get_env_value reads the file verbatim, so it hands back the quotes
+        # and any CRLF that Compose, systemd's EnvironmentFile= and
+        # run-if-enabled.sh all strip. Left in, `"stremio"` would match no
+        # profile at all — and --remove-orphans below would then delete every
+        # optional container as an orphan.
+        COMPOSE_PROFILES="$(get_env_value COMPOSE_PROFILES | tr -d '\r')"
+        case "$COMPOSE_PROFILES" in
+            \"*\") COMPOSE_PROFILES="${COMPOSE_PROFILES#\"}"; COMPOSE_PROFILES="${COMPOSE_PROFILES%\"}" ;;
+            \'*\') COMPOSE_PROFILES="${COMPOSE_PROFILES#\'}"; COMPOSE_PROFILES="${COMPOSE_PROFILES%\'}" ;;
+        esac
     else
         COMPOSE_PROFILES=all
     fi
@@ -91,17 +101,22 @@ run_hooks() {
                 ;;
         esac
 
+        # The gate comes first, and decides on its own (run-if-enabled.sh in
+        # test mode) rather than by wrapping the call. A disabled service is
+        # then skipped without its script being looked at, which is what the
+        # unit's `run-if-enabled.sh <svc> <cmd>` lines did: they returned 0
+        # long before anything could notice the script was missing.
+        if [ -n "$_service" ] && ! /bin/sh "$SCRIPT_DIR/run-if-enabled.sh" "$_service"; then
+            log "$_script skipped ($_service disabled)"
+            continue
+        fi
+
         if [ ! -f "$SCRIPT_DIR/$_script" ]; then
             hook_problem "$_script is missing"
             continue
         fi
 
-        if [ -n "$_service" ]; then
-            run_hook /bin/sh "$SCRIPT_DIR/run-if-enabled.sh" "$_service" \
-                /bin/sh "$SCRIPT_DIR/$_script"
-        else
-            run_hook /bin/sh "$SCRIPT_DIR/$_script"
-        fi
+        run_hook /bin/sh "$SCRIPT_DIR/$_script"
     done
 }
 
@@ -116,13 +131,50 @@ run_hook() {
     "$@" || hook_problem "$_script failed"
 }
 
+# `up -d` recreates only the containers whose image or configuration moved,
+# which is what makes running this on a live stack cheap. It refuses, though,
+# when a network or volume *definition* changed: compose can only apply that by
+# removing the object, and that means taking the stack down first. Rare — an
+# upstream subnet or driver option moving — but without this an update would
+# abort right here, with the new images pulled and the host files already
+# applied, leaving every container on the old ones.
+start_containers() {
+    _out="$(mktemp)"
+    _rc="$(mktemp)"
+    # shellcheck disable=SC2064 # expand the paths now, not at trap time
+    trap "rm -f '$_out' '$_rc'" EXIT INT TERM
+
+    # dash has no pipefail and the pipeline's status is tee's, so carry
+    # compose's own out through a file. tee keeps its progress on screen.
+    # `|| _status=$?` is also what keeps set -e from killing the subshell
+    # before the status is written.
+    {
+        _status=0
+        compose up -d --remove-orphans 2>&1 || _status=$?
+        echo "$_status" >"$_rc"
+    } | tee "$_out"
+
+    if [ "$(cat "$_rc")" = 0 ]; then
+        return 0
+    fi
+
+    case "$(cat "$_out")" in
+        *"has incorrect"* | *"needs to be recreated"*) ;;
+        *) die "docker compose up failed" ;;
+    esac
+
+    log "A network or volume definition changed; that one needs the stack down"
+    compose down --remove-orphans
+    compose up -d --remove-orphans
+}
+
 # --- Run ---
 
 log "Preparing configuration..."
 run_hooks blocking "$PRE_START_HOOKS"
 
 log "Starting containers (only what changed is recreated)..."
-(cd "$PROJECT_DIR" && docker compose up -d "$@")
+start_containers
 
 log "Running bootstraps..."
 run_hooks tolerant "$POST_START_HOOKS"
