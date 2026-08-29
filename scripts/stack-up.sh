@@ -1,17 +1,9 @@
 #!/bin/sh
-# Bring the stack to the state the repository describes: the pre-start hooks,
-# `docker compose up -d`, then the post-start bootstraps.
-#
-# The single source of truth for that sequence. pi-pcloud.service calls it as
-# its ExecStart, and so do `make update` / `make update-images` — which is the
-# point: an update can re-run exactly what boot runs *without stopping
-# anything first*, and the hook list cannot drift between the unit and the
-# Makefile. Compose then recreates only the containers whose image or
-# configuration actually moved; everything else keeps running.
-#
-# Takes no arguments: everything it does must be identical whether systemd or
-# the Makefile calls it, so nothing here is left for the caller to pass — or to
-# forget.
+# The stack's start sequence: pre-start hooks, `docker compose up -d`, then the
+# bootstraps. pi-pcloud.service runs it as its ExecStart and `make update` runs
+# it directly, so an update applies changes without stopping anything first and
+# the two cannot drift. Takes no arguments, so neither caller can ask for a
+# different start than the other.
 #
 # Host-only, never mounted into a container, so sourcing lib.sh is fine here.
 
@@ -22,19 +14,15 @@ set -eu
 
 [ "$#" -eq 0 ] || die "takes no arguments (got: $*)"
 
-# systemd hands us COMPOSE_PROFILES through EnvironmentFile=.env, falling back
-# to its own Environment=all for installs whose .env predates per-service
-# profiles. Run from make there is no such wrapper, so reproduce both rules
-# here and export the result: compose reads it for the selection, and
-# run-if-enabled.sh reads it to gate the per-service hooks. A defined-but-empty
-# value is kept as-is — that means core-only, not "everything".
+# systemd supplies COMPOSE_PROFILES (EnvironmentFile=.env, falling back to its
+# own Environment=all for installs predating per-service profiles). Under make
+# there is no such wrapper, so both rules are reproduced here. Empty stays
+# empty: that means core-only, not everything.
 if [ -z "${COMPOSE_PROFILES+x}" ]; then
     if grep -qE '^COMPOSE_PROFILES=' "$ENV_FILE" 2>/dev/null; then
-        # get_env_value reads the file verbatim, so it hands back the quotes
-        # and any CRLF that Compose, systemd's EnvironmentFile= and
-        # run-if-enabled.sh all strip. Left in, `"stremio"` would match no
-        # profile at all — and --remove-orphans below would then delete every
-        # optional container as an orphan.
+        # Compose, systemd and run-if-enabled.sh all strip quotes and CR;
+        # get_env_value reads verbatim. Left in, `"stremio"` would match no
+        # profile while --remove-orphans deleted the optional containers.
         COMPOSE_PROFILES="$(get_env_value COMPOSE_PROFILES | tr -d '\r')"
         case "$COMPOSE_PROFILES" in
             \"*\") COMPOSE_PROFILES="${COMPOSE_PROFILES#\"}"; COMPOSE_PROFILES="${COMPOSE_PROFILES%\"}" ;;
@@ -48,12 +36,10 @@ fi
 
 # --- The sequence ---
 #
-# An entry is "script.sh", or "service:script.sh" for a hook that belongs to an
-# optional service — the latter goes through run-if-enabled.sh, so it is
-# skipped when COMPOSE_PROFILES does not select that service.
+# An entry is "script.sh", or "service:script.sh" to gate it on that optional
+# service being selected.
 
-# Rendered configuration and generated secrets. Blocking, like an ExecStartPre
-# without a `-`: nothing should start against a half-written configuration.
+# Blocking: nothing should start against a half-written configuration.
 PRE_START_HOOKS='
 authelia-pre-start.sh
 headscale-pre-start.sh
@@ -66,9 +52,8 @@ kapowarr:kapowarr-pre-start.sh
 llama-cpp:llama-cpp-pre-start.sh
 '
 
-# Bootstraps that need their service answering. Best-effort, like the unit's
-# `-` prefix: a service slow to come up must not fail the whole start, and
-# every one of them is idempotent, so the next run picks up what was missed.
+# Best-effort: these need their service answering, and a slow one must not fail
+# the start. All idempotent, so the next run picks up whatever was missed.
 POST_START_HOOKS='
 headscale-init.sh
 beszel-agent:beszel-agent-bootstrap.sh
@@ -101,11 +86,8 @@ run_hooks() {
                 ;;
         esac
 
-        # The gate comes first, and decides on its own (run-if-enabled.sh in
-        # test mode) rather than by wrapping the call. A disabled service is
-        # then skipped without its script being looked at, which is what the
-        # unit's `run-if-enabled.sh <svc> <cmd>` lines did: they returned 0
-        # long before anything could notice the script was missing.
+        # Gate before the script is looked at: the unit's `run-if-enabled.sh
+        # <svc> <cmd>` returned 0 for a disabled service without reaching it.
         if [ -n "$_service" ] && ! /bin/sh "$SCRIPT_DIR/run-if-enabled.sh" "$_service"; then
             log "$_script skipped ($_service disabled)"
             continue
@@ -120,8 +102,8 @@ run_hooks() {
     done
 }
 
-# Both apply the mode of the enclosing run_hooks call — the `-` prefix the
-# unit's Exec* lines used to carry, now carried by which list a hook is in.
+# Both read the enclosing run_hooks' mode — the `-` prefix the unit's Exec*
+# lines carried, now carried by which list a hook is in.
 hook_problem() {
     [ "$_mode" = tolerant ] || die "$1"
     log "warning: $1 (continuing)"
@@ -131,23 +113,18 @@ run_hook() {
     "$@" || hook_problem "$_script failed"
 }
 
-# `up -d` recreates only the containers whose image or configuration moved,
-# which is what makes running this on a live stack cheap. It refuses, though,
-# when a network or volume *definition* changed: compose can only apply that by
-# removing the object, and that means taking the stack down first. Rare — an
-# upstream subnet or driver option moving — but without this an update would
-# abort right here, with the new images pulled and the host files already
-# applied, leaving every container on the old ones.
+# `up -d` refuses when a network or volume *definition* changed: compose can
+# only apply that by removing the object, which needs the stack down. Without
+# the fallback an update aborts here, images pulled and host files applied.
 start_containers() {
     _out="$(mktemp)"
     _rc="$(mktemp)"
     # shellcheck disable=SC2064 # expand the paths now, not at trap time
     trap "rm -f '$_out' '$_rc'" EXIT INT TERM
 
-    # dash has no pipefail and the pipeline's status is tee's, so carry
-    # compose's own out through a file. tee keeps its progress on screen.
-    # `|| _status=$?` is also what keeps set -e from killing the subshell
-    # before the status is written.
+    # tee keeps compose's progress on screen, but dash has no pipefail and the
+    # pipeline's status is tee's — so carry compose's own out through a file.
+    # `|| _status=$?` also keeps set -e from killing the subshell first.
     {
         _status=0
         compose up -d --remove-orphans 2>&1 || _status=$?

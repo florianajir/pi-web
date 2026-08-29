@@ -3,9 +3,7 @@
 # and `make update`.
 #
 # Everything runs against a throwaway copy of the script with stub hooks and a
-# stub `docker` on PATH, so no container, no systemd and no host change. The
-# point is the two things the refactor made possible to get wrong: a hook that
-# stops being run, and a hook that runs when its service is disabled.
+# stub `docker` on PATH, so no container, no systemd and no host change.
 # Run with `make test`.
 set -eu
 
@@ -50,8 +48,8 @@ hook_entries() {
 # --- the sequence is complete -----------------------------------------------
 #
 # The drift this file exists to catch: a hook script sitting in scripts/ that
-# nothing in the sequence runs. Discovered by filename convention, so a service
-# added later is covered without touching this test.
+# nothing in the sequence runs. By filename convention, so a service added
+# later is covered without touching this test.
 
 declared="$(hook_entries | sed 's/.*://' | sort -u)"
 for path in "$REPO_DIR"/scripts/*-pre-start.sh "$REPO_DIR"/scripts/*-bootstrap.sh; do
@@ -64,8 +62,7 @@ for path in "$REPO_DIR"/scripts/*-pre-start.sh "$REPO_DIR"/scripts/*-bootstrap.s
     fi
 done
 
-# And the unit must go through the script, or the Makefile and the boot path
-# would be running two different sequences again.
+# The unit must go through the script, or boot and update drift apart again.
 contains "the unit starts the stack through stack-up.sh" \
     "$(grep '^ExecStart=' "$UNIT")" "scripts/stack-up.sh"
 
@@ -79,8 +76,8 @@ hook_entries | sed 's/.*://' | sort -u | while read -r name; do
     printf '#!/bin/sh\necho "HOOK %s"\n' "$name" >"$WORK/scripts/$name"
 done
 
-# The stub announces every call, and fails the next `up` once when the control
-# file exists — enough to exercise the down/up fallback without looping.
+# Announces every call, and fails the next `up` once when the control file
+# exists — enough to exercise the fallback without looping.
 cat >"$WORK/bin/docker" <<STUB
 #!/bin/sh
 echo "DOCKER \$*"
@@ -95,11 +92,10 @@ chmod +x "$WORK/bin/docker"
 PATH="$WORK/bin:$PATH"
 export PATH
 
-# run_rc <compose-profiles-line> [args...] : write the .env line ("none" for a
-# file with no COMPOSE_PROFILES at all), run the script exactly once — the
-# docker stub's failure mode is one-shot, so a second run would not see it —
-# and leave its output in $out and its exit status in $rc. COMPOSE_PROFILES is
-# unset in the environment, the way make (unlike systemd) leaves it.
+# run_rc <compose-profiles-line> [args...] : write the .env line ("none" for no
+# COMPOSE_PROFILES at all), run the script once — the stub's failure mode is
+# one-shot, so a second run would not see it — and leave the output in $out and
+# the status in $rc. COMPOSE_PROFILES is unset, the way make leaves it.
 run_rc() {
     if [ "$1" = none ]; then
         : >"$WORK/.env"
@@ -118,9 +114,8 @@ run() {
 
 # --- no arguments -----------------------------------------------------------
 #
-# Refused rather than ignored, so a caller that thinks it is passing an option
-# (the Makefile used to pass --remove-orphans) is told, instead of silently
-# getting a different start than the unit's.
+# Refused rather than ignored, so a caller passing an option is told instead of
+# silently getting a different start than the unit's.
 
 run_rc all --remove-orphans
 ok       "an argument is refused"             "$rc" 1
@@ -139,9 +134,8 @@ lacks    "an unselected service is skipped"   "$out" "HOOK prowlarr-pre-start.sh
 out="$(run none)"
 contains "no line at all means everything"    "$out" "HOOK prowlarr-pre-start.sh"
 
-# A quoted value is what a verbatim .env read hands back; Compose, systemd and
-# run-if-enabled.sh all strip the quotes, so this must too — otherwise the
-# selection matches nothing while --remove-orphans deletes the containers.
+# A verbatim .env read hands back the quotes; unstripped, the selection matches
+# nothing while --remove-orphans deletes the containers.
 out="$(run '"qbittorrent"')"
 contains "a quoted value is unquoted"         "$out" "HOOK qbittorrent-pre-start.sh"
 lacks    "and still gates the others"         "$out" "HOOK prowlarr-pre-start.sh"
@@ -153,8 +147,7 @@ lacks    "empty selects no optional service"  "$out" "HOOK kavita-oidc-bootstrap
 
 # --- ordering and the compose call ------------------------------------------
 
-# --remove-orphans is not a caller's argument: both the unit and the Makefile
-# have to get the same behaviour, so the script passes it itself.
+# --remove-orphans is the script's own, so both callers get the same start.
 out="$(run all)"
 contains "compose is asked to start the stack" "$out" "DOCKER compose up -d --remove-orphans"
 
@@ -183,10 +176,8 @@ contains "and the later bootstraps still run"         "$out" "HOOK homepage-widg
 
 # --- a hook that went missing -----------------------------------------------
 #
-# Same rule as a failure: fatal before the start, a warning after it. And for a
-# disabled service, nothing at all — the unit's `run-if-enabled.sh <svc> <cmd>`
-# returned 0 without ever reaching the script, so an absent hook for a service
-# that is off must stay a non-event.
+# Same rule as a failure: fatal before the start, a warning after it — and for
+# a disabled service, nothing at all, as the unit's gate did.
 
 rm -f "$WORK/scripts/kavita-oidc-bootstrap.sh"
 run_rc all
@@ -208,8 +199,8 @@ printf '#!/bin/sh\necho "HOOK backrest-pre-start.sh"\n' >"$WORK/scripts/backrest
 
 # --- a network or volume definition that moved ------------------------------
 #
-# compose cannot apply that in place; it has to be allowed to take the stack
-# down, or an update aborts with the images already pulled.
+# compose cannot apply that in place, so it has to be allowed one down — or an
+# update aborts with the images already pulled.
 
 printf 'network pi-web_default was found but has incorrect label\n' >"$WORK/fail-up"
 out="$(run all)"

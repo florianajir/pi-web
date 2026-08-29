@@ -14,11 +14,10 @@ WorkingDirectory=__PROJECT_PATH__
 Environment=COMPOSE_PROFILES=all
 EnvironmentFile=__PROJECT_PATH__/.env
 ExecStartPre=-/usr/sbin/ethtool -K eth0 rx-udp-gro-forwarding on rx-gro-list off
-# The whole start sequence — pre-start hooks, `docker compose up -d`, then the
-# bootstraps — lives in one script rather than in twenty Exec* lines, so that
-# `make update` can re-run exactly what boot runs without stopping the stack
-# first. The script keeps the semantics these lines had: a pre-start hook that
-# fails aborts the start, a bootstrap that fails only warns.
+# One script rather than twenty Exec* lines, so `make update` can re-run
+# exactly what boot runs without stopping the stack first. It keeps the
+# semantics those lines had: a failed pre-start hook aborts, a failed
+# bootstrap only warns.
 ExecStart=/bin/sh __PROJECT_PATH__/scripts/stack-up.sh
 ExecStop=/usr/bin/docker compose down --remove-orphans
 RemainAfterExit=true

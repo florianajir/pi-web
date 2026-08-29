@@ -5,10 +5,8 @@ REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CL
 MAKEFLAGS += --no-print-directory
 
 PROJECT_PATH := $(shell pwd)
-# Immediate assignment, so this is the commit `update` starts from: make
-# expands it while reading this file, which is before any recipe — and before
-# the `git pull` in update's own recipe. That is what lets update compare the
-# two and see whether the pull touched anything the containers read.
+# Immediate assignment: make expands it while reading this file, before any
+# recipe runs — so `update` can diff it against HEAD after its own `git pull`.
 HEAD_BEFORE_PULL := $(shell git rev-parse HEAD 2>/dev/null)
 UNIT         := pi-pcloud.service
 WATCH_UNIT   := pi-pcloud-authelia-ntfy.service
@@ -217,19 +215,12 @@ stop:
 
 restart: stop start
 
-# Bring the stack to the state the repository describes without taking it down
-# first: `docker compose up -d` recreates only the containers whose image or
-# configuration actually moved, so a single new image no longer costs a
-# full-stack restart. The sequence (pre-start hooks, up, bootstraps) lives in
-# scripts/stack-up.sh, the same script the systemd unit runs as its ExecStart,
-# so boot and update cannot drift.
-#
-# Through systemd when the unit is not active, so the stack does not end up
-# running behind an `inactive` unit; directly otherwise, because `start` on an
-# already-active oneshot unit is a no-op. The two branches run the same script
-# with the same arguments — none — precisely so that neither can quietly do
-# less than the other. Root either way: the hooks write root-owned config, and
-# headscale's leaves orphan API keys when run as a user.
+# Apply in place: `up -d` recreates only the containers whose image or spec
+# moved, so one new image no longer costs a full-stack restart. Through systemd
+# when the unit is inactive, so the stack never runs behind an `inactive` unit;
+# directly otherwise, since `start` on an already-active oneshot is a no-op.
+# Root either way: the hooks write root-owned config, and headscale's leaves
+# orphan API keys when run as a user.
 define apply_stack
 if $(SUDO) systemctl is-active --quiet $(UNIT); then \
 	$(SUDO) sh scripts/stack-up.sh; \
@@ -238,13 +229,11 @@ else \
 fi
 endef
 
-# Images are refreshed while the stack is still running, so nothing is
-# interrupted until compose swaps the containers that actually have a new
-# image. `pull` only covers the services the current COMPOSE_PROFILES selects,
-# and skips the images built here, which `build --pull` rebuilds against their
-# updated bases. Pruning at the end reclaims the layers the recreated
-# containers just released — dangling images only, so nothing a container still
-# references is touched.
+# Images are refreshed while the stack runs, so nothing is interrupted until
+# compose swaps the containers that actually have a new image. `pull` covers
+# what COMPOSE_PROFILES selects and skips the images built here, which
+# `build --pull` rebuilds against their updated bases. The final prune only
+# touches dangling layers, never one a container still references.
 update:
 	@echo "🔄 Updating pi-pcloud..."
 	@branch=$$(git rev-parse --abbrev-ref HEAD); 	if [ "$$branch" != "main" ]; then echo "  ⚠ on branch $$branch, not main"; fi
@@ -256,19 +245,15 @@ update:
 	@echo "🔨 Locally built images..."
 	@$(COMPOSE) build --pull
 	$(MAKE) install-system
-# The watcher runs on the host, outside compose, so nothing above would pick up
-# a change to its script; try-restart leaves it alone when it is not running.
+# The watcher runs on the host, outside compose, so nothing above picks up a
+# change to its script. try-restart leaves it alone when it is not running.
 	@$(SUDO) systemctl try-restart $(WATCH_UNIT)
-# `up -d` compares the container's image and spec, not the *contents* of the
-# files bind-mounted into it, so a config the pull rewrote (or that a pre-start
-# hook just re-rendered from a new template) would sit on disk unread until
-# something else restarted the service. When the pull touched config/, restart
-# for real; that is the one case where the old down/up was doing necessary
-# work. Editing a config by hand is still `make restart`, as the docs say.
-# `systemctl restart` rather than `$(MAKE) restart`: make runs any recipe line
-# mentioning $(MAKE) even under `--dry-run`, which would make `make -n update`
-# restart the stack for real. It is also the more direct route — ExecStop then
-# ExecStart is exactly what a restart means here.
+# `up -d` compares a container's image and spec, not the contents of the files
+# bind-mounted into it, so a config the pull rewrote would sit on disk unread.
+# That is the one case where the old down/up did necessary work. (A config
+# edited by hand is still `make restart`; the diff cannot see it.)
+# `systemctl restart`, not `$(MAKE) restart`: make runs any recipe line
+# mentioning $(MAKE) even under `--dry-run`.
 	@if [ -n "$(HEAD_BEFORE_PULL)" ] && ! git diff --quiet $(HEAD_BEFORE_PULL) HEAD -- config/; then \
 		echo "🔁 The pull changed config/; restarting so services read it..."; \
 		$(SUDO) systemctl restart $(UNIT); \
@@ -280,10 +265,8 @@ update:
 	@docker image prune -f | tail -n1
 	@echo "✅ Update complete"
 
-# The light update: images only. No `git pull`, and none of the host files a
-# pull can change — so it is `make update` minus everything that needs the
-# repository to have moved. Use it when only the pinned images are stale; use
-# `make update` after a code change.
+# `make update` minus everything that needs the repository to have moved: no
+# pull, no host files. For when only the pinned images are stale.
 update-images:
 	@echo "📦 Updating images (the stack keeps running)..."
 	$(MAKE) check-env
