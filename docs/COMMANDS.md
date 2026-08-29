@@ -21,7 +21,8 @@ The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pul
 | `make preflight` | Verify Docker, cgroup v2 and dependencies |
 | `make install` | Deploy the stack and create the systemd units |
 | `make start` / `make stop` / `make restart` | Control the whole stack |
-| `make update` | Pull code and images, rebuild, re-apply host files, restart |
+| `make update` | Pull code and images, rebuild, re-apply host files, apply in place |
+| `make update-images` | Images only: pull, rebuild, recreate just the containers whose image moved |
 | `make install-system` | Re-apply only what lives outside the repo: sysctl, `/etc/hosts`, systemd units, the `pi-pcloud` command and its completions |
 | `make uninstall` | Remove the stack, volumes and units — **destructive** |
 
@@ -37,7 +38,7 @@ The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pul
 | `make disable <service>` | Disable a service: update `COMPOSE_PROFILES` and stop it |
 | `make config` | Interactive checklist to choose which optional services run |
 | `make check-env` | Validate the required `.env` variables |
-| `make test` | Run the installer, CLI and `check-env` suites (temporary copies only, no host changes) |
+| `make test` | Run the installer, CLI, `check-env` and start-sequence suites (temporary copies only, no host changes) |
 
 ### VPN and credentials
 
@@ -50,11 +51,19 @@ The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pul
 
 ## What `make update` actually does
 
-Images are refreshed while the stack is still running, so the interruption is a single restart rather than a download. It pulls only what the current `COMPOSE_PROFILES` selects, rebuilds the images built from `config/*/Dockerfile` against their updated bases, and finishes with `docker image prune -f` — dangling layers only, nothing a container still references. Expect several minutes on a Pi when base images have moved.
+Images are refreshed while the stack is still running, so nothing is interrupted until the very end. It pulls only what the current `COMPOSE_PROFILES` selects, rebuilds the images built from `config/*/Dockerfile` against their updated bases, and finishes with `docker image prune -f` — dangling layers only, nothing a container still references. Expect several minutes on a Pi when base images have moved.
 
-It also re-runs `install-system`, because a pull can change files this repository copies **outside** itself: the systemd units, the sysctl drop-in, the shell completions. Those copies would otherwise sit stale until the next `make install`. And it validates `.env` against the required-variable list *first*, so a variable added upstream is caught before the restart rather than after.
+**It does not restart the stack.** The last step is `docker compose up -d`, which recreates only the containers whose image or configuration actually changed — a single new image no longer costs a full-stack outage, and services that did not move are never touched. The whole start sequence (the pre-start hooks that render configuration, the `up`, then the bootstraps) lives in `scripts/stack-up.sh`, which is also `pi-pcloud.service`'s `ExecStart`: an update re-runs exactly what boot runs, so the two cannot drift. To force a genuine full restart, `make restart` is still there.
+
+It also re-runs `install-system`, because a pull can change files this repository copies **outside** itself: the systemd units, the sysctl drop-in, the shell completions. Those copies would otherwise sit stale until the next `make install`. And it validates `.env` against the required-variable list *first*, so a variable added upstream is caught before anything is applied rather than after.
 
 The `pi-pcloud` command needs no refresh — it is a symlink into the checkout.
+
+### `make update-images`, the light one
+
+`make update` minus everything that needs the repository to have moved: no `git pull`, no host files, no watcher restart. It validates `.env`, pulls and rebuilds the images, applies them in place, prunes. Use it when only the pinned images are stale — after Dependabot has been merged upstream but you have no local code change to pick up — and `make update` after a code change.
+
+Both end on the same in-place apply, so both leave the stack in the state the repository describes.
 
 ## Common workflows
 
@@ -86,6 +95,6 @@ make headscale-register <key-from-the-url>
 
 **Update:**
 ```bash
-make update                            # code + images, then one restart
-docker compose pull && make restart    # only re-pull the pinned images
+make update           # code + images, applied in place
+make update-images    # images only, same in-place apply
 ```

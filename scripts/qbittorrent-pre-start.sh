@@ -1,7 +1,7 @@
 #!/bin/sh
 # Pre-start: render qBittorrent.conf from template on fresh installs.
 # Writes the config only if it does not yet exist, preserving runtime edits.
-# Runs as ExecStartPre before docker compose up.
+# A pre-start hook (scripts/stack-up.sh), so it runs before docker compose up.
 
 set -eu
 

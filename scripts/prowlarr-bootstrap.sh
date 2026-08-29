@@ -5,7 +5,7 @@
 # Prowlarr shares gluetun's network namespace, so qBittorrent (localhost:8080),
 # FlareSolverr (localhost:8191) and the Prowlarr API (localhost:9696) are all reachable
 # from inside the container. The API key is read straight from config.xml
-# (rendered by prowlarr-pre-start.sh). Runs as ExecStartPost after docker compose up.
+# (rendered by prowlarr-pre-start.sh). A post-start hook, so it runs after compose up.
 
 set -eu
 

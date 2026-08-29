@@ -1,4 +1,4 @@
-.PHONY: help install install-system uninstall start stop restart update status logs doctor preflight check-env print-required-vars test services enable disable config headscale-register headscale-reset rotate-password rotate-password-full
+.PHONY: help install install-system uninstall start stop restart update update-images status logs doctor preflight check-env print-required-vars test services enable disable config headscale-register headscale-reset rotate-password rotate-password-full
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -42,7 +42,8 @@ help:
 	@echo "  start            Start stack"
 	@echo "  stop             Stop stack"
 	@echo "  restart          Restart stack"
-	@echo "  update           Pull the repository and updated images, rebuild, restart"
+	@echo "  update           Pull the repository and updated images, rebuild, apply in place"
+	@echo "  update-images    Images only: pull, rebuild, recreate just what moved"
 	@echo "  status           Show systemd status"
 	@echo "  logs             Follow compose logs"
 	@echo "  services         List optional services and whether each is enabled"
@@ -90,6 +91,7 @@ test:
 	@sh tests/install-test.sh
 	@sh tests/check-env-test.sh
 	@sh tests/cli-test.sh
+	@sh tests/stack-up-test.sh
 
 preflight: check-env
 	@echo "🔍 Preflight...";
@@ -210,12 +212,34 @@ stop:
 
 restart: stop start
 
-# Images are refreshed while the stack is still running, so the interruption is
-# one restart instead of a download. `pull` only covers the services the
-# current COMPOSE_PROFILES selects, and skips the five images built here, which
-# `build --pull` rebuilds against their updated bases. Pruning at the end
-# reclaims the layers the recreated containers just released — dangling images
-# only, so nothing a container still references is touched.
+# Bring the stack to the state the repository describes without taking it down
+# first: `docker compose up -d` recreates only the containers whose image or
+# configuration actually moved, so a single new image no longer costs a
+# full-stack restart. The sequence (pre-start hooks, up, bootstraps) lives in
+# scripts/stack-up.sh, the same script the systemd unit runs as its ExecStart,
+# so boot and update cannot drift.
+#
+# Through systemd when the unit is not active, so the stack does not end up
+# running behind an `inactive` unit; directly otherwise, because `start` on an
+# already-active oneshot unit is a no-op. Root either way: the hooks write
+# root-owned config and headscale's leaves orphan API keys when run as a user.
+# --remove-orphans replaces what the old down/up did about containers a pull or
+# a profile change removed.
+define apply_stack
+if $(SUDO) systemctl is-active --quiet $(UNIT); then \
+	$(SUDO) sh scripts/stack-up.sh --remove-orphans; \
+else \
+	$(SUDO) systemctl start $(UNIT); \
+fi
+endef
+
+# Images are refreshed while the stack is still running, so nothing is
+# interrupted until compose swaps the containers that actually have a new
+# image. `pull` only covers the services the current COMPOSE_PROFILES selects,
+# and skips the images built here, which `build --pull` rebuilds against their
+# updated bases. Pruning at the end reclaims the layers the recreated
+# containers just released — dangling images only, so nothing a container still
+# references is touched.
 update:
 	@echo "🔄 Updating pi-pcloud..."
 	@branch=$$(git rev-parse --abbrev-ref HEAD); 	if [ "$$branch" != "main" ]; then echo "  ⚠ on branch $$branch, not main"; fi
@@ -227,10 +251,30 @@ update:
 	@echo "🔨 Locally built images..."
 	@$(COMPOSE) build --pull
 	$(MAKE) install-system
-	$(MAKE) restart
+# The watcher runs on the host, outside compose, so nothing above would pick up
+# a change to its script; try-restart leaves it alone when it is not running.
+	@$(SUDO) systemctl try-restart $(WATCH_UNIT)
+	@echo "🚀 Applying changes (only what moved is recreated)..."
+	@$(apply_stack)
 	@echo "🧹 Reclaiming space from the replaced images..."
 	@docker image prune -f | tail -n1
 	@echo "✅ Update complete"
+
+# The light update: images only. No `git pull`, and none of the host files a
+# pull can change — so it is `make update` minus everything that needs the
+# repository to have moved. Use it when only the pinned images are stale; use
+# `make update` after a code change.
+update-images:
+	@echo "📦 Updating images (the stack keeps running)..."
+	$(MAKE) check-env
+	@$(COMPOSE) pull --ignore-buildable
+	@echo "🔨 Locally built images..."
+	@$(COMPOSE) build --pull
+	@echo "🚀 Recreating the containers whose image moved..."
+	@$(apply_stack)
+	@echo "🧹 Reclaiming space from the replaced images..."
+	@docker image prune -f | tail -n1
+	@echo "✅ Images up to date"
 
 status:
 	@echo "📊 Status"

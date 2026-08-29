@@ -4,7 +4,7 @@
 # Usage:
 #   run-if-enabled.sh <service> <command> [args...]
 #       Exec <command> if <service> is enabled; otherwise print a short
-#       skip notice and exit 0 (so blocking ExecStartPre lines pass).
+#       skip notice and exit 0 (so a blocking pre-start hook still passes).
 #   run-if-enabled.sh <service>
 #       Test mode: exit 0 if enabled, 1 if disabled. Meant for systemd
 #       ExecCondition, where a 1..254 exit skips the unit without failing it.
