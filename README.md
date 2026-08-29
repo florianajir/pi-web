@@ -84,6 +84,7 @@ You don't have to run all of it. Core infrastructure always starts; every other 
 | Health at a glance | `make status`, `make doctor` |
 | Turn a service on/off | `make enable <service>` / `make disable <service>` |
 | Update code and images | `make update` |
+| Update the images only | `make update-images` |
 
 Full list: [Commands reference](docs/COMMANDS.md).
 

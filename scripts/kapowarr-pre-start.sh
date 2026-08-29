@@ -4,7 +4,7 @@
 # the /comics library root. Docker would otherwise create /comics as root:root and
 # Kapowarr (PUID 1000) could not write imported comics into it. Create it up front
 # and hand it (plus the config dirs) to the project owner. Idempotent.
-# Runs as ExecStartPre before docker compose up.
+# A pre-start hook (scripts/stack-up.sh), so it runs before docker compose up.
 
 set -eu
 

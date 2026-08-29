@@ -55,7 +55,7 @@ Edit the `DOWNLOADS` list in `config/llama-cpp/fetch-models.sh`, then point `LLA
 
 ## How Open WebUI is wired
 
-`OPENAI_API_BASE_URL` and friends are Open WebUI *PersistentConfig* variables: they seed the database on first start and are ignored afterwards, so on an instance that already has connections the model simply never shows up in the picker. `scripts/open-webui-bootstrap.sh` (an `ExecStartPost` hook) closes that gap.
+`OPENAI_API_BASE_URL` and friends are Open WebUI *PersistentConfig* variables: they seed the database on first start and are ignored afterwards, so on an instance that already has connections the model simply never shows up in the picker. `scripts/open-webui-bootstrap.sh` (a post-start hook in `scripts/stack-up.sh`) closes that gap.
 
 It appends `http://llama-cpp:8080/v1` to the stored connection list when missing, leaves any other connection you configured in the UI alone, and restarts open-webui only when it changed something. It also seeds the low-latency defaults above — once, guarded by a `pi-pcloud.local_ai_defaults` marker row, so anything you change afterwards in Admin Settings stays changed. The same script registers the `system-tools` server (marker `pi-pcloud.system_tools`) and the new-chat suggestions (marker `pi-pcloud.prompt_suggestions`); the markers are independent, so re-seeding one never re-imposes the others.
 

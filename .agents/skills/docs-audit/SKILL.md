@@ -28,7 +28,7 @@ Read the source, then the doc — not the other way around.
 | `docs/MONITORING.md` | `scripts/uptime-kuma-bootstrap.py` (GROUPS), `scripts/beszel-agent-bootstrap.sh` (thresholds), `scripts/ntfy-pre-start.sh` (topics, accounts), `scripts/authelia-ntfy-watch.sh`, `config/backrest/config.json.template` (schedule, retention, hooks) |
 | `docs/EMAIL.md` | compose SMTP env per service, `config/authelia/configuration.yml.template` notifier block |
 | `docs/TAILSCALE.md` | `config/headscale/config.yaml`, tailscale service `TS_EXTRA_ARGS`, `Makefile` headscale targets, `scripts/headscale-init.sh` |
-| systemd claims anywhere | `config/systemd/system/pi-pcloud.service` (which scripts run, pre vs post) |
+| systemd claims anywhere | `config/systemd/system/pi-pcloud.service`, and `scripts/stack-up.sh` for which scripts run, pre vs post |
 
 `config/headscale/config.yaml`, `config/ntfy/ntfy.env` and `config/beszel-agent/agent.env`
 are **generated/live files that may contain secrets** — read them for structure only and

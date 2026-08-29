@@ -7,7 +7,7 @@
 # referenced from compose.yaml via HOMEPAGE_FILE_* env vars, which Homepage
 # substitutes as {{HOMEPAGE_FILE_x}} in widget labels.
 #
-# Runs last in the ExecStartPost chain (after Prowlarr/Headscale are already
+# Runs last in the post-start chain (after Prowlarr/Headscale are already
 # bootstrapped by their own scripts). Idempotent: only (re)writes a secret
 # file if the value changed, and only restarts homepage if something did.
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Wire Kavita's OpenID Connect settings (Authelia) into its appsettings.json.
-# Runs as an ExecStartPost step. Safe to run multiple times: it only touches the
+# A post-start hook (scripts/stack-up.sh). Safe to run multiple times: it only touches the
 # OpenIdConnectSettings block and restarts Kavita only when something changed.
 #
 # NOTE: auto-provisioning and role-sync are stored in Kavita's DB, not appsettings —

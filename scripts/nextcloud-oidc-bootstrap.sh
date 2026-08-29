@@ -1,6 +1,6 @@
 #!/bin/sh
 # Configure Nextcloud OIDC provider for Authelia integration.
-# Runs as ExecStartPost after docker compose up.
+# A post-start hook (scripts/stack-up.sh), so it runs after docker compose up.
 # Safe to run multiple times (idempotent).
 
 set -eu

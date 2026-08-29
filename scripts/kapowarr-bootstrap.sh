@@ -5,7 +5,8 @@
 # returns 403 — see QB_BASE_URL note below).
 # The image ships no curl/jq, so we drive its (undocumented) API with the bundled
 # python3. Credentials are passed via the environment, never on the command line.
-# Runs as ExecStartPost after docker compose up. Best-effort (warns, never fails start).
+# A post-start hook (scripts/stack-up.sh), so it runs after docker compose up.
+# Best-effort: warns, never fails the start.
 
 set -eu
 

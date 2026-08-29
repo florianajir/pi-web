@@ -106,8 +106,10 @@ so it stays off the dashboard.
 ## 10. First-run setup
 
 Do it in `scripts/<service>-bootstrap.sh` (or `-pre-start.sh`), sourcing
-`scripts/lib.sh`, idempotent and safe on a fresh install, wired as
-`ExecStartPre`/`ExecStartPost` in `config/systemd/system/pi-pcloud.service`.
+`scripts/lib.sh`, idempotent and safe on a fresh install, wired into the
+`PRE_START_HOOKS` / `POST_START_HOOKS` list of `scripts/stack-up.sh` as
+`<service>:<script>.sh` (the prefix gates it on `COMPOSE_PROFILES`). That one
+list is what both the systemd unit and `make update` run.
 No extra container just to run a script, and no new `.env` keys — reuse
 `ADMIN_USER` / `PASSWORD` and the per-service config files.
 

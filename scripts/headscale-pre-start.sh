@@ -39,7 +39,7 @@ main() {
 
     # Same again for the second Headscale key, the one homepage's widget and the
     # system-tools `devices` topic both bind-mount. It is created by
-    # homepage-widgets-bootstrap.sh, which runs in ExecStartPost - i.e. after the
+    # homepage-widgets-bootstrap.sh, which is a post-start hook - i.e. after the
     # `docker compose up` that bind-mounts it - so on a fresh install Docker gets
     # there first and makes a directory, which write_secret can then never
     # replace. Left empty on purpose: that bootstrap only mints a key when the

@@ -4,7 +4,7 @@
 # so there is no first-run wizard and no double login. A stable API key is generated
 # once and lives in config.xml (single source of truth, reused by the bootstrap).
 # Writes the config only if it does not yet exist, preserving runtime edits.
-# Runs as ExecStartPre before docker compose up.
+# A pre-start hook (scripts/stack-up.sh), so it runs before docker compose up.
 
 set -eu
 
