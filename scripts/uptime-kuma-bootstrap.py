@@ -40,7 +40,6 @@ import json
 import os
 import re
 import socket as pysocket
-import subprocess
 import sys
 import time
 import threading
@@ -331,26 +330,6 @@ def monitor_should_be_active(service, enabled_services):
     if enabled_services is None or service is None:
         return True
     return service in enabled_services
-
-
-def get_host_name_from_traefik():
-    """Read the ntfy router host from Docker labels when systemd has no HOST_NAME."""
-    try:
-        result = subprocess.run(
-            [
-                "docker", "inspect", "pi-ntfy",
-                "--format", "{{index .Config.Labels \\\"traefik.http.routers.ntfy.rule\\\"}}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=True,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-
-    match = re.search(r"Host\\(`ntfy\\.([^`]+)`\\)", result.stdout)
-    return match.group(1) if match else ""
 
 
 def resolve_container_ip(name):
@@ -1194,7 +1173,10 @@ def main():
             return tier_ids.get(group["tier"]) if group["notify"] == "children" else None
 
         # End-to-end checks: what a docker monitor cannot see
-        host_name = env("HOST_NAME") or get_host_name_from_traefik()
+        # uptime-kuma-bootstrap.sh resolves HOST_NAME from .env and passes it
+        # in: this container has no docker CLI and no socket, so there is no
+        # fallback to be had here.
+        host_name = env("HOST_NAME")
         if host_name:
             for subdomain, group_name in ROUTES:
                 group = groups_by_name[group_name]

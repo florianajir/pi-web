@@ -11,6 +11,7 @@ set -eu
 NTFY_ENV_FILE="$PROJECT_DIR/config/ntfy/ntfy.env"
 AGENT_ENV_DIR="$PROJECT_DIR/config/beszel-agent"
 AGENT_ENV_FILE="$AGENT_ENV_DIR/agent.env"
+AGENT_CONTAINER="${AGENT_CONTAINER:-pi-beszel-agent}"
 MAX_RETRIES=90
 RETRY_INTERVAL=2
 HUB_URL_DOCKER="http://pi-beszel:8090"
@@ -42,11 +43,15 @@ upsert_env_value() {
     local tmp_file
 
     tmp_file=$(mktemp)
-    awk -v k="$key" -v v="$value" '
+    # The value travels through awk's ENVIRON, never through -v: awk expands
+    # escape sequences in a -v assignment, so a '\n' or '\t' inside a token
+    # would be rewritten on its way into the file. Matched with index() rather
+    # than a regex, as in install.sh's set_env.
+    ENV_VALUE="$value" awk -v k="$key" '
         BEGIN { done = 0 }
-        $0 ~ ("^" k "=") {
+        index($0, k "=") == 1 {
             if (!done) {
-                print k "=" v
+                print k "=" ENVIRON["ENV_VALUE"]
                 done = 1
             }
             next
@@ -54,7 +59,7 @@ upsert_env_value() {
         { print }
         END {
             if (!done) {
-                print k "=" v
+                print k "=" ENVIRON["ENV_VALUE"]
             }
         }
     ' "$file" > "$tmp_file"
@@ -820,11 +825,18 @@ persist_agent_config() {
         log "KEY already up to date in $AGENT_ENV_FILE"
     fi
 
-    CONFIG_UPDATED=$updated
+    # OR, not assign: prepare_agent_env_for_passwordless_mode may already have
+    # set CONFIG_UPDATED=1 after seeding KEY, and a plain assignment here would
+    # drop that and skip the restart that picks the new value up.
+    [ "$updated" = "0" ] || CONFIG_UPDATED=1
 }
 
+# compose.yaml names the container pi-beszel-agent, not beszel-agent: the bare
+# name never appears in `docker ps`, so this returned false unconditionally and
+# the --force-recreate branch below (the one that reloads a rotated TOKEN/KEY)
+# was unreachable.
 agent_is_running() {
-    docker ps --format '{{.Names}}' | grep -q '^beszel-agent$'
+    container_is_running "$AGENT_CONTAINER"
 }
 
 agent_has_active_system() {

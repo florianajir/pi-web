@@ -51,7 +51,13 @@ wait_for_nextcloud_upgrade() {
 }
 
 ensure_user_oidc_app() {
-    if docker exec "$NEXTCLOUD_CONTAINER" php occ app:list | grep -qE '^[[:space:]]+- user_oidc:'; then
+    # `app:list` prints Enabled and Disabled in the same "  - <appid>: <ver>"
+    # shape, so grepping its plain output matches a *disabled* user_oidc too —
+    # the app:enable below would then be skipped and configure_provider would
+    # die against a disabled app on every start. --enabled --output=json
+    # distinguishes the two.
+    if docker exec "$NEXTCLOUD_CONTAINER" php occ app:list --enabled --output=json 2>/dev/null \
+        | jq -e '.enabled | has("user_oidc")' >/dev/null 2>&1; then
         log "user_oidc app already enabled"
         return 0
     fi

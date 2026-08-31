@@ -23,11 +23,7 @@ if [ -z "${COMPOSE_PROFILES+x}" ]; then
         # Compose, systemd and run-if-enabled.sh all strip quotes and CR;
         # get_env_value reads verbatim. Left in, `"stremio"` would match no
         # profile while --remove-orphans deleted the optional containers.
-        COMPOSE_PROFILES="$(get_env_value COMPOSE_PROFILES | tr -d '\r')"
-        case "$COMPOSE_PROFILES" in
-            \"*\") COMPOSE_PROFILES="${COMPOSE_PROFILES#\"}"; COMPOSE_PROFILES="${COMPOSE_PROFILES%\"}" ;;
-            \'*\') COMPOSE_PROFILES="${COMPOSE_PROFILES#\'}"; COMPOSE_PROFILES="${COMPOSE_PROFILES%\'}" ;;
-        esac
+        COMPOSE_PROFILES="$(get_env_value_clean COMPOSE_PROFILES)"
     else
         COMPOSE_PROFILES=all
     fi

@@ -170,7 +170,7 @@ write_profiles() {
         return 0
     fi
     if has_profiles_line; then
-        sed -i "s|^COMPOSE_PROFILES=.*|COMPOSE_PROFILES=$1|" "$ENV_FILE"
+        sed -i "s|^COMPOSE_PROFILES=.*|COMPOSE_PROFILES=$(sed_escape "$1")|" "$ENV_FILE"
     else
         printf 'COMPOSE_PROFILES=%s\n' "$1" >> "$ENV_FILE"
     fi
@@ -443,7 +443,7 @@ EOF
 # The tick state a picker run should start from: what is enabled today.
 current_enabled() {
     if has_profiles_line; then
-        services_for_profiles "$(get_env_value COMPOSE_PROFILES)"
+        services_for_profiles "$(get_env_value_clean COMPOSE_PROFILES)"
     else
         services_for_profiles all
     fi
@@ -454,7 +454,7 @@ current_enabled() {
 cmd_list() {
     require_env_file
     if has_profiles_line; then
-        profiles="$(get_env_value COMPOSE_PROFILES)"
+        profiles="$(get_env_value_clean COMPOSE_PROFILES)"
         echo "🧩 Optional services (COMPOSE_PROFILES=${profiles:-<empty: core only>})"
     else
         profiles=all
@@ -477,7 +477,7 @@ cmd_enable() {
     known="$(known_profiles)"
     validate_service "$svc" enable "$known"
     if has_profiles_line; then
-        current="$(get_env_value COMPOSE_PROFILES)"
+        current="$(get_env_value_clean COMPOSE_PROFILES)"
     else
         echo "ℹ️  No COMPOSE_PROFILES line in .env (= everything enabled): writing the explicit list first"
         current="$(explicit_all "$known")"
@@ -524,7 +524,7 @@ cmd_disable() {
     known="$(known_profiles)"
     validate_service "$svc" disable "$known"
     if has_profiles_line; then
-        current="$(get_env_value COMPOSE_PROFILES)"
+        current="$(get_env_value_clean COMPOSE_PROFILES)"
     else
         current=all
     fi

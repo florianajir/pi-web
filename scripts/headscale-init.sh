@@ -200,7 +200,12 @@ main() {
         log "WARNING: Headplane OIDC key initialization failed; API-token login may still be required"
     fi
 
-    init_headplane_config "$USER_ID"
+    # Wrapped like ensure_headplane_oidc_api_key above: Headplane's config is
+    # not a prerequisite for the tailnet, and a bare call under set -eu would
+    # exit here on a preauthkey failure, before connect_tailscale_if_needed.
+    if ! init_headplane_config "$USER_ID"; then
+        log "WARNING: Headplane config initialization failed; the Headplane UI may need manual setup"
+    fi
 
     if [ "$HEADPLANE_OIDC_KEY_UPDATED" -eq 1 ]; then
         log "Restarting Headplane container to apply OIDC Headscale API key..."
