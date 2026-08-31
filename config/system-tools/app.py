@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import sqlite3
 import time
@@ -269,13 +270,26 @@ def short_name(container: dict) -> str:
     return (container.get("Names") or ["?"])[0].lstrip("/").removeprefix("pi-")
 
 
+_RFC3339_HEAD = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
+
+
 def rfc3339(value: str) -> float | None:
     """Docker and headscale both carry nanoseconds, which %f cannot read; an event
-    that never happened is reported as year 0001."""
+    that never happened is reported as year 0001.
+
+    Fractional seconds are optional in RFC 3339, so the seconds field can be
+    followed straight by the zone designator ("...T10:00:00Z"). Splitting on "."
+    left that Z attached and %S rejected it, reporting a live node as never
+    seen; matching only the leading date-time handles both shapes. Both sources
+    emit UTC, which is what the tzinfo below assumes.
+    """
     if not value or value.startswith("0001"):
         return None
+    head = _RFC3339_HEAD.match(value)
+    if not head:
+        return None
     try:
-        stamp = datetime.strptime(value.partition(".")[0], "%Y-%m-%dT%H:%M:%S")
+        stamp = datetime.strptime(head.group(1), "%Y-%m-%dT%H:%M:%S")
     except ValueError:
         return None
     return stamp.replace(tzinfo=timezone.utc).timestamp()

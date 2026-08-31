@@ -1,0 +1,5 @@
+# Docker resolves .dockerignore against the build context, which for this
+# service is ./config/backrest — a file at the repository root never applies.
+# config.json is the rendered template and carries the S3 credentials and the
+# restic repository password.
+config.json

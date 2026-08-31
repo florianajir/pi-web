@@ -1,12 +1,9 @@
-# Exclude runtime data and secrets from repository-derived build contexts.
-# These paths mirror .gitignore entries that contain generated secrets
-# or bind-mount data created by Docker containers (often as root, 600 perms).
-/data
-/.env
-/config/headscale/policy.hujson
-/config/headscale/config.yaml
-/config/headplane/config.yaml
-/config/headplane/headscale_api_key
-/config/beszel-agent/agent.env
-/config/ntfy/ntfy.env
-/config/backrest/config.json
+# Not used by this project's builds, and kept only to say so: every build
+# context in compose.yaml is a ./config/<service> subdirectory (backrest,
+# beszel-agent, piper, parakeet, system-tools), and Docker resolves
+# .dockerignore against the context directory, never against the repository
+# root. The real exclusions live in config/<service>/.dockerignore.
+#
+# Nothing here is a substitute for those: no Dockerfile in this repository
+# does `COPY .`, so a secret in a context is uploaded to the daemon but never
+# lands in an image layer.

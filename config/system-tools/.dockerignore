@@ -1,0 +1,5 @@
+# Docker resolves .dockerignore against the build context, which for this
+# service is ./config/system-tools — a file at the repository root never
+# applies. Bytecode from importing app.py locally is not build input.
+__pycache__/
+*.pyc

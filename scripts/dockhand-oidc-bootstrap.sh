@@ -80,20 +80,9 @@ authenticate_dockhand() {
         return 1
     fi
 
-    usernames="$(get_env_value ADMIN_USER)"
-    candidate="$(get_env_value EMAIL)"
-    if [ -n "$candidate" ] && [ "$candidate" != "$usernames" ]; then
-        usernames="${usernames:+$usernames }$candidate"
-    fi
-
-    if [ -z "$usernames" ]; then
-        usernames="admin"
-    else
-        case " $usernames " in
-            *" admin "*) ;;
-            *) usernames="$usernames admin" ;;
-        esac
-    fi
+    # Same helper (and so the same order and dedup) that rotate-password.sh uses
+    # for this very Dockhand login.
+    usernames="$(build_candidate_usernames "$(get_env_value ADMIN_USER)" "$(get_env_value EMAIL)")"
 
     first_candidate="${usernames%% *}"
     attempted=""

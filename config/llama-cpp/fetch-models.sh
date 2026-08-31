@@ -63,10 +63,24 @@ fetch() {
             return 0
         fi
         log "$1 size mismatch (local $actual, remote $expected) - refetching"
-        rm -f "$dest"
+        # The .part goes with it: the remote object changed, so any leftover
+        # partial belongs to the previous revision and --continue-at - would
+        # splice the two together. The byte-count check after the download
+        # cannot catch that — a spliced file still totals $expected bytes.
+        rm -f "$dest" "$dest.part"
     elif [ -z "$expected" ]; then
         log "ERROR: $1 is missing and $url is unreachable"
         return 1
+    fi
+
+    # A partial at least as large as the remote object cannot be a prefix of
+    # it, so it is stale rather than resumable.
+    if [ -f "$dest.part" ]; then
+        actual="$(stat -c '%s' "$dest.part")"
+        if [ "$actual" -ge "$expected" ]; then
+            log "$1 partial is $actual bytes for a $expected byte object - discarding it"
+            rm -f "$dest.part"
+        fi
     fi
 
     log "Downloading $1 ($expected bytes)"

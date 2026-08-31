@@ -61,13 +61,22 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends shellcheck
 
-      # Every shell file, since a syntax error has no false positives.
+      # Every shell file, since a syntax error has no false positives. Listed
+      # from git rather than globbed, so config/**/*.sh (the postgres init and
+      # the nextcloud hooks) and the extensionless scripts/pi-pcloud are
+      # covered too. The checker follows the shebang: sh -n would reject
+      # bash-only syntax.
       - name: Check shell syntax
         run: |
           set -euo pipefail
-          for file in install.sh scripts/*.sh tests/*.sh; do
-            sh -n "$file"
+          files=$(git ls-files '*.sh' 'scripts/pi-pcloud')
+          for file in $files; do
+            case "$(head -n1 "$file")" in
+              *bash*) bash -n "$file" ;;
+              *)      sh -n "$file" ;;
+            esac
           done
+          echo "checked $(printf '%s\n' "$files" | wc -l) shell files"
 
       # Only the installer surface: the older bootstrap scripts under scripts/
       # carry a backlog of findings, so linting them here would report noise

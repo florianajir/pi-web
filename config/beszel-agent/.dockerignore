@@ -1,0 +1,4 @@
+# Docker resolves .dockerignore against the build context, which for this
+# service is ./config/beszel-agent — a file at the repository root never
+# applies. agent.env carries the hub TOKEN and KEY.
+agent.env
