@@ -137,7 +137,9 @@ Two event types are configured, deliberately: `container_oom` (a container hit a
 
 ### Backrest (restic) — the one that matters
 
-One plan, `s3-backup`, defined in `config/backrest/config.json.template`:
+Two plans. `s3-backup` carries everything off-site; `usb-env` is a small local one covering `.env` alone, described under [The `.env` file, twice](#the-env-file-twice).
+
+`s3-backup` is defined in `config/backrest/config.json.template`:
 
 | | |
 |---|---|
@@ -150,7 +152,9 @@ One plan, `s3-backup`, defined in `config/backrest/config.json.template`:
 | **Destination** | Your S3 bucket, restic-encrypted and deduplicated |
 | **On failure** | Pushes to the ntfy `monitoring` topic |
 
-Configure it with the `S3_*` and `BACKREST_*` variables — see [Configuration](CONFIGURATION.md#backrest-restic-backups).
+`usb-env` adds a second, local repository on the data disk holding nothing but the `.env` history: daily at 02:00, 30/12/12 retention, prune Sundays at 02:30, monthly full integrity check. It exists so the data disk can restore `.env` without the S3 password — see below.
+
+Configure them with the `S3_*` and `BACKREST_*` variables — see [Configuration](CONFIGURATION.md#backrest-restic-backups).
 
 ### Beszel PocketBase snapshots
 
@@ -176,13 +180,38 @@ Backups fail in two different ways, and one of them is silent:
 
 Test a restore occasionally. A backup you have never restored is a hypothesis.
 
-### Keep the repository password offline
+### The `.env` file, twice
 
-`.env` is copied into the plan at `/userdata/pi-web-env/.env` by `scripts/backrest-env-snapshot.sh` on every snapshot, which covers losing a service. A copy, not a bind mount of `./.env`: mounting a single *file* pins its inode, and `services.sh` and `rotate-password.sh` both replace `.env` rather than rewriting it, so the container would have gone on snapshotting the pre-edit file forever.
+`.env` is copied to `/userdata/pi-web-env/.env` by `scripts/backrest-env-snapshot.sh` as a pre-snapshot hook. A copy, not a bind mount of `./.env`: mounting a single *file* pins its inode, and `services.sh` and `rotate-password.sh` both replace `.env` rather than rewriting it, so the container would have gone on snapshotting the pre-edit file forever.
 
-It cannot cover losing the Pi: opening the repository requires `BACKREST_S3_REPO_PASSWORD`, and that value lives *inside* the file you would be trying to restore.
+That copy goes into **two** repositories, because one of them cannot restore itself:
 
-**Keep `BACKREST_S3_REPO_PASSWORD` and `BACKREST_S3_URI` somewhere off this machine** — a printed copy, or a password manager that is not Vaultwarden (Vaultwarden is restored *from* this repository). Without them the bucket is 300 GB of unreadable ciphertext.
+| | `s3` | `usb` |
+|---|---|---|
+| Plan | `s3-backup`, 04:00 | `usb-env`, 02:00 |
+| Contents | the whole `/userdata/` tree | `/userdata/pi-web-env` only |
+| Where | off-site S3 bucket | `${DATA_LOCATION}/backrest/repos/env` — the data disk |
+| Retention | 7 daily / 4 weekly / 4 monthly | 30 daily / 12 weekly / 12 monthly |
+| Password | `BACKREST_S3_REPO_PASSWORD`, **inside the `.env` it backs up** | `repos/env-repo-password`, next to the repository |
+
+The `s3` repository survives the house burning down but cannot hand `.env` back on its own: opening it requires `BACKREST_S3_REPO_PASSWORD`, and that value lives inside the file you would be trying to restore. The `usb` repository closes that loop for the far likelier failure — the root filesystem is gone, the data disk is fine — by keeping its password in cleartext on the same disk, in `env-repo-password` and again in the human-readable `env-RESTORE.txt`.
+
+That cleartext password is deliberate. The disk already holds every service's live data plus a cleartext `.env` under `backrest/env-snapshot/`, so a password kept elsewhere would buy no secrecy while making the repository unreadable in the exact scenario it exists for. Set `BACKREST_LOCAL_REPO_PASSWORD` in `.env` to override it and take that trade-off back.
+
+Both files are (re)written by `scripts/backrest-pre-start.sh`, which also adds the repository and its plan to an existing `config.json` if they are missing — so this is picked up by a plain `make up`, not only by a fresh install.
+
+To restore from the data disk alone, on any machine with restic:
+
+```bash
+export RESTIC_PASSWORD="$(cat /mnt/usbdrive/backrest/repos/env-repo-password)"
+restic -r /mnt/usbdrive/backrest/repos/env snapshots
+restic -r /mnt/usbdrive/backrest/repos/env restore latest --target /tmp/env-restore
+# the file lands at /tmp/env-restore/userdata/pi-web-env/.env
+```
+
+The `usb-env` plan treats a failed `.env` copy as fatal (`ON_ERROR_FATAL`), unlike the `s3-backup` plan which ignores it. A plan whose entire contents is one file must alert rather than record a snapshot of yesterday's copy as if it were today's.
+
+**Keep `BACKREST_S3_REPO_PASSWORD` and `BACKREST_S3_URI` somewhere off this machine anyway** — a printed copy, or a password manager that is not Vaultwarden (Vaultwarden is restored *from* the S3 repository). Losing both the Pi and the data disk otherwise leaves 300 GB of unreadable ciphertext.
 
 ### The API holds the keys
 

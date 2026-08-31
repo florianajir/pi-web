@@ -83,9 +83,12 @@ RAM_PRESSURE_PCT = 80
 # `docker compose up` zeroes RestartCount, so this many within one run of the
 # stack is a loop rather than a history.
 RESTART_LOOP = 3
-# The plan runs daily at 04:00 (config/backrest/config.json.template), putting
-# 24h between starts; 30 leaves six hours for a late or long run before the
-# absence counts. Also what the Uptime Kuma monitor reads off /health/backups.
+# Both plans run daily - s3-backup at 04:00 from
+# config/backrest/config.json.template, usb-env at 02:00 from
+# scripts/backrest-pre-start.sh - putting 24h between a plan's starts; 30
+# leaves six hours for a late or long run before the absence counts. Applied
+# per plan by backup_runs(), so either one going quiet is caught. Also what the
+# Uptime Kuma monitor reads off /health/backups.
 BACKUP_MAX_AGE_H = int(os.environ.get("BACKUP_MAX_AGE_HOURS", "30"))
 
 HEADSCALE_URL = os.environ.get("HEADSCALE_URL", "")

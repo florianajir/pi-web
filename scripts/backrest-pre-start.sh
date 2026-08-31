@@ -41,6 +41,175 @@ BACKREST_INSTANCE="$(env_value BACKREST_INSTANCE)"
 [ -n "$BACKREST_INSTANCE" ] || BACKREST_INSTANCE="$(env_value HOST_NAME)"
 [ -n "$BACKREST_INSTANCE" ] || BACKREST_INSTANCE="$(hostname 2>/dev/null || echo pi-pcloud)"
 
+# --- Local .env repository on the data disk ---
+#
+# The S3 repo already snapshots /userdata/pi-web-env, but opening it needs
+# BACKREST_S3_REPO_PASSWORD, and that value lives *inside* the .env you would
+# be restoring. This second repo closes that loop. It sits on DATA_LOCATION,
+# which is a different physical disk from .env itself (.env is on the root
+# filesystem), holds nothing but the .env history, and keeps its own password
+# in cleartext right next to it so the disk alone is enough to restore.
+#
+# The cleartext password is deliberate, not an oversight: the same disk already
+# carries every service's live data plus a cleartext .env under
+# backrest/env-snapshot/, so anyone holding it has everything regardless. A
+# password stored off-disk would only make the repo unreadable in the exact
+# scenario it exists for.
+LOCAL_REPO_ID="usb"
+LOCAL_PLAN_ID="usb-env"
+# Container-side path. ${DATA_LOCATION}/backrest/repos is bind-mounted at
+# /repos in compose.yaml, so restic sees a plain local repository here.
+LOCAL_REPO_URI="/repos/env"
+
+# Trailing slash stripped so the host paths below don't come out with "//" in
+# every log line (DATA_LOCATION is commonly written "/mnt/usbdrive/").
+LOCAL_REPOS_DIR="$(resolve_data_location_path)"
+LOCAL_REPOS_DIR="${LOCAL_REPOS_DIR%/}/backrest/repos"
+LOCAL_PW_FILE="${LOCAL_REPOS_DIR}/env-repo-password"
+LOCAL_README="${LOCAL_REPOS_DIR}/env-RESTORE.txt"
+
+write_local_restore_note() {
+  cat <<NOTE
+Restoring pi-web's .env from this disk
+======================================
+
+The "env" directory next to this file is a restic repository. Backrest writes
+one snapshot into it every day at 02:00 (repo id "${LOCAL_REPO_ID}", plan id
+"${LOCAL_PLAN_ID}"), and it contains exactly one thing: the pi-web stack's .env
+file, with its history.
+
+Repository password: ${LOCAL_REPO_PASSWORD}
+
+The password is here in cleartext on purpose. This disk already holds every
+service's live data and a cleartext copy of .env under ../env-snapshot/, so
+keeping the password elsewhere would buy no secrecy while making this
+repository unreadable in the one situation it exists for: the machine's root
+filesystem is gone and this disk is all that is left.
+
+To restore, from any machine with restic installed:
+
+    export RESTIC_PASSWORD='${LOCAL_REPO_PASSWORD}'
+    restic -r <this-directory>/env snapshots
+    restic -r <this-directory>/env restore latest --target /tmp/env-restore
+    # the file lands at /tmp/env-restore/userdata/pi-web-env/.env
+
+This is NOT the off-site repository. That one is "s3", its password is
+BACKREST_S3_REPO_PASSWORD, and it must be kept off this machine entirely --
+see docs/MONITORING.md.
+NOTE
+}
+
+# Adds the local repo and its plan to config.json when absent, and keeps the
+# password in sync when present. Called from every exit path below, because
+# the script returns early whenever config.json already exists -- which is the
+# normal case on an established install, and the case that needs this most.
+ensure_local_env_repo() {
+  local tmp_local
+
+  [ -f "${CONFIG_FILE}" ] || return 0
+
+  if ! mkdir -p "${LOCAL_REPOS_DIR}" 2>/dev/null; then
+    log "WARNING: cannot create ${LOCAL_REPOS_DIR}; skipping the local .env repo"
+    return 0
+  fi
+
+  # An explicit value in .env wins, so an externally managed or rotated
+  # password is honoured; otherwise the password exists only on this disk.
+  LOCAL_REPO_PASSWORD="$(env_value BACKREST_LOCAL_REPO_PASSWORD)"
+  if [ -z "${LOCAL_REPO_PASSWORD}" ]; then
+    if [ ! -s "${LOCAL_PW_FILE}" ]; then
+      if ! (umask 077; write_file_atomic "${LOCAL_PW_FILE}" generate_secret); then
+        log "WARNING: could not generate ${LOCAL_PW_FILE}; skipping the local .env repo"
+        return 0
+      fi
+      log "generated a repository password at ${LOCAL_PW_FILE}"
+    fi
+    LOCAL_REPO_PASSWORD="$(tr -d '\r\n' < "${LOCAL_PW_FILE}")"
+  fi
+
+  if [ -z "${LOCAL_REPO_PASSWORD}" ]; then
+    log "WARNING: local .env repo password is empty; skipping"
+    return 0
+  fi
+
+  safe_chmod 600 "${LOCAL_PW_FILE}"
+  write_file_atomic "${LOCAL_README}" write_local_restore_note \
+    || log "WARNING: could not write ${LOCAL_README}"
+  safe_chmod 600 "${LOCAL_README}"
+  fix_ownership "${LOCAL_PW_FILE}"
+  fix_ownership "${LOCAL_README}"
+
+  tmp_local="$(mktemp)" || return 0
+  # Same reason as the render below: the password is a secret going into JSON
+  # that also defines shell hook commands, so it must be escaped by jq.
+  if jq \
+      --arg repo "${LOCAL_REPO_ID}" \
+      --arg plan "${LOCAL_PLAN_ID}" \
+      --arg uri "${LOCAL_REPO_URI}" \
+      --arg password "${LOCAL_REPO_PASSWORD}" \
+      '.repos = ((.repos // []) as $r
+         | if ($r | map(.id) | index($repo)) then
+             $r | map(if .id == $repo then .uri = $uri | .password = $password else . end)
+           else
+             $r + [{
+               id: $repo,
+               uri: $uri,
+               password: $password,
+               env: [],
+               autoInitialize: true,
+               commandPrefix: {},
+               autoUnlock: true,
+               prunePolicy: {
+                 schedule: { cron: "30 2 * * 0", clock: "CLOCK_LOCAL" },
+                 maxUnusedPercent: 25
+               },
+               checkPolicy: {
+                 schedule: { cron: "0 1 1 * *", clock: "CLOCK_LAST_RUN_TIME" },
+                 readDataSubsetPercent: 100
+               }
+             }]
+           end)
+       | .plans = ((.plans // []) as $p
+         | if ($p | map(.id) | index($plan)) then $p
+           else
+             $p + [{
+               id: $plan,
+               repo: $repo,
+               paths: ["/userdata/pi-web-env"],
+               excludes: ["/userdata/pi-web-env/.env.tmp"],
+               schedule: { cron: "0 2 * * *", clock: "CLOCK_LOCAL" },
+               retention: {
+                 policyTimeBucketed: { daily: 30, weekly: 12, monthly: 12 }
+               },
+               hooks: [
+                 {
+                   conditions: ["CONDITION_SNAPSHOT_START"],
+                   onError: "ON_ERROR_IGNORE",
+                   actionCommand: { command: ("/bin/sh /hooks/backrest-unlock.sh " + $repo) }
+                 },
+                 {
+                   conditions: ["CONDITION_SNAPSHOT_START"],
+                   onError: "ON_ERROR_FATAL",
+                   actionCommand: { command: "/bin/sh /hooks/backrest-env-snapshot.sh" }
+                 },
+                 {
+                   conditions: ["CONDITION_ANY_ERROR"],
+                   onError: "ON_ERROR_IGNORE",
+                   actionCommand: { command: "/bin/sh /hooks/backrest-post-hook.sh errors {{ .ShellEscape .Summary }}" }
+                 }
+               ]
+             }]
+           end)' \
+      "${CONFIG_FILE}" > "${tmp_local}" && [ -s "${tmp_local}" ]; then
+    mv "${tmp_local}" "${CONFIG_FILE}"
+    safe_chmod 600 "${CONFIG_FILE}"
+    log "local .env repo '${LOCAL_REPO_ID}' and plan '${LOCAL_PLAN_ID}' present in ${CONFIG_FILE}"
+  else
+    rm -f "${tmp_local}"
+    log "WARNING: failed to patch the local .env repo into ${CONFIG_FILE}; leaving it unchanged"
+  fi
+}
+
 if [ ! -f "${TEMPLATE_FILE}" ]; then
   die "template not found at ${TEMPLATE_FILE}"
 fi
@@ -49,6 +218,7 @@ if [ -f "${CONFIG_FILE}" ]; then
   if [ -s "${CONFIG_FILE}" ]; then
     if jq -e 'has("instance") and (.instance | type == "string") and (.instance | length > 0)' "${CONFIG_FILE}" >/dev/null 2>&1; then
       log "config already exists at ${CONFIG_FILE}; skipping initialization"
+      ensure_local_env_repo
       fix_ownership "${CONFIG_DIR}"
       exit 0
     fi
@@ -59,6 +229,7 @@ if [ -f "${CONFIG_FILE}" ]; then
       die "failed to patch missing instance in existing config"
     fi
     mv "${tmp_patch}" "${CONFIG_FILE}"
+    ensure_local_env_repo
     fix_ownership "${CONFIG_DIR}"
     log "patched existing config with instance=${BACKREST_INSTANCE}"
     exit 0
@@ -97,5 +268,6 @@ jq \
   "${TEMPLATE_FILE}" > "${tmp_file}" || die "failed to render config from template"
 
 mv "${tmp_file}" "${CONFIG_FILE}"
+ensure_local_env_repo
 fix_ownership "${CONFIG_DIR}"
 log "Backrest config initialized at ${CONFIG_FILE}"

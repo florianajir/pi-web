@@ -204,9 +204,11 @@ services:
       - ${DATA_LOCATION:-./data}/qbittorrent:/userdata/qbittorrent:ro
       - ${DATA_LOCATION:-./data}/prowlarr:/userdata/prowlarr:ro
       - ${DATA_LOCATION:-./data}/kapowarr/db:/userdata/kapowarr-db:ro
-      # For the "lost a service, not the Pi" case. This can NEVER be the only
-      # copy of .env: restoring it needs BACKREST_S3_REPO_PASSWORD, which is
-      # inside it. Keep an offline copy (see docs/MONITORING.md).
+      # Read by backrest-env-snapshot.sh, which feeds two plans: s3-backup
+      # (off-site, but opening that repo needs BACKREST_S3_REPO_PASSWORD, which
+      # is inside the .env it stores) and usb-env, a local repo under
+      # /repos/env whose password sits next to it on the data disk so this file
+      # can be restored from that disk alone. See docs/MONITORING.md.
       #
       # The project directory, not ./.env directly: a single-file bind mount
       # pins the inode, and every writer here (services.sh, rotate-password.sh,

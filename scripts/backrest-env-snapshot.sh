@@ -14,8 +14,10 @@
 # `docker compose up` run when .env is missing makes Docker create ./.env as a
 # DIRECTORY, which then breaks every get_env_value in scripts/lib.sh.
 #
-# This can NEVER be the only copy of .env: restoring it needs
-# BACKREST_S3_REPO_PASSWORD, which is inside it. Keep an offline copy - see
+# Two plans consume this copy: s3-backup, whose repository cannot be opened
+# without BACKREST_S3_REPO_PASSWORD (a value inside the very file it stores),
+# and usb-env, a local repository on the data disk that keeps its own password
+# beside it precisely so this file can be recovered without the other one. See
 # docs/MONITORING.md.
 
 set -eu
