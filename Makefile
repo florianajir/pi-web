@@ -59,6 +59,7 @@ help:
 	@echo "  headscale-reset  Reset all Headscale nodes, preauth keys, and IP allocations"
 	@echo "  check-env        Validate required .env variables"
 	@echo "  test             Run the installer, check-env, CLI, service and start-sequence suites (no host changes)"
+	@echo "  pg-upgrade to=<image> Migrate Postgres to a new major (dump/restore, old data kept)"
 	@echo "  rotate-password       Rotate PASSWORD after a leak (LLDAP admin + Authelia only, no Postgres)"
 	@echo "  rotate-password-full  Same, plus every Postgres role and every other service using PASSWORD"
 	@echo "  help             This help"
@@ -332,6 +333,16 @@ doctor:
 	@$(COMPOSE) exec -T system-tools python3 -c \
 		"import urllib.request as r; print(r.urlopen('http://localhost:8000/status/anomalies').read().decode())" \
 		|| echo "❌ system-tools unreachable - check 'docker compose ps' and 'make logs'"
+
+# Postgres major upgrades are dump/restore: the immich-app/postgres image ships
+# one major's binaries, so pg_upgrade is not available. The old data directory
+# is left untouched, so rollback is reverting compose.yaml.
+#   make pg-upgrade to=ghcr.io/immich-app/postgres:18-vectorchord1.1.1@sha256:...
+pg-upgrade:
+	@if [ -z "$(to)" ]; then \
+		echo "❌ Target image missing (use: make pg-upgrade to=<image>)"; exit 1; \
+	fi
+	@sh scripts/pg-major-upgrade.sh --to "$(to)" --apply
 
 headscale-register:
 	@echo "🔐 Registering headscale node..."
