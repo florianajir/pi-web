@@ -1,147 +1,66 @@
 #!/bin/bash
-set -e
+set -eu
+
+# Runs once from docker-entrypoint-initdb.d, on a fresh PGDATA: one role plus
+# one database per Postgres-backed service, all sharing $POSTGRES_PASSWORD.
+# Rotating that password afterwards is scripts/rotate-password.sh's job.
 
 TEMP_SQL=$(mktemp)
-trap "rm -f $TEMP_SQL" EXIT
+trap 'rm -f "$TEMP_SQL"' EXIT
 
-cat > "$TEMP_SQL" << EOF
--- Create Immich database and user
+# Escape a value for a single-quoted SQL literal. Mirrors lib.sh's sql_escape,
+# which this script cannot source: it runs inside the postgres container, where
+# only this one file is mounted. Without it an apostrophe in PASSWORD is a
+# syntax error, and ON_ERROR_STOP aborts the entire init.
+sql_escape() {
+    printf '%s' "$1" | sed "s/'/''/g"
+}
+
+PASSWORD_SQL=$(sql_escape "$POSTGRES_PASSWORD")
+
+# Role name and database name are identical for every service.
+SERVICES="immich nextcloud authelia lldap open-webui vaultwarden"
+
+for service in $SERVICES; do
+    cat >> "$TEMP_SQL" << EOF
+-- $service
 DO \$\$
 BEGIN
-	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'immich') THEN
-		CREATE USER immich WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$service') THEN
+		CREATE USER "$service" WITH ENCRYPTED PASSWORD '$PASSWORD_SQL';
 	ELSE
-		ALTER USER immich WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
+		ALTER USER "$service" WITH ENCRYPTED PASSWORD '$PASSWORD_SQL';
 	END IF;
 END
 \$\$;
-SELECT 'CREATE DATABASE immich'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'immich')
+SELECT 'CREATE DATABASE "$service"'
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '$service')
 \gexec
-ALTER USER immich WITH SUPERUSER;
-GRANT ALL PRIVILEGES ON DATABASE immich TO immich;
-ALTER DATABASE immich OWNER TO immich;
+GRANT ALL PRIVILEGES ON DATABASE "$service" TO "$service";
+ALTER DATABASE "$service" OWNER TO "$service";
 
--- Create Nextcloud database and user
-DO \$\$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nextcloud') THEN
-		CREATE USER nextcloud WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
-	ELSE
-		ALTER USER nextcloud WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
-	END IF;
-END
-\$\$;
-SELECT 'CREATE DATABASE nextcloud'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'nextcloud')
-\gexec
-GRANT ALL PRIVILEGES ON DATABASE nextcloud TO nextcloud;
-ALTER DATABASE nextcloud OWNER TO nextcloud;
+\connect "$service"
+GRANT ALL ON SCHEMA public TO "$service";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "$service";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "$service";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO "$service";
+\connect postgres
 
--- Set proper permissions for Immich user on Immich DB
+EOF
+done
+
+# Immich needs vchord and earthdistance. Both are pre-created here by the
+# postgres superuser so the immich role does not need SUPERUSER itself — it
+# shares this instance with the vaultwarden, authelia and lldap databases, and
+# Immich is the only service here reachable without Authelia forward-auth.
+# See https://docs.immich.app/administration/postgres-standalone/ ("without
+# superuser"). Trade-off: a vchord version bump in a future immich-app/postgres
+# image needs a manual `ALTER EXTENSION vchord UPDATE;` as postgres.
+cat >> "$TEMP_SQL" << 'EOF'
 \connect immich
 CREATE EXTENSION IF NOT EXISTS vchord CASCADE;
-GRANT ALL ON SCHEMA public TO immich;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO immich;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO immich;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO immich;
-
--- Set proper permissions for Nextcloud user on Nextcloud DB
-\connect nextcloud
-GRANT ALL ON SCHEMA public TO nextcloud;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO nextcloud;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO nextcloud;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO nextcloud;
-
--- Create Authelia database and user
-DO \$\$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authelia') THEN
-		CREATE USER authelia WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
-	ELSE
-		ALTER USER authelia WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
-	END IF;
-END
-\$\$;
-SELECT 'CREATE DATABASE authelia'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'authelia')
-\gexec
-GRANT ALL PRIVILEGES ON DATABASE authelia TO authelia;
-ALTER DATABASE authelia OWNER TO authelia;
-
--- Set proper permissions for Authelia user on Authelia DB
-\connect authelia
-GRANT ALL ON SCHEMA public TO authelia;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO authelia;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO authelia;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO authelia;
-
--- Create LLDAP database and user
-DO \$\$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lldap') THEN
-		CREATE USER lldap WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
-	ELSE
-		ALTER USER lldap WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
-	END IF;
-END
-\$\$;
-SELECT 'CREATE DATABASE lldap'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'lldap')
-\gexec
-GRANT ALL PRIVILEGES ON DATABASE lldap TO lldap;
-ALTER DATABASE lldap OWNER TO lldap;
-
--- Set proper permissions for LLDAP user on LLDAP DB
-\connect lldap
-GRANT ALL ON SCHEMA public TO lldap;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO lldap;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO lldap;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO lldap;
--- Create Open-WebUI database and user
-DO \$\$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'open-webui') THEN
-		CREATE USER "open-webui" WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
-	ELSE
-		ALTER USER "open-webui" WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
-	END IF;
-END
-\$\$;
-SELECT 'CREATE DATABASE "open-webui"'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'open-webui')
-\gexec
-GRANT ALL PRIVILEGES ON DATABASE "open-webui" TO "open-webui";
-ALTER DATABASE "open-webui" OWNER TO "open-webui";
-
--- Set proper permissions for Open-WebUI user on Open-WebUI DB
-\connect "open-webui"
-GRANT ALL ON SCHEMA public TO "open-webui";
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "open-webui";
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "open-webui";
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO "open-webui";
--- Create Vaultwarden database and user
-DO \$\$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vaultwarden') THEN
-		CREATE USER vaultwarden WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
-	ELSE
-		ALTER USER vaultwarden WITH ENCRYPTED PASSWORD '${POSTGRES_PASSWORD}';
-	END IF;
-END
-\$\$;
-SELECT 'CREATE DATABASE vaultwarden'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'vaultwarden')
-\gexec
-GRANT ALL PRIVILEGES ON DATABASE vaultwarden TO vaultwarden;
-ALTER DATABASE vaultwarden OWNER TO vaultwarden;
-
--- Set proper permissions for Vaultwarden user on Vaultwarden DB
-\connect vaultwarden
-GRANT ALL ON SCHEMA public TO vaultwarden;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO vaultwarden;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO vaultwarden;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO vaultwarden;
+CREATE EXTENSION IF NOT EXISTS earthdistance CASCADE;
+\connect postgres
 EOF
 
 psql -v ON_ERROR_STOP=1 --username postgres --dbname postgres < "$TEMP_SQL"
