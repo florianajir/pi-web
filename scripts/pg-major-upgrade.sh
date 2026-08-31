@@ -1,6 +1,10 @@
 #!/bin/sh
 # Migrate the shared Postgres cluster to a new major version, by dump/restore.
 #
+# One step of the procedure in docs/POSTGRES-UPGRADE.md, which covers the
+# pre-flight checks, the Backrest client bump this needs alongside it, and the
+# post-cutover verification. Read that first.
+#
 # Usage: pg-major-upgrade.sh --to <image> [--apply] [--keep-dumps]
 #   --to <image>   target image, e.g.
 #                  ghcr.io/immich-app/postgres:18-vectorchord1.1.1@sha256:...

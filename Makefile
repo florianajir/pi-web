@@ -338,6 +338,9 @@ doctor:
 # one major's binaries, so pg_upgrade is not available. The old data directory
 # is left untouched, so rollback is reverting compose.yaml.
 #   make pg-upgrade to=ghcr.io/immich-app/postgres:18-vectorchord1.1.1@sha256:...
+# This target is one step of a procedure - docs/POSTGRES-UPGRADE.md has the rest,
+# including the trap that starting the stack on the new compose file first
+# silently initialises an empty cluster.
 pg-upgrade:
 	@if [ -z "$(to)" ]; then \
 		echo "❌ Target image missing (use: make pg-upgrade to=<image>)"; exit 1; \
