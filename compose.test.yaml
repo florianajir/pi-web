@@ -98,11 +98,12 @@ services:
       start_period: 60s
 
   # --- postgres: replace host bind mount with a named volume for CI ---
-  # ./data/postgres may hold production data initialised with a different
+  # ./data/postgres18 may hold production data initialised with a different
   # PASSWORD; a named volume guarantees a fresh database on the CI one.
+  # Mount point is /var/lib/postgresql, not .../data — see compose.yaml.
   postgres:
     volumes: !override
-      - postgres_ci_data:/var/lib/postgresql/data
+      - postgres_ci_data:/var/lib/postgresql
       - ./config/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh
 
   # --- authelia: keep generated config mounts writable in CI ---

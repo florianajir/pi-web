@@ -170,6 +170,8 @@ Pi-hole's `gravity.db` is excluded outright. 670k of its rows are block-list dom
 
 Services on PostgreSQL (nextcloud, authelia, lldap, open-webui, immich, vaultwarden) are covered by `scripts/db-backup.sh` instead and are deliberately absent from that list. Their leftover SQLite files — `lldap/users.db`, `nextcloud-data/owncloud.db`, `open-webui-data/webui.db`, last written before those services moved to PostgreSQL — are excluded too, because restoring one would be actively misleading.
 
+Restore those dumps **as the `postgres` superuser**, not as the service role: `config/postgres/init-databases.sh` grants each schema's default privileges as `postgres`, so the `ALTER DEFAULT PRIVILEGES` lines the dump carries are refused with `permission denied to change default privileges` when the service role replays its own dump. The dumps also open with a `\restrict` line, which only `psql` 17.6 and newer understands — use the client inside the Backrest container (`config/backrest/Dockerfile` pins it to the server major), not whatever `psql` the host happens to have.
+
 ### Three eyes on the same question
 
 Backups fail in two different ways, and one of them is silent:
