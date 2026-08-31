@@ -608,7 +608,7 @@ services:
 
   headplane:
     <<: *service-defaults
-    image: ghcr.io/tale/headplane:0.7.0
+    image: ghcr.io/tale/headplane:0.7.1
     container_name: pi-headplane
     profiles: ["headplane", "all"]
     networks:
