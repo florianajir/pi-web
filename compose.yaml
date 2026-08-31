@@ -395,7 +395,7 @@ services:
 
   uptime-kuma:
     <<: *service-defaults
-    image: louislam/uptime-kuma:2
+    image: louislam/uptime-kuma:2.5.3@sha256:3e24e96c89efff0e3a4b0698cbdd36c15ad3022371db57166e5588853002ee5c
     container_name: pi-uptime-kuma
     profiles: ["uptime-kuma", "all"]
     networks:
@@ -761,7 +761,7 @@ services:
 
   tailscale:
     <<: *service-defaults
-    image: tailscale/tailscale:stable
+    image: tailscale/tailscale:v1.102.3@sha256:8c42c4574ab066384fcb72f69e086a2ff1dd3652eb6f56856cee34bcf0d2f680
     container_name: pi-tailscale
     network_mode: host
     cap_add:
@@ -965,7 +965,7 @@ services:
 
   homepage:
     <<: *service-defaults
-    image: ghcr.io/gethomepage/homepage:latest
+    image: ghcr.io/gethomepage/homepage:v2.1.2@sha256:da9dca9ec258c628146bed1445da0853f2b88f0b10bafd97c091de807c363d60
     container_name: pi-homepage
     networks:
       - frontend
@@ -1037,7 +1037,7 @@ services:
 
   gluetun:
     <<: *service-defaults
-    image: qmcgaw/gluetun:v3
+    image: qmcgaw/gluetun:v3.41.3@sha256:fa19cc76b2af13d57a8d3dc3066f2ada061b1c761b8aecf989b3877c0486e027
     container_name: pi-gluetun
     profiles: ["gluetun", "qbittorrent", "stremio", "kapowarr", "all"]
     cap_add:
@@ -1117,7 +1117,7 @@ services:
 
   qbittorrent:
     <<: *service-defaults
-    image: lscr.io/linuxserver/qbittorrent:latest
+    image: lscr.io/linuxserver/qbittorrent:5.2.3_v2.0.14-ls474@sha256:a00b6a597a3832a1814cde0ef60abc55c94644f3f80902c3432f6af6de8d4a96
     container_name: pi-qbittorrent
     profiles: ["qbittorrent", "all"]
     network_mode: "service:gluetun"
@@ -1608,7 +1608,7 @@ services:
   # Authentication & SSO
   lldap:
     <<: *service-defaults
-    image: lldap/lldap:stable
+    image: lldap/lldap:v0.6.3-alpine@sha256:2a8454b668c1aba7157e832eab0e242e1e7eb5fb7591d7e7774ba05286511ca8
     container_name: pi-lldap
     networks:
       - frontend
