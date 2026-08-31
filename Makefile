@@ -58,7 +58,7 @@ help:
 	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  headscale-reset  Reset all Headscale nodes, preauth keys, and IP allocations"
 	@echo "  check-env        Validate required .env variables"
-	@echo "  test             Run the installer and check-env test suites (no host changes)"
+	@echo "  test             Run the installer, check-env, CLI, service and start-sequence suites (no host changes)"
 	@echo "  rotate-password       Rotate PASSWORD after a leak (LLDAP admin + Authelia only, no Postgres)"
 	@echo "  rotate-password-full  Same, plus every Postgres role and every other service using PASSWORD"
 	@echo "  help             This help"
@@ -94,6 +94,7 @@ test:
 	@sh tests/install-test.sh
 	@sh tests/check-env-test.sh
 	@sh tests/cli-test.sh
+	@sh tests/services-test.sh
 	@sh tests/stack-up-test.sh
 
 preflight: check-env

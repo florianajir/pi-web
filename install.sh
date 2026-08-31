@@ -460,6 +460,7 @@ resolve_network() {
     require_safe HOST_LAN_GATEWAY "$LAN_GATEWAY"
     require_safe ALLOW_IP_RANGES "${ALLOW_IP_RANGES:-}"
     require_safe PIHOLE_IP "${PIHOLE_IP:-}"
+    require_safe STREMIO_IP "${STREMIO_IP:-}"
 
     if [ -z "$LAN_PARENT" ] || [ -z "$LAN_SUBNET" ] || [ -z "$LAN_GATEWAY" ]; then
         log "Could not determine the LAN layout (interface/subnet/gateway)"
@@ -503,18 +504,22 @@ build_allow_ip_ranges() {
     }'
 }
 
-# .250 by convention (the .env.dist default), stepping down when it would
-# collide with the host itself, the gateway, or a device that answers a ping.
+# A free static address for a macvlan container, from the candidate octets in
+# preference order (.250 for Pi-hole and .251 for Stremio, the .env.dist
+# defaults), skipping the host itself, the gateway, an address already handed
+# to another container, and anything that answers a ping.
 # Silence is not proof an address is free (a sleeping device, a DHCP lease
 # handed out later), hence the warning at the end of the run — but an answer is
 # proof it is taken. Skipped when ping is unavailable rather than treating
 # every candidate as free.
-pick_pihole_ip() {
-    local prefix="$1" octet="" candidate=""
-    for octet in 250 249 248 247; do
+pick_lan_ip() {
+    local prefix="$1" taken="$2" octet="" candidate=""
+    shift 2
+    for octet in "$@"; do
         candidate="$prefix.$octet"
         [ "$candidate" != "${HOST_LAN_IP:-}" ] || continue
         [ "$candidate" != "$LAN_GATEWAY" ] || continue
+        [ "$candidate" != "$taken" ] || continue
         if have ping && ping -c 1 -W 1 "$candidate" >/dev/null 2>&1; then
             log "$candidate already answers on the LAN, trying the next address"
             continue
@@ -526,7 +531,7 @@ pick_pihole_ip() {
 }
 
 write_network_settings() {
-    local dist_ranges="" dist_lan="" ranges="" pihole_ip=""
+    local dist_ranges="" dist_lan="" ranges="" prefix="" pihole_ip="" stremio_ip=""
 
     [ -z "$LAN_PARENT" ] || set_env HOST_LAN_PARENT "$LAN_PARENT"
     [ -z "$LAN_SUBNET" ] || set_env HOST_LAN_SUBNET "$LAN_SUBNET"
@@ -538,6 +543,7 @@ write_network_settings() {
     # another Pi-hole address exports PIHOLE_IP alone).
     [ -z "${ALLOW_IP_RANGES:-}" ] || set_env ALLOW_IP_RANGES "$ALLOW_IP_RANGES"
     [ -z "${PIHOLE_IP:-}" ] || set_env PIHOLE_IP "$PIHOLE_IP"
+    [ -z "${STREMIO_IP:-}" ] || set_env STREMIO_IP "$STREMIO_IP"
 
     # Nothing left to derive without a subnet: the .env.dist defaults stand.
     [ -n "$LAN_SUBNET" ] || return 0
@@ -552,23 +558,40 @@ write_network_settings() {
         fi
     fi
 
-    [ -z "${PIHOLE_IP:-}" ] || return 0
     case "$LAN_SUBNET" in
-        *.0/24)
-            pihole_ip="$(pick_pihole_ip "${LAN_SUBNET%.0/24}")" \
-                || die "no free address left for Pi-hole in $LAN_SUBNET; export PIHOLE_IP and re-run"
-            set_env PIHOLE_IP "$pihole_ip"
-            ;;
-        *)
-            if interactive; then
-                log "Pi-hole needs a free static address inside $LAN_SUBNET (outside your router's DHCP range)"
-                ask PIHOLE_IP "Pi-hole IP" ""
-                set_env PIHOLE_IP "$PIHOLE_IP"
-            else
-                die "non-/24 subnet ($LAN_SUBNET): export PIHOLE_IP with a free address inside it and re-run"
-            fi
-            ;;
+        *.0/24) prefix="${LAN_SUBNET%.0/24}" ;;
     esac
+
+    if [ -n "${PIHOLE_IP:-}" ]; then
+        pihole_ip="$PIHOLE_IP"
+    elif [ -n "$prefix" ]; then
+        pihole_ip="$(pick_lan_ip "$prefix" "" 250 249 248 247)" \
+            || die "no free address left for Pi-hole in $LAN_SUBNET; export PIHOLE_IP and re-run"
+        set_env PIHOLE_IP "$pihole_ip"
+    elif interactive; then
+        log "Pi-hole needs a free static address inside $LAN_SUBNET (outside your router's DHCP range)"
+        ask PIHOLE_IP "Pi-hole IP" ""
+        set_env PIHOLE_IP "$PIHOLE_IP"
+        pihole_ip="$PIHOLE_IP"
+    else
+        die "non-/24 subnet ($LAN_SUBNET): export PIHOLE_IP with a free address inside it and re-run"
+    fi
+
+    # Stremio's LAN address is used by the `stremio-lan` profile only, which is
+    # off by default and not part of "all": a missing one must not stop an
+    # install that will never enable it, so this warns where Pi-hole's dies and
+    # never spends a prompt on it. Left unset, .env.dist's 192.168.1.251 would
+    # sit outside any other subnet and `up stremio-lan` would refuse the address.
+    [ -z "${STREMIO_IP:-}" ] || return 0
+    if [ -z "$prefix" ]; then
+        log "WARNING: non-/24 subnet ($LAN_SUBNET): set STREMIO_IP in .env by hand before enabling the stremio-lan profile"
+        return 0
+    fi
+    if stremio_ip="$(pick_lan_ip "$prefix" "$pihole_ip" 251 252 253 254)"; then
+        set_env STREMIO_IP "$stremio_ip"
+    else
+        log "WARNING: no free address left for Stremio in $LAN_SUBNET; set STREMIO_IP in .env by hand before enabling the stremio-lan profile"
+    fi
 }
 
 # Which optional services to run, via Docker Compose profiles (each optional
@@ -600,6 +623,10 @@ select_services() {
         0) ;;
         1)
             log "Selection cancelled; every optional service stays enabled"
+            return 0
+            ;;
+        3)
+            log "WARNING: the selection paired two services that cannot run together; every optional service stays enabled"
             return 0
             ;;
         *)

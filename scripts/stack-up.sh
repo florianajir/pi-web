@@ -36,7 +36,10 @@ fi
 
 # `stremio` and `stremio-lan` are one server in two networking modes, sharing a
 # single data volume and the same Traefik host rules. Compose cannot express
-# mutual exclusion, so refuse the combination before anything starts.
+# mutual exclusion, so refuse the combination before anything starts. The pair
+# is spelled out here rather than read from compose.yaml's
+# pi-pcloud.conflicts-with label (which is what services.sh and the picker use),
+# so the boot path stays a plain string check.
 profiles_have() {
     case ",$(printf '%s' "${COMPOSE_PROFILES:-}" | tr -d ' \r')," in
         *",$1,"*) return 0 ;;
@@ -44,7 +47,9 @@ profiles_have() {
     return 1
 }
 
-if profiles_have stremio && profiles_have stremio-lan; then
+# "all" covers stremio and deliberately not stremio-lan, so `all,stremio-lan`
+# is the same conflict spelled differently and must not slip through.
+if profiles_have stremio-lan && { profiles_have stremio || profiles_have all; }; then
     die "COMPOSE_PROFILES lists both stremio and stremio-lan: same server, two networking modes, one data volume - keep only one"
 fi
 
@@ -64,6 +69,7 @@ qbittorrent:qbittorrent-pre-start.sh
 prowlarr:prowlarr-pre-start.sh
 kapowarr:kapowarr-pre-start.sh
 llama-cpp:llama-cpp-pre-start.sh
+stremio-lan:stremio-lan-pre-start.sh
 '
 
 # Best-effort: these need their service answering, and a slow one must not fail

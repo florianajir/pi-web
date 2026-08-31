@@ -70,25 +70,101 @@ in_lines() {
     printf '%s\n' "$1" | grep -qx "$2"
 }
 
-# 0 if the comma-separated selection lists <name> exactly.
+# 0 if the comma-separated selection lists <name> exactly. \r is stripped along
+# with spaces, as in stack-up.sh: a .env edited from Windows over Samba ends its
+# COMPOSE_PROFILES line with one, and the guards below have to see through it.
 selection_has() {
-    case ",$(printf '%s' "$1" | tr -d ' ')," in
+    case ",$(printf '%s' "$1" | tr -d ' \r')," in
         *",$2,"*) return 0 ;;
     esac
     return 1
 }
 
+# The profiles the catch-all "all" stands for, one per line: every profile named
+# alongside "all" in a `profiles:` list. Read straight out of compose.yaml (no
+# docker call, and no pipeline that could swallow its failure), because a
+# profile deliberately left out of "all" — stremio-lan — must never be
+# treated as covered by it.
+profiles_covered_by_all() {
+    awk '
+        /^[ \t]+profiles:/ {
+            list = $0
+            sub(/^[^[]*\[/, "", list)
+            sub(/\].*$/, "", list)
+            gsub(/["\t ]/, "", list)
+            if (list ~ /(^|,)all(,|$)/) {
+                n = split(list, part, ",")
+                for (i = 1; i <= n; i++)
+                    if (part[i] != "" && part[i] != "all") print part[i]
+            }
+        }
+    ' "$PROJECT_DIR/compose.yaml" | sort -u
+}
+
+# 0 if the selection would actually run <name>: listed by name, or covered by
+# the catch-all "all". Not the same as selection_has: "all,stremio-lan" lists
+# stremio nowhere yet runs it.
+selection_runs() {
+    selection_has "$1" "$2" && return 0
+    selection_has "$1" all || return 1
+    in_lines "$(profiles_covered_by_all)" "$2"
+}
+
+# The members of a newline-separated profile list that "all" covers.
+covered_by_all() {
+    _covered="$(profiles_covered_by_all)"
+    printf '%s\n' "$1" | while read -r _profile; do
+        if in_lines "$_covered" "$_profile"; then printf '%s\n' "$_profile"; fi
+    done
+}
+
+# "all" written out as the explicit list it stands for, from <known-profiles>.
+# Expanding to *every* known profile instead would pull in the ones deliberately
+# outside "all" (stremio-lan) and produce a selection that contradicts itself.
+explicit_all() {
+    covered_by_all "$1" | paste -sd, -
+}
+
+# The profiles <name> can never run alongside, space-separated (empty for the
+# services that conflict with nothing, which is nearly all of them).
+conflicts_of() {
+    config_rows | awk -F: -v svc="$1" '$1 == svc { print $5 }'
+}
+
+# "<a> <b>" per line: two profiles that must never be selected together, from
+# the pi-pcloud.conflicts-with labels in compose.yaml. Each pair once, ordered,
+# since config_rows reports the relation on both sides.
+exclusive_pairs() {
+    config_rows | awk -F: '
+        $5 != "" {
+            n = split($5, other, " ")
+            for (i = 1; i <= n; i++) if ($1 < other[i]) print $1, other[i]
+        }'
+}
+
+# Refuse a selection that would run both halves of a mutually exclusive pair.
+# Checked wherever a value is produced, not in stack-up.sh alone, so a bad pick
+# never reaches .env and leaves the stack unable to start (see
+# docs/CONFIGURATION.md).
+check_exclusive() {
+    _selection="$1"
+    _rc=0
+    while read -r _a _b; do
+        [ -n "$_a" ] || continue
+        selection_runs "$_selection" "$_a" || continue
+        selection_runs "$_selection" "$_b" || continue
+        echo "❌ $_a and $_b cannot both run: one server in two networking modes," >&2
+        echo "   sharing a data volume and the same Traefik host rules. Keep one." >&2
+        _rc=1
+    done <<EOF
+$(exclusive_pairs)
+EOF
+    return "$_rc"
+}
+
 # Rewrite (or append) the COMPOSE_PROFILES line. Dry mode prints instead.
 write_profiles() {
-    # stremio and stremio-lan are one server in two networking modes, sharing a
-    # data volume and the same Traefik host rules. Refused here rather than in
-    # stack-up.sh alone, so a bad pick never reaches .env and leaves the stack
-    # unable to start (see docs/CONFIGURATION.md).
-    if selection_has "$1" stremio && selection_has "$1" stremio-lan; then
-        echo "❌ stremio and stremio-lan cannot both run: same server, two networking" >&2
-        echo "   modes, one data volume. Keep stremio (VPN) or stremio-lan (casting)." >&2
-        return 1
-    fi
+    check_exclusive "$1" || return 1
     if is_dry_run; then
         echo "DRY-RUN: would write to $ENV_FILE: COMPOSE_PROFILES=$1"
         return 0
@@ -149,6 +225,22 @@ run_hook() {
     /bin/sh "$_hook" || log "warning: hook $1 failed (continuing)"
 }
 
+# Same, for the pre-start hooks: a failure there stops the start, exactly as it
+# does in stack-up.sh's blocking list. They exist to refuse a half-written
+# configuration (stremio-lan-pre-start.sh checks STREMIO_IP against the LAN
+# subnet), so continuing past one only trades their message for a cryptic one
+# out of `docker compose up`.
+run_pre_start_hook() {
+    _hook="$PROJECT_DIR/scripts/$1"
+    [ -f "$_hook" ] || return 0
+    if is_dry_run; then
+        echo "DRY-RUN: /bin/sh $_hook"
+        return 0
+    fi
+    log "Running hook $1..."
+    /bin/sh "$_hook" || die "hook $1 failed; nothing was started"
+}
+
 # Validate the service argument; on failure print usage plus the valid list.
 validate_service() {
     _svc="$1"
@@ -169,13 +261,18 @@ validate_service() {
 # --- Checklist layout ---
 
 # One row per optional service, as
-# "<service>:<section>:<companion-of>:<needs>:<description>" (description last,
-# so a colon inside it survives),
-# ordered by section. Three things come out of compose.yaml, so the picker can
+# "<service>:<section>:<companion-of>:<needs>:<conflicts-with>:<description>"
+# (description last, so a colon inside it survives),
+# ordered by section. Everything comes out of compose.yaml, so the picker can
 # never drift from the stack:
 #   homepage.group=            the section the service is listed under
 #   pi-pcloud.companion-of=    the service it is pointless without, which is
 #                              what the picker draws it indented beneath
+#   pi-pcloud.conflicts-with=  a service it can never run alongside (stremio /
+#                              stremio-lan: one server, two networking modes,
+#                              one data volume). Stated once, reported on both
+#                              sides, space-separated if there is ever more
+#                              than one
 #   homepage.description=      the one-line description shown beside it
 #   profiles:                  a service listing others in its own profile list
 #                              is a dependency they cannot run without (gluetun
@@ -223,6 +320,12 @@ config_rows() {
             sub(/"[ \t]*$/, "", companion)
             next
         }
+        /pi-pcloud\.conflicts-with=/ {
+            conflict = $0
+            sub(/.*pi-pcloud\.conflicts-with=/, "", conflict)
+            sub(/"[ \t]*$/, "", conflict)
+            next
+        }
         END {
             collect()
             for (i = 1; i <= n; i++) {
@@ -230,6 +333,15 @@ config_rows() {
                 for (j = 1; j <= cnt; j++)
                     if (part[j] != "" && part[j] != "all" && part[j] != name[i])
                         needs[part[j]] = needs[part[j]] " " name[i]
+            }
+            # One label states the pair; both sides carry it from here, so
+            # nothing downstream has to know which of the two declared it.
+            for (i = 1; i <= n; i++) {
+                cnt = split(confl[i], part, " ")
+                for (j = 1; j <= cnt; j++) {
+                    excl[name[i]] = excl[name[i]] " " part[j]
+                    excl[part[j]] = excl[part[j]] " " name[i]
+                }
             }
             for (i = 1; i <= n; i++) {
                 g = grp[i]
@@ -243,10 +355,11 @@ config_rows() {
                 root = comp[i] != "" ? comp[i] : name[i]
                 child = comp[i] != "" ? 1 : 0
                 sub(/^ /, "", needs[name[i]])
+                sub(/^ /, "", excl[name[i]])
                 # A sidecar carries no dashboard description of its own; saying
                 # what it runs with beats an empty column.
                 text = info[i] != "" ? info[i] : (comp[i] != "" ? "runs with " comp[i] : "")
-                printf "%s|%s|%d|%s|%s|%s|%s\n", section[name[i]], root, child, name[i], comp[i], needs[name[i]], text
+                printf "%s|%s|%d|%s|%s|%s|%s|%s\n", section[name[i]], root, child, name[i], comp[i], needs[name[i]], text, excl[name[i]]
             }
         }
         function collect() {
@@ -261,12 +374,13 @@ config_rows() {
                 sub(/\].*$/, "", p)
                 gsub(/["\t ]/, "", p)
                 prof[n] = p
+                confl[n] = conflict
             }
-            svc = ""; profiles = ""; group = ""; companion = ""; desc = ""
+            svc = ""; profiles = ""; group = ""; companion = ""; desc = ""; conflict = ""
         }
     ' "$PROJECT_DIR/compose.yaml" \
         | sort -t'|' -k1,1 -k2,2 -k3,3n -k4,4 \
-        | awk -F'|' '{ printf "%s:%s:%s:%s:%s\n", $4, ($3 == 0 ? $1 : ""), $5, $6, $7 }'
+        | awk -F'|' '{ printf "%s:%s:%s:%s:%s:%s\n", $4, ($3 == 0 ? $1 : ""), $5, $6, $8, $7 }'
 }
 
 # Runs the picker over the current selection and prints the COMPOSE_PROFILES
@@ -290,13 +404,13 @@ pick_profiles() {
     _rows="$(mktemp)"
     _picked="$(mktemp)"
     _known="$(known_profiles)"
-    while IFS=: read -r _svc _section _parent _needs _desc; do
+    while IFS=: read -r _svc _section _parent _needs _conflicts _desc; do
         [ -n "$_svc" ] || continue
         in_lines "$_known" "$_svc" || continue
         if in_lines "$_enabled" "$_svc"; then
-            printf '%s:%s:%s:%s:on:%s\n' "$_svc" "$_section" "$_parent" "$_needs" "$_desc" >>"$_rows"
+            printf '%s:%s:%s:%s:%s:on:%s\n' "$_svc" "$_section" "$_parent" "$_needs" "$_conflicts" "$_desc" >>"$_rows"
         else
-            printf '%s:%s:%s:%s:off:%s\n' "$_svc" "$_section" "$_parent" "$_needs" "$_desc" >>"$_rows"
+            printf '%s:%s:%s:%s:%s:off:%s\n' "$_svc" "$_section" "$_parent" "$_needs" "$_conflicts" "$_desc" >>"$_rows"
         fi
     done <<EOF
 $(config_rows)
@@ -318,10 +432,7 @@ EOF
     # Compared against the profiles "all" actually covers, not every declared
     # one: a profile deliberately outside it (stremio-lan) must stay explicit,
     # otherwise ticking it would collapse to "all" and silently not run it.
-    _allsvc="$(mktemp)"
-    services_for_profiles all | sort >"$_allsvc"
-    _known_in_all="$(printf '%s\n' "$_known" | grep -Fxf "$_allsvc" || true)"
-    rm -f "$_allsvc"
+    _known_in_all="$(covered_by_all "$_known")"
     if [ "$(printf '%s\n' "$_selection" | grep -v '^$' | sort)" = "$_known_in_all" ]; then
         echo all
     else
@@ -368,8 +479,15 @@ cmd_enable() {
     if has_profiles_line; then
         current="$(get_env_value COMPOSE_PROFILES)"
     else
-        echo "ℹ️  No COMPOSE_PROFILES line in .env (= everything enabled): writing the full explicit list first"
-        current="$(printf '%s\n' "$known" | paste -sd, -)"
+        echo "ℹ️  No COMPOSE_PROFILES line in .env (= everything enabled): writing the explicit list first"
+        current="$(explicit_all "$known")"
+    fi
+    # A profile "all" does not cover (stremio-lan) is not already enabled by it,
+    # and cannot be added to the literal "all" either: write out the list it
+    # stands for, so the addition is expressible at all.
+    if [ "$current" = "all" ] && ! selection_runs all "$svc"; then
+        echo "ℹ️  COMPOSE_PROFILES=all does not cover $svc: writing the explicit list first"
+        current="$(explicit_all "$known")"
     fi
     if [ "$current" = "all" ]; then
         echo "ℹ️  COMPOSE_PROFILES=all: every service is already enabled"
@@ -380,9 +498,19 @@ cmd_enable() {
             *",$svc,"*) new="$current"; echo "ℹ️  $svc already in COMPOSE_PROFILES" ;;
             *) new="$current,$svc" ;;
         esac
+        # Before the hooks and the container, not after: enabling one half of a
+        # mutually exclusive pair has to stop here, with the counterpart named.
+        if ! check_exclusive "$new"; then
+            for other in $(conflicts_of "$svc"); do
+                if selection_runs "$current" "$other"; then
+                    echo "   Run 'make disable s=$other' first, then enable $svc." >&2
+                fi
+            done
+            exit 1
+        fi
         write_profiles "$new"
     fi
-    run_hook "$svc-pre-start.sh"
+    run_pre_start_hook "$svc-pre-start.sh"
     echo "🚀 Starting $svc (and any services it depends on)..."
     run_compose_up_with "$new" up -d "$svc"
     run_hook "$svc-bootstrap.sh"
@@ -401,8 +529,8 @@ cmd_disable() {
         current=all
     fi
     if [ "$current" = "all" ]; then
-        echo "ℹ️  COMPOSE_PROFILES was '$current' (= everything enabled): writing the full explicit list first"
-        current="$(printf '%s\n' "$known" | paste -sd, -)"
+        echo "ℹ️  COMPOSE_PROFILES was '$current' (= everything enabled): writing the explicit list first"
+        current="$(explicit_all "$known")"
     fi
     new="$(printf '%s\n' "$current" | tr ',' '\n' | grep -vx "$svc" | paste -sd, - || true)"
     [ -n "$new" ] || echo "⚠️  COMPOSE_PROFILES is now empty: only core services will run"
@@ -421,6 +549,10 @@ cmd_disable() {
 cmd_pick() {
     require_env_file
     _value="$(pick_profiles "$(current_enabled)")" || return "$?"
+    # install.sh writes what comes back straight to .env, so the exclusivity
+    # rule is enforced here too and not only in write_profiles. Status 3, since
+    # 1 and 2 already mean "cancelled" and "no picker here".
+    check_exclusive "$_value" || return 3
     printf '%s\n' "$_value"
 }
 
@@ -451,6 +583,12 @@ cmd_config() {
             ;;
     esac
     [ -n "$new_profiles" ] || echo "⚠️  Nothing selected: COMPOSE_PROFILES will be empty — only core services will run"
+    # The picker unticks conflicting boxes itself; this is the backstop, and it
+    # has to say that the picks were dropped rather than let set -e end the run.
+    if ! check_exclusive "$new_profiles"; then
+        echo "   Nothing was changed." >&2
+        return 1
+    fi
     write_profiles "$new_profiles"
 
     # Diff effective service sets (not raw profiles), so auto-enabled
@@ -476,7 +614,7 @@ cmd_config() {
     # to reach a state it is already in).
     if [ -n "$newly_on" ]; then
         for svc in $newly_on; do
-            run_hook "$svc-pre-start.sh"
+            run_pre_start_hook "$svc-pre-start.sh"
         done
         echo "🚀 Starting$newly_on..."
         # shellcheck disable=SC2086 # service names, split on purpose

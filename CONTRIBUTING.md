@@ -13,7 +13,7 @@ Found a security issue? Please report it privately through GitHub's [security ad
 ```bash
 git clone https://github.com/florianajir/pi-pcloud.git
 cd pi-pcloud
-make test          # installer, CLI, check-env and start-sequence suites; touches nothing on the host
+make test          # installer, CLI, check-env, service-selection and start-sequence suites; touches nothing on the host
 ```
 
 Then open a pull request against `main`. CI validates the Compose file, lints YAML, shellchecks the scripts and boots the stack.

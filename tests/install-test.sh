@@ -178,6 +178,10 @@ ok "fallback keeps exported ALLOW_IP_RANGES" "$(env_line ALLOW_IP_RANGES)" "ALLO
 ok "fallback writes no LAN parent"           "$(env_line HOST_LAN_PARENT)" \
     "$(grep '^HOST_LAN_PARENT=' "$REPO_DIR/.env.dist" | tail -n1)"
 
+stage_env
+STREMIO_IP=192.168.1.239 write_network_settings >/dev/null 2>&1
+ok "fallback keeps exported STREMIO_IP"      "$(env_line STREMIO_IP)" "STREMIO_IP=192.168.1.239"
+
 # A fully detected layout rewrites the LAN member of ALLOW_IP_RANGES.
 LAN_PARENT=eth0 LAN_SUBNET=10.4.0.0/24 LAN_GATEWAY=10.4.0.1
 stage_env
@@ -186,24 +190,34 @@ ping() { return 1; }
 ok "detected layout writes the subnet"  "$(env_line HOST_LAN_SUBNET)" "HOST_LAN_SUBNET=10.4.0.0/24"
 ok "detected layout writes the gateway" "$(env_line HOST_LAN_GATEWAY)" "HOST_LAN_GATEWAY=10.4.0.1"
 ok "detected layout picks a Pi-hole IP" "$(env_line PIHOLE_IP)" "PIHOLE_IP=10.4.0.250"
+# Left at the .env.dist default, Stremio's macvlan address would sit outside
+# the detected subnet and `up stremio-lan` would refuse it.
+ok "detected layout picks a Stremio IP" "$(env_line STREMIO_IP)" "STREMIO_IP=10.4.0.251"
 case "$(env_line ALLOW_IP_RANGES)" in
     *10.4.0.0/24*) ok "detected layout rebuilds ALLOW_IP_RANGES" yes yes ;;
     *) ok "detected layout rebuilds ALLOW_IP_RANGES" "$(env_line ALLOW_IP_RANGES)" yes ;;
 esac
 
-# --- pick_pihole_ip --------------------------------------------------------
+# --- pick_lan_ip -----------------------------------------------------------
 
 LAN_GATEWAY=192.168.1.1
 unset HOST_LAN_IP 2>/dev/null || true
 ping() { case "$*" in *192.168.1.250) return 0 ;; *) return 1 ;; esac; }
-ok "steps past a live .250" "$(pick_pihole_ip 192.168.1 2>/dev/null)" "192.168.1.249"
+ok "steps past a live .250" "$(pick_lan_ip 192.168.1 "" 250 249 248 247 2>/dev/null)" "192.168.1.249"
 ping() { return 0; }
-ok "no free address is an error" "$(yn pick_pihole_ip 192.168.1)" no
+ok "no free address is an error" "$(yn pick_lan_ip 192.168.1 "" 250 249 248 247)" no
 ping() { return 1; }
-ok "a quiet .250 is taken" "$(pick_pihole_ip 192.168.1)" "192.168.1.250"
+ok "a quiet .250 is taken" "$(pick_lan_ip 192.168.1 "" 250 249 248 247)" "192.168.1.250"
 have() { case "$1" in ping) return 1 ;; *) command -v "$1" >/dev/null 2>&1 ;; esac; }
-ok "no ping binary still picks .250" "$(pick_pihole_ip 192.168.1)" "192.168.1.250"
+ok "no ping binary still picks .250" "$(pick_lan_ip 192.168.1 "" 250 249 248 247)" "192.168.1.250"
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# The address already handed to another container is skipped, so Stremio never
+# lands on Pi-hole's.
+ping() { return 1; }
+ok "an address already taken is skipped" \
+    "$(pick_lan_ip 192.168.1 192.168.1.251 251 252 253 254)" "192.168.1.252"
+ok "the gateway is skipped" "$(pick_lan_ip 192.168.1 "" 1 251)" "192.168.1.251"
 
 # --- ask() ----------------------------------------------------------------
 
