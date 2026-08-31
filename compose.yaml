@@ -911,7 +911,7 @@ services:
       - "homepage.description=Photos and videos"
       - "homepage.widget.type=immich"
       - "homepage.widget.url=http://pi-immich:2283"
-      - "homepage.widget.key={{HOMEPAGE_VAR_IMMICH_API_KEY}}"
+      - "homepage.widget.key={{HOMEPAGE_FILE_IMMICH_API_KEY}}"
       - "homepage.widget.version=2"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
@@ -1045,11 +1045,11 @@ services:
       - HOMEPAGE_FILE_KAVITA_API_KEY=/app/config/secrets/kavita_api_key
       - HOMEPAGE_FILE_HEADSCALE_API_KEY=/app/config/secrets/headscale_api_key
       - HOMEPAGE_FILE_HEADSCALE_NODE_ID=/app/config/secrets/headscale_node_id
-    # Immich/Kavita cannot mint an API key without a logged-in admin session, so
-    # their keys go here by hand (see homepage.env.example) or the widget errors.
-    env_file:
-      - path: ./config/homepage/homepage.env
-        required: false
+      # Immich is the one key nothing can mint: its admin password is set at signup
+      # and is not derivable from .env, and api_key.key is stored hashed, so neither
+      # the API nor the database can produce one. Paste it into the secret file --
+      # scripts/homepage-widgets-bootstrap.sh creates it empty on first run.
+      - HOMEPAGE_FILE_IMMICH_API_KEY=/app/config/secrets/immich_api_key
     extra_hosts:
       # So the widget's https:// call passes Nextcloud's trusted-domains check.
       - "nextcloud.${HOST_NAME:-pi.lan}:172.30.11.250"

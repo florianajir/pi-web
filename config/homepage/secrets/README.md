@@ -1,20 +1,25 @@
-# Homepage widget secrets (auto-provisioned only)
+# Homepage widget secrets
 
 Each file here is a single-line secret read by the Homepage container (via
 `{{HOMEPAGE_FILE_x}}` in `compose.yaml`) to authenticate a service widget on
 the dashboard. This whole directory is gitignored - nothing here is committed.
+
+Every widget secret lives here. Homepage has no `env_file`: one mechanism, one
+place to look.
 
 | File                | Service   | How it gets there |
 |---------------------|-----------|--------------------|
 | `prowlarr_api_key`  | Prowlarr  | `scripts/homepage-widgets-bootstrap.sh` reads it from Prowlarr's own `config.xml` |
 | `headscale_api_key` | Headscale | same script, creates a dedicated `headscale apikeys create` token |
 | `headscale_node_id` | Headscale | same script, looks up the `tailscale` client's node ID |
+| `kavita_api_key`    | Kavita    | same script, reads an admin key from `kavita.db` - Kavita refuses password logins while OIDC is enforced, so a key is the only way in |
+| `immich_api_key`    | Immich    | **you paste it**: Immich > Account Settings > API Keys, permission `server.statistics` |
 
-All three regenerate on every stack boot (idempotent - only rewritten if the
-value actually changed, only restarts Homepage when it does). No manual setup
-needed for these.
+Everything except Immich regenerates on every stack boot - idempotent, only
+rewritten when the value actually changed, and Homepage is restarted only then.
 
-For widgets that need a key you generate yourself in another app's UI
-(Immich, Kavita), see `config/homepage/homepage.env.example` instead - those
-don't have a way to auto-create a key, so they use a plain `.env`-style file
-you edit directly.
+Immich is the exception, and not for lack of trying: its admin password is set
+at signup and is not derivable from `.env`, and `api_key.key` is stored hashed,
+so neither its API nor its database can hand a key back. The bootstrap creates
+the file empty so the path always resolves; until you fill it, the Immich card
+is a plain link with a small error icon, which breaks nothing else.

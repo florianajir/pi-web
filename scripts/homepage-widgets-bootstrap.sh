@@ -1,7 +1,9 @@
 #!/bin/sh
 # Bootstrap Homepage service widgets: extracts/creates the API keys that
 # gethomepage.dev's built-in widgets need, and writes them as single-line
-# secret files under config/homepage/secrets/. That directory is already
+# secret files under config/homepage/secrets/. Every widget secret lives there,
+# including the one nobody can mint (Immich), so there is a single place to look
+# and no env_file for Homepage at all. That directory is already
 # visible inside the homepage container at /app/config/secrets (it's a
 # subpath of the existing ./config/homepage:/app/config mount), and is
 # referenced from compose.yaml via HOMEPAGE_FILE_* env vars, which Homepage
@@ -114,6 +116,22 @@ sync_kavita_key() {
     log "Kavita API key ready for Homepage widget"
 }
 
+# --- Immich: the only key that cannot be minted ---
+# Its admin password is chosen at signup and is not in .env, and api_key.key is
+# stored hashed, so neither the API nor the database can hand one back. All this can
+# do is guarantee the file exists, so HOMEPAGE_FILE_IMMICH_API_KEY always resolves;
+# paste the key in (Immich > Account Settings > API Keys, "server.statistics").
+# Never overwrites: a filled-in key must survive every run.
+ensure_immich_key_placeholder() {
+    file="$SECRETS_DIR/immich_api_key"
+
+    [ -e "$file" ] && return 0
+
+    : > "$file"
+    safe_chmod 600 "$file"
+    log "Created empty $file - paste an Immich API key there to enable its widget"
+}
+
 main() {
     log "=== Homepage Widgets Bootstrap ==="
     mkdir -p "$SECRETS_DIR"
@@ -123,6 +141,7 @@ main() {
     sync_prowlarr_key || true
     sync_headscale || true
     sync_kavita_key || true
+    ensure_immich_key_placeholder || true
 
     fix_ownership "$SECRETS_DIR"
 
