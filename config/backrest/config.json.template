@@ -27,7 +27,8 @@
         "schedule": {
           "cron": "0 0 1 * *",
           "clock": "CLOCK_LAST_RUN_TIME"
-        }
+        },
+        "readDataSubsetPercent": 5
       }
     }
   ],
@@ -42,7 +43,25 @@
         "/userdata/immich/model-cache",
         "/userdata/nextcloud-data/appdata_*/preview",
         "/userdata/nextcloud-data/appdata_*/thumbnails",
-        "*.log"
+        "/userdata/open-webui-data/cache",
+        "/userdata/kavita/cache",
+        "/userdata/kavita/cache-long",
+        "/userdata/kavita/backups",
+        "/userdata/prowlarr/logs.db",
+        "/userdata/kavita/cache.db",
+        "/userdata/lldap/users.db",
+        "/userdata/nextcloud-data/owncloud.db",
+        "/userdata/open-webui-data/webui.db",
+        "/userdata/pihole/gravity.db",
+        "/userdata/pihole/pihole-FTL.db*",
+        "/userdata/pihole/listsCache",
+        "/userdata/pihole/gravity_old.db",
+        "*.db-wal",
+        "*.db-shm",
+        "*.sqlite-wal",
+        "*.sqlite-shm",
+        "*.log",
+        "*.log.*"
       ],
       "schedule": {
         "cron": "0 4 * * *",
@@ -52,7 +71,7 @@
         "policyTimeBucketed": {
           "daily": 7,
           "weekly": 4,
-          "monthly": 12
+          "monthly": 4
         }
       },
       "hooks": [
@@ -61,6 +80,20 @@
           "onError": "ON_ERROR_IGNORE",
           "actionCommand": {
             "command": "/bin/sh /hooks/backrest-unlock.sh s3"
+          }
+        },
+        {
+          "conditions": ["CONDITION_SNAPSHOT_START"],
+          "onError": "ON_ERROR_IGNORE",
+          "actionCommand": {
+            "command": "/bin/sh /hooks/backrest-env-snapshot.sh"
+          }
+        },
+        {
+          "conditions": ["CONDITION_SNAPSHOT_START"],
+          "onError": "ON_ERROR_IGNORE",
+          "actionCommand": {
+            "command": "/bin/sh /hooks/sqlite-backup.sh"
           }
         },
         {
@@ -100,7 +133,7 @@
         },
         {
           "conditions": ["CONDITION_SNAPSHOT_START"],
-          "onError": "ON_ERROR_IGNORE",
+          "onError": "ON_ERROR_FATAL",
           "actionCommand": {
             "command": "/bin/sh /hooks/db-backup.sh vaultwarden"
           }

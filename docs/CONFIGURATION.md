@@ -74,10 +74,28 @@ Used by Backrest (backups), Beszel (snapshots and file uploads) and optionally N
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `BACKREST_S3_URI` | `s3:${S3_ENDPOINT}/${S3_BUCKET}/restic` | Set explicitly for non-S3 storage |
-| `BACKREST_S3_REPO_PASSWORD` | — | Repository encryption key. 32+ random characters |
+| `BACKREST_S3_REPO_PASSWORD` | — | Repository encryption key. 32+ random characters. **Keep a copy off this machine** — see [Monitoring](MONITORING.md#keep-the-repository-password-offline) |
+| `BACKREST_AUTH_USER` | `${ADMIN_USER}` | Backrest UI/API login. Unset it to disable auth, which exposes the repository password to every container on the `frontend` network |
+| `BACKREST_AUTH_PASSWORD` | `${PASSWORD}` | Hashed with bcrypt into `config.json` by the image entrypoint on every start |
 | `NEXTCLOUD_SQL_BACKUP_KEEP` | `30` | Nextcloud SQL dumps retained, separate from the full backups |
 
 Without complete S3 credentials Backrest still starts, but its `s3` repository is unusable — the pre-start script warns and the nightly plan has nowhere to write. For a local-only setup, create a repository under `/repos` (bind-mounted from `${DATA_LOCATION}/backrest/repos`) in the Backrest UI. See [Backup strategy](MONITORING.md#backup-strategy).
+
+**Restrict the S3 key.** The credentials Backrest holds can delete objects, and the bucket has no versioning or object lock, so anything that reads them can destroy every snapshot. In the Scaleway console, give the backup key a bucket policy without `s3:DeleteObject` and keep a second, privileged key for the weekly prune:
+
+```json
+{
+  "Version": "2023-04-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {"SCW": "user_id:<backup-key-owner>"},
+    "Action": ["s3:ListBucket", "s3:GetObject", "s3:PutObject"],
+    "Resource": ["<bucket>", "<bucket>/*"]
+  }]
+}
+```
+
+Prune needs `DeleteObject`, so with this in place the Sunday prune fails until it runs under the privileged key. The trade-off is deliberate: unused data accumulates instead of the repository being deletable by anything that reaches port 9898.
 
 ### Beszel
 

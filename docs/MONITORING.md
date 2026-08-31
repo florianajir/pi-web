@@ -142,11 +142,11 @@ One plan, `s3-backup`, defined in `config/backrest/config.json.template`:
 | | |
 |---|---|
 | **Runs** | Nightly at 04:00 |
-| **Backs up** | `/userdata/` — Immich, Nextcloud (data, config, themes), LLDAP, Vaultwarden, Uptime Kuma, Authelia config and secrets, Beszel, and the Open WebUI dump directory |
-| **Excludes** | Immich thumbnails, encoded video and model cache; Nextcloud previews and thumbnails; `*.log` — all regenerable |
-| **Databases** | Dumped by pre-snapshot hooks: `nextcloud` (fatal on error), `authelia`, `lldap`, `vaultwarden` |
-| **Retention** | 7 daily, 4 weekly, 12 monthly |
-| **Maintenance** | Prune Sundays at 03:00 (25% unused); integrity check monthly; stale locks released before every run |
+| **Backs up** | `/userdata/` — Immich, Nextcloud (data, config, themes), LLDAP, Vaultwarden, Uptime Kuma, Authelia config and secrets, Beszel, Open WebUI, and the small unrecoverable state: Headscale (node keys, ACLs), Headplane, n8n, ntfy ACLs, Kavita, Pi-hole, Traefik's ACME certificates, qBittorrent, Prowlarr, Kapowarr |
+| **Excludes** | Immich thumbnails, encoded video and model cache; Nextcloud previews and thumbnails; Open WebUI's model cache; Kavita's cache and its own backups; Pi-hole's query log, list cache and `gravity.db`; Prowlarr's log database; every SQLite `-wal`/`-shm`; the stale pre-PostgreSQL `.db` stubs; `*.log` and rotations — all regenerable or replaced by a consistent copy |
+| **Databases** | Dumped by pre-snapshot hooks: `nextcloud` and `vaultwarden` (fatal on error), `authelia`, `lldap`, `open-webui`, `immich`. SQLite services get consistent copies from `scripts/sqlite-backup.sh` |
+| **Retention** | 7 daily, 4 weekly, 4 monthly |
+| **Maintenance** | Prune Sundays at 03:00 (25% unused); monthly integrity check that also re-reads 5% of the pack data; stale locks released before every run |
 | **Destination** | Your S3 bucket, restic-encrypted and deduplicated |
 | **On failure** | Pushes to the ntfy `monitoring` topic |
 
@@ -155,6 +155,16 @@ Configure it with the `S3_*` and `BACKREST_*` variables — see [Configuration](
 ### Beszel PocketBase snapshots
 
 A second, independent layer for the monitoring history alone: SQLite snapshots on `BESZEL_BACKUP_CRON` (default 03:00), keeping `BESZEL_BACKUP_MAX_KEEP` (default 7), restorable from the Beszel admin UI.
+
+### Consistent copies of the live SQLite databases
+
+The plan mounts each service's data read-only, so restic would otherwise read a `.db` and its `-wal` at different instants while the service is mid-write and store a pair that disagrees. `scripts/sqlite-backup.sh` runs as a pre-snapshot hook and writes a proper `sqlite3 .backup` of each one — kavita, n8n, ntfy, headscale, headplane, beszel, uptime-kuma, prowlarr, kapowarr — into `/userdata/sqlite-backups/`. About 33 MB, and **it is the copy to restore from**.
+
+The `-wal` and `-shm` companions are excluded: they are worthless without a consistent read, and they were the single noisiest thing in the snapshot (~17 MB of churn a night). The main `.db` files are deliberately kept as a fallback for the day the hook fails — a main file read without its WAL is an older state, not a torn one.
+
+Pi-hole's `gravity.db` is excluded outright. 670k of its rows are block-list domains `pihole -g` re-downloads and only ~67 are configuration, so the hook dumps those tables to `sqlite-backups/pihole-gravity-config.sql` instead — 8 KB rather than 39 MB. Restore it with `sqlite3 gravity.db < pihole-gravity-config.sql`, then `pihole -g`.
+
+Services on PostgreSQL (nextcloud, authelia, lldap, open-webui, immich, vaultwarden) are covered by `scripts/db-backup.sh` instead and are deliberately absent from that list. Their leftover SQLite files — `lldap/users.db`, `nextcloud-data/owncloud.db`, `open-webui-data/webui.db`, last written before those services moved to PostgreSQL — are excluded too, because restoring one would be actively misleading.
 
 ### Three eyes on the same question
 
@@ -165,6 +175,20 @@ Backups fail in two different ways, and one of them is silent:
 - **`make doctor`** (and the `backups` chat topic) reads Backrest's operation log on demand.
 
 Test a restore occasionally. A backup you have never restored is a hypothesis.
+
+### Keep the repository password offline
+
+`.env` is copied into the plan at `/userdata/pi-web-env/.env` by `scripts/backrest-env-snapshot.sh` on every snapshot, which covers losing a service. A copy, not a bind mount of `./.env`: mounting a single *file* pins its inode, and `services.sh` and `rotate-password.sh` both replace `.env` rather than rewriting it, so the container would have gone on snapshotting the pre-edit file forever.
+
+It cannot cover losing the Pi: opening the repository requires `BACKREST_S3_REPO_PASSWORD`, and that value lives *inside* the file you would be trying to restore.
+
+**Keep `BACKREST_S3_REPO_PASSWORD` and `BACKREST_S3_URI` somewhere off this machine** — a printed copy, or a password manager that is not Vaultwarden (Vaultwarden is restored *from* this repository). Without them the bucket is 300 GB of unreadable ciphertext.
+
+### The API holds the keys
+
+Backrest's API returns the restic repository password and the S3 access keys to any caller, and `pi-backrest` shares the `frontend` network with every other web-facing container. It is therefore password-protected: the image entrypoint (`config/backrest/auth-entrypoint.sh`) turns `BACKREST_AUTH_USER` / `BACKREST_AUTH_PASSWORD` into a bcrypt user in `config.json` on every start, defaulting to `ADMIN_USER` and `PASSWORD`. Disabling that (unsetting either variable) leaves the credentials readable by any container on the network.
+
+The S3 key itself is still unrestricted, and the bucket has no versioning or object lock: whoever holds that key can delete every snapshot. Restricting it is a Scaleway-console change — see [Configuration](CONFIGURATION.md#backrest-restic-backups).
 
 ## Logs
 

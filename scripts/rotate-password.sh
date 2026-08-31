@@ -632,11 +632,28 @@ main() {
         # applies the new role password. Its ADMIN_TOKEN is independent of PASSWORD
         # and deliberately untouched here - see scripts/vaultwarden-pre-start.sh.
         if [ "$VAULTWARDEN_ROLE_OK" = "1" ]; then recreate vaultwarden; else note "… Skipped recreating vaultwarden - its Postgres role didn't rotate"; fi
-        # backrest bundles all six roles above into one environment.
-        if [ "$NEXTCLOUD_ROLE_OK" = "1" ] && [ "$AUTHELIA_ROLE_OK" = "1" ] && [ "$LLDAP_ROLE_OK" = "1" ] && [ "$OPEN_WEBUI_ROLE_OK" = "1" ] && [ "$VAULTWARDEN_ROLE_OK" = "1" ] && [ "$IMMICH_ROLE_OK" = "1" ]; then
-            recreate backrest
-        else
-            note "… Skipped recreating backrest - not every DB role it backs up (nextcloud/authelia/lldap/open-webui/vaultwarden/immich) rotated cleanly; its scheduled backups keep using their current, still-consistent passwords"
+        # backrest is NOT gated on the roles, unlike the containers above.
+        # Two reasons. Its env also carries BACKREST_AUTH_PASSWORD, the UI
+        # login, and .env already holds the new PASSWORD - skipping the
+        # recreate would leave the documented credential unable to log in
+        # while homepage (recreated below) sends the new one and 401s. And the
+        # gate never bought consistency anyway: backrest bundles all six roles
+        # into one environment, so after a partial rotation *some* dump
+        # password is wrong either way. Recreating makes the rotated majority
+        # work; skipping breaks them instead. backrest touches Postgres only
+        # from its snapshot hooks, so there is no crash loop to avoid here.
+        recreate backrest
+        _stale_dumps=""
+        [ "$NEXTCLOUD_ROLE_OK" = "1" ]   || _stale_dumps="$_stale_dumps nextcloud"
+        [ "$AUTHELIA_ROLE_OK" = "1" ]    || _stale_dumps="$_stale_dumps authelia"
+        [ "$LLDAP_ROLE_OK" = "1" ]       || _stale_dumps="$_stale_dumps lldap"
+        [ "$OPEN_WEBUI_ROLE_OK" = "1" ]  || _stale_dumps="$_stale_dumps open-webui"
+        [ "$VAULTWARDEN_ROLE_OK" = "1" ] || _stale_dumps="$_stale_dumps vaultwarden"
+        [ "$IMMICH_ROLE_OK" = "1" ]      || _stale_dumps="$_stale_dumps immich"
+        if [ -n "$_stale_dumps" ]; then
+            note "⚠ backrest now holds the new PASSWORD, but these roles did not rotate:$_stale_dumps"
+            note "  Their db-backup.sh dumps will fail until the role is fixed. nextcloud and"
+            note "  vaultwarden are ON_ERROR_FATAL hooks, so a failure there aborts the snapshot."
         fi
         recreate pihole
         recreate beszel

@@ -7,3 +7,15 @@ FROM ghcr.io/garethgeorge/backrest:v1.14.1
 # drill against a real dump. Bump this together with the server image.
 # Exact pins fail the build when the 3.24 branch bumps a package — bump them here.
 RUN apk add --no-cache postgresql16-client=16.15-r0 jq=1.8.1-r0
+# apache2-utils provides htpasswd, the only bcrypt tool available here; the
+# auth entrypoint needs it to turn BACKREST_AUTH_PASSWORD into config.json's
+# user. The host has no bcrypt tool, so this cannot happen in pre-start.
+RUN apk add --no-cache apache2-utils=2.4.68-r0
+# sqlite gives scripts/sqlite-backup.sh the `.backup` command, the only way to
+# get a consistent copy of a live WAL-mode database. restic copying the .db and
+# its -wal at different instants cannot.
+RUN apk add --no-cache sqlite=3.53.4-r0
+COPY auth-entrypoint.sh /usr/local/bin/auth-entrypoint.sh
+# Keep the base image's tini + /docker-entrypoint chain; only prepend the hook.
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/auth-entrypoint.sh"]
+CMD ["/backrest"]

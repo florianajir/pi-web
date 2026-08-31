@@ -95,7 +95,7 @@ Two consequences specific to this stack: **group membership travels in the `grou
 | Prowlarr / Kapowarr | ✓ | ✓ | — | LAN-only + SSO |
 | Traefik dashboard | ✓ | ✓ | — | LAN-only + admin + 2FA |
 | Pi-hole | ✓ | ✓ | — | LAN-only + admin + 2FA |
-| Backrest | ✓ | ✓ | — | LAN-only + admin + 2FA |
+| Backrest | ✓ | ✓ | — | LAN-only + admin + 2FA + **its own login** — the API hands the restic repository password and the S3 keys to any caller, and forward-auth only guards the Traefik path, not the container network |
 | LLDAP | ✓ | ✓ | — | LAN-only + 2FA + its own auth + `rate-limit-auth` |
 | Stremio | ✓ | — | — | LAN-only; streaming clients and cast receivers can't do the portal |
 | Comet | ✓ | — | — | LAN-only; Stremio fetches manifests programmatically |

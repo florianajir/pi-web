@@ -157,6 +157,11 @@ services:
       - VAULTWARDEN_SQL_BACKUP_KEEP=7
       - RESTIC_PACK_SIZE=32
       - GOMEMLIMIT=1200MiB
+      # Backrest's API serves the repo password and S3 keys to anyone who can
+      # reach :9898, and 22 other containers share the frontend network. The
+      # image entrypoint turns these into the bcrypt user in config.json.
+      - BACKREST_AUTH_USER=${ADMIN_USER:-admin}
+      - BACKREST_AUTH_PASSWORD=${PASSWORD}
     env_file:
       - path: ./config/ntfy/ntfy.env
         required: false
@@ -186,7 +191,39 @@ services:
       # Open WebUI's uploads and vector store; without this a DB restore points
       # at blobs that were never snapshotted.
       - open_webui_data:/userdata/open-webui-data:ro
+      # Small, high-value state that nothing else can regenerate: tailnet node
+      # keys and ACLs, n8n workflow credentials, ntfy topic ACLs, ACME certs,
+      # and the *arr configs that carry their API keys. Under 100 MB together.
+      - headscale_data:/userdata/headscale:ro
+      - headplane_data:/userdata/headplane:ro
+      - n8n_data:/userdata/n8n:ro
+      - ntfy_data:/userdata/ntfy:ro
+      - kavita_config:/userdata/kavita:ro
+      - pihole_data:/userdata/pihole:ro
+      - ${DATA_LOCATION:-./data}/traefik/letsencrypt:/userdata/traefik-letsencrypt:ro
+      - ${DATA_LOCATION:-./data}/qbittorrent:/userdata/qbittorrent:ro
+      - ${DATA_LOCATION:-./data}/prowlarr:/userdata/prowlarr:ro
+      - ${DATA_LOCATION:-./data}/kapowarr/db:/userdata/kapowarr-db:ro
+      # For the "lost a service, not the Pi" case. This can NEVER be the only
+      # copy of .env: restoring it needs BACKREST_S3_REPO_PASSWORD, which is
+      # inside it. Keep an offline copy (see docs/MONITORING.md).
+      #
+      # The project directory, not ./.env directly: a single-file bind mount
+      # pins the inode, and every writer here (services.sh, rotate-password.sh,
+      # any editor) replaces .env instead of rewriting it, so the container
+      # would keep snapshotting the pre-edit file. backrest-env-snapshot.sh
+      # reads it by name at snapshot time and drops a copy in the second mount,
+      # which is the one that gets backed up. /pi-web-src is outside /userdata,
+      # so the repo itself is not in the snapshot.
+      - ./:/pi-web-src:ro
+      - ${DATA_LOCATION:-./data}/backrest/env-snapshot:/userdata/pi-web-env
+      # Where sqlite-backup.sh writes its consistent copies of the live SQLite
+      # databases above, which are all mounted read-only. Writable, and inside
+      # /userdata so the snapshot picks it up.
+      - ${DATA_LOCATION:-./data}/backrest/sqlite:/userdata/sqlite-backups
       - ./scripts/db-backup.sh:/hooks/db-backup.sh:ro
+      - ./scripts/sqlite-backup.sh:/hooks/sqlite-backup.sh:ro
+      - ./scripts/backrest-env-snapshot.sh:/hooks/backrest-env-snapshot.sh:ro
       - ./scripts/backrest-post-hook.sh:/hooks/backrest-post-hook.sh:ro
       - ./scripts/backrest-unlock.sh:/hooks/backrest-unlock.sh:ro
     tmpfs:
@@ -211,6 +248,8 @@ services:
       - "homepage.description=Backup management"
       - "homepage.widget.type=backrest"
       - "homepage.widget.url=http://pi-backrest:9898"
+      - "homepage.widget.username={{HOMEPAGE_VAR_ADMIN_USER}}"
+      - "homepage.widget.password={{HOMEPAGE_VAR_ADMIN_PASSWORD}}"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.routers.backrest.rule=Host(`backrest.${HOST_NAME:-pi.lan}`)"
