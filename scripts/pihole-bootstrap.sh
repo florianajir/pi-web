@@ -63,22 +63,21 @@ pihole_curl() {
     docker exec "$PIHOLE_CONTAINER" curl -sS "$@"
 }
 
-# The password goes in via a temp file so it never appears in process args or logs.
+# The body is built with jq and piped in on stdin, so the password appears
+# neither in process args nor in a file. A printf-built body produces invalid
+# JSON for any password containing a double quote or a backslash; /api/auth
+# then returns no sid, and the caller reports the password as wrong when it is
+# not.
 get_session() {
     local password="$1"
-    local body_file response
-    body_file=$(mktemp)
-    # shellcheck disable=SC2064
-    trap "rm -f $body_file" EXIT
-    printf '{"password":"%s"}' "$password" > "$body_file"
-    response=$(docker exec -i "$PIHOLE_CONTAINER" curl -sS \
-        -X POST \
-        -H "Content-Type: application/json" \
-        -d @- \
-        "$PIHOLE_API/auth" < "$body_file")
-    rm -f "$body_file"
-    # Extract sid from {"session":{"sid":"VALUE",...}}
-    printf '%s' "$response" | grep -o '"sid":"[^"]*"' | head -1 | cut -d'"' -f4
+    local response
+    response=$(PIHOLE_PASSWORD="$password" jq -nc '{password: $ENV.PIHOLE_PASSWORD}' \
+        | docker exec -i "$PIHOLE_CONTAINER" curl -sS \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d @- \
+            "$PIHOLE_API/auth")
+    printf '%s' "$response" | jq -r '.session.sid // empty' 2>/dev/null
 }
 
 # Returns 0 if newly added, 1 if already present or on error.
@@ -92,7 +91,7 @@ add_list() {
         -X POST \
         -H "Content-Type: application/json" \
         -H "sid: $sid" \
-        -d "{\"address\":\"$url\",\"comment\":\"firebog\",\"enabled\":true}" \
+        -d "$(jq -nc --arg a "$url" '{address: $a, comment: "firebog", enabled: true}')" \
         "$PIHOLE_API/lists?type=block" 2>&1)
     http_code=$(printf '%s' "$response" | tail -1)
 
@@ -114,7 +113,7 @@ add_allow() {
         -X POST \
         -H "Content-Type: application/json" \
         -H "sid: $sid" \
-        -d "{\"domain\":\"$domain\",\"comment\":\"click-redirect allow\",\"enabled\":true,\"groups\":[0]}" \
+        -d "$(jq -nc --arg d "$domain" '{domain: $d, comment: "click-redirect allow", enabled: true, groups: [0]}')" \
         "$PIHOLE_API/domains/allow/exact")
     case "$http_code" in
         2*) log "Allowed: $domain"; return 0 ;;

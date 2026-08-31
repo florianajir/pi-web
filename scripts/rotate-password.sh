@@ -314,7 +314,12 @@ rotate_nextcloud_db_password() {
         return 0
     fi
 
-    if docker exec -e OC_PASS="$NEW_PASSWORD" pi-nextcloud php occ config:system:set dbpassword --value="$NEW_PASSWORD" >/dev/null 2>&1; then
+    # Handed over on stdin, not on `--value=`, where it would sit in the process
+    # table for the life of the exec. config:import merges: every config.php key
+    # not named in the payload is left untouched. The OC_PASS this used to set
+    # was dead — only the user:* commands read it, never config:system:set.
+    if NEW_DB_PASSWORD="$NEW_PASSWORD" jq -nc '{system: {dbpassword: $ENV.NEW_DB_PASSWORD}}' \
+        | docker exec -i pi-nextcloud php occ config:import >/dev/null 2>&1; then
         note "✔ Updated Nextcloud config.php dbpassword"
     else
         note "✘ FAILED to update Nextcloud config.php dbpassword - NOT rotating postgres role 'nextcloud', or Nextcloud would be locked out of its DB"
@@ -586,7 +591,7 @@ main() {
         if ! grep -q '^PASSWORD=' "$ENV_FILE"; then
             die "PASSWORD= line not found in .env; restore from $BACKUP_FILE and check manually"
         fi
-        if sed -i "s|^PASSWORD=.*|PASSWORD=$NEW_PASSWORD|" "$ENV_FILE" && [ "$(get_env_value PASSWORD)" = "$NEW_PASSWORD" ]; then
+        if sed -i "s|^PASSWORD=.*|PASSWORD=$(sed_escape "$NEW_PASSWORD")|" "$ENV_FILE" && [ "$(get_env_value PASSWORD)" = "$NEW_PASSWORD" ]; then
             note "✔ Updated PASSWORD in .env"
         else
             die "Failed to update PASSWORD in .env (or the write didn't verify) - restore from $BACKUP_FILE and check manually"
