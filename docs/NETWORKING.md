@@ -46,7 +46,70 @@ HOST_LAN_SUBNET=192.168.1.0/24
 PIHOLE_IP=192.168.1.250                 # outside the DHCP range
 ```
 
-Set your router's DHCP DNS option to `PIHOLE_IP`, or configure devices by hand. One macvlan caveat: **the Docker host itself cannot reach a macvlan IP** over the parent interface, which is why Pi-hole is also published on the host's port 53.
+Set your router's DHCP DNS option to `PIHOLE_IP`, or configure devices by hand. Two macvlan
+consequences, both load-bearing:
+
+- **The Docker host itself cannot reach a macvlan IP** over the parent interface. The Pi querying
+  its own `${HOST_LAN_IP}:53` therefore times out; it uses `127.0.0.1` instead.
+- **A LAN client must target `PIHOLE_IP`, never `${HOST_LAN_IP}`.** Docker DNATs the host's
+  published `:53` to Pi-hole's *frontend* address, but the container has a direct route to the LAN
+  subnet over the macvlan, so its reply leaves that way and never returns through the host's
+  conntrack — the DNAT is never undone and the client rejects a `reply from unexpected source`.
+  The host publish exists for the tailnet, where `100.64.0.0/10` has no direct route in the
+  container, so the reply goes back out the default gateway and the reverse NAT applies correctly.
+
+### Devices that cannot be pointed at Pi-hole
+
+Cast receivers and locked-down TVs often ignore the DHCP DNS option, or expose no DNS field at all.
+Left alone they resolve `<service>.<HOST_NAME>` through public DNS, get the WAN address, hairpin
+back through the router with a SNAT'd source, and are refused by `lan@docker`.
+
+The fix is a **specific** public A record pointing at the Pi's LAN address, unproxied:
+
+```
+<service>.<HOST_NAME>   A   <HOST_LAN_IP>    # DNS only
+```
+
+A specific record beats the `*.<HOST_NAME>` wildcard, and `ddns-updater` only manages `<HOST_NAME>`
+and the wildcard, so it never overwrites it. The answer is identical to Pi-hole's, so nothing
+diverges. Nothing new is exposed: `lan@docker` still refuses any non-LAN, non-tailnet source, and a
+private address is not routable from outside anyway.
+
+**Never do this on the wildcard.** `headscale.<HOST_NAME>` must keep resolving to the WAN address —
+it is how remote nodes reach the control plane to enrol and reconnect from outside the tailnet.
+
+Verify the router does not strip private answers (some resolvers apply DNS rebinding protection):
+`dig @<router> <service>.<HOST_NAME> +short` must return `<HOST_LAN_IP>`.
+
+## Casting to a DLNA renderer
+
+Stremio can drive a UPnP/DLNA renderer itself, but only from the physical LAN: it finds
+receivers by SSDP/mDNS **multicast**, which does not leave a Docker bridge, and which
+gluetun's firewall rejects outright (`EPERM` on `239.255.255.250`). The default `stremio`
+profile therefore never lists a device. The `stremio-lan` profile trades the VPN for a
+macvlan address (`STREMIO_IP`) and discovers renderers normally.
+
+Three things that mode needs, none of them obvious:
+
+- **`FFMPEG_BIN` / `FFPROBE_BIN`.** The upstream image installs jellyfin-ffmpeg under
+  `/usr/lib/jellyfin-ffmpeg/`, which is not on `PATH`, and ships both variables empty. Without
+  them the server finds no binary and cannot remux anything — for casting or otherwise. Set in
+  both profiles, since it is a plain defect.
+- **`CASTING_DISABLED=`.** The image sets it to `1`, and `/casting` answers 404 to every client.
+  Only its truthiness is read, so `0` would still disable it: it must be empty.
+- **`extra_hosts` pointing `stremio.<HOST_NAME>` and `comet.<HOST_NAME>` at Traefik's frontend
+  address.** A macvlan child cannot reach its parent host, so any public record aimed at
+  `HOST_LAN_IP` is unusable from inside — upstream fetches fail with `EHOSTUNREACH`.
+
+**The trade-off:** that address is off the VPN. With a debrid addon the server barely fetches
+anything itself, but with plain torrent sources the pieces it pulls leave on the residential IP.
+
+**A known limit.** `/casting/transcode.mp4` is a live ffmpeg pipe: chunked, no `Content-Length`,
+`Accept-Ranges: none`. Renderers that require a seekable resource of known length refuse it and
+stop with `ERROR_OCCURRED`, whatever the container or MIME type — a SoftAtHome (Orange decoder)
+renderer was measured doing exactly that while playing the same content served as a static file.
+Casting here works with renderers that accept a non-seekable stream; for the others the answer is
+a media server that serves files, not this.
 
 ## DNS inside containers
 
@@ -70,7 +133,7 @@ Since Pi-hole resolves `*.<HOST_NAME>` to the Pi, every service works from the V
 | `nextcloud`, `immich`, `ai`, `vault`, `ntfy` | internal | each app + its own backends | Per-app isolation; `vault` deliberately has no path to LLDAP |
 | `dns_internal` | `172.30.53.0/24`, no gateway | Pi-hole, Unbound | Nothing else can query Unbound |
 | `dns_egress` | bridge | Unbound, immich-machine-learning | Outbound-only internet access |
-| `lan` | macvlan on `HOST_LAN_PARENT` | Pi-hole | Direct LAN presence for DNS |
+| `lan` | macvlan on `HOST_LAN_PARENT` | Pi-hole, Stremio (`stremio-lan` profile only) | Direct LAN presence — DNS, and SSDP/mDNS cast discovery |
 | `n8n_runners` | bridge | n8n, n8n-runners | Task-runner traffic |
 
 ## Ports
@@ -89,12 +152,16 @@ Everything else — Postgres `5432`, Redis `6379`, LDAP `3890`, every app port �
 
 ## Cloudflare records
 
-ddns-updater maintains exactly two records against your zone, pointed at your current public IP. Nothing else needs creating by hand.
+ddns-updater maintains exactly two records against your zone, pointed at your current public IP.
 
 ```
 <HOST_NAME>      A   <your-public-ip>
 *.<HOST_NAME>    A   <your-public-ip>
 ```
+
+Nothing else is created automatically. The one case for adding a record by hand is a device that
+cannot be pointed at Pi-hole — see [above](#devices-that-cannot-be-pointed-at-pi-hole). Because
+ddns-updater only ever touches those two names, a specific record for a subdomain is safe from it.
 
 ---
 

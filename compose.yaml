@@ -59,6 +59,32 @@ x-healthcheck-fast: &healthcheck-fast
   retries: 3
   start_period: 10s
 
+# Stremio runs in one of two mutually exclusive modes (see docs/NETWORKING.md).
+# `network_mode` and `networks` cannot coexist and a merge key cannot remove a
+# key, so each mode is its own thin service over this shared body.
+x-stremio-common: &stremio-common
+  <<: *service-defaults
+  image: stremio/server:v4.21.1
+  environment:
+    - NO_CORS=1
+    - TZ=${TIMEZONE:-Europe/Paris}
+    # The image installs jellyfin-ffmpeg but ships these empty, and its install
+    # path is not on PATH, so the server finds no binary and cannot remux at all.
+    - FFMPEG_BIN=/usr/lib/jellyfin-ffmpeg/ffmpeg
+    - FFPROBE_BIN=/usr/lib/jellyfin-ffmpeg/ffprobe
+    # Only its truthiness is read, so "0" would still disable casting: it must
+    # be empty. Left at the image's default, /casting answers 404 to every client.
+    - CASTING_DISABLED=
+  volumes:
+    - stremio_data:/root/.stremio-server
+  healthcheck:
+    <<: *healthcheck-default
+    test: ["CMD", "curl", "-f", "http://localhost:11470/"]
+    start_period: 30s
+  deploy: *cpu-request-small
+  mem_limit: 1024m
+  oom_score_adj: *oom-score-deprioritize
+
 services:
   ddns-updater:
     <<: *service-defaults
@@ -1066,15 +1092,13 @@ services:
       - "traefik.http.routers.stremio-root.priority=30"
       - "traefik.http.routers.stremio-root.tls=true"
       - "traefik.http.routers.stremio-root.service=noop@internal"
-      - "traefik.http.routers.stremio-local.rule=Host(`stremio.${HOST_NAME:-pi.lan}`) && ClientIP(`${HOST_LAN_SUBNET:-192.168.1.0/24}`)"
-      - "traefik.http.routers.stremio-local.entrypoints=websecure"
-      - "traefik.http.routers.stremio-local.middlewares=frame-deny@docker,lan@docker"
-      - "traefik.http.routers.stremio-local.priority=20"
-      - "traefik.http.routers.stremio-local.tls=true"
-      - "traefik.http.routers.stremio-local.service=stremio"
+      # No authelia, same reason as comet below: a cast receiver fetches the stream
+      # itself and cannot pass an interactive SSO login. It was also denying every client
+      # including the LAN, since stremio.<HOST_NAME> has no access_control rule and
+      # Authelia's default_policy is deny.
       - "traefik.http.routers.stremio.rule=Host(`stremio.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.stremio.entrypoints=websecure"
-      - "traefik.http.routers.stremio.middlewares=frame-deny@docker,lan@docker,authelia@docker"
+      - "traefik.http.routers.stremio.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.routers.stremio.priority=10"
       - "traefik.http.routers.stremio.tls=true"
       - "traefik.http.routers.stremio.service=stremio"
@@ -1137,33 +1161,71 @@ services:
     oom_score_adj: *oom-score-deprioritize
 
   stremio:
-    <<: *service-defaults
-    image: stremio/server:v4.21.1
+    <<: *stremio-common
     container_name: pi-stremio
     profiles: ["stremio", "all"]
     network_mode: "service:gluetun"
     depends_on:
       gluetun:
         condition: service_healthy
-    environment:
-      - NO_CORS=1
-      - TZ=${TIMEZONE:-Europe/Paris}
     labels:
+      # Routed by gluetun's labels: sharing its namespace leaves this container
+      # with no address of its own for Traefik's docker provider to target.
       - "traefik.enable=false"
       - "homepage.group=Video"
       - "homepage.name=Stremio"
       - "homepage.icon=stremio.png"
       - "homepage.href=https://stremio.${HOST_NAME:-pi.lan}"
       - "homepage.description=Streaming server (VPN protected)"
-    volumes:
-      - stremio_data:/root/.stremio-server
-    healthcheck:
-      <<: *healthcheck-default
-      test: ["CMD", "curl", "-f", "http://localhost:11470/"]
-      start_period: 30s
-    deploy: *cpu-request-small
-    mem_limit: 1024m
-    oom_score_adj: *oom-score-deprioritize
+
+  # Casting alternative to `stremio` above, never both (stack-up.sh refuses it).
+  # Discovery is SSDP/mDNS multicast, which reaches no renderer from a Docker
+  # bridge and which gluetun's firewall rejects outright (EPERM on 239.255.255.250),
+  # so a cast-capable server needs its own address on the physical LAN. That
+  # address is off the VPN: torrent pieces Stremio fetches itself then leave on
+  # the residential IP, which is a real trade-off when not using a debrid addon.
+  stremio-lan:
+    <<: *stremio-common
+    container_name: pi-stremio-lan
+    profiles: ["stremio-lan"]
+    networks:
+      frontend: {}
+      lan:
+        ipv4_address: ${STREMIO_IP:-192.168.1.251}
+    # A macvlan child cannot reach its own parent host, so the public records
+    # pointing these names at HOST_LAN_IP are unusable here: reach Traefik on
+    # the frontend network instead, or upstream fetches fail with EHOSTUNREACH.
+    extra_hosts:
+      - "stremio.${HOST_NAME:-pi.lan}:172.30.11.250"
+      - "comet.${HOST_NAME:-pi.lan}:172.30.11.250"
+    labels:
+      - "homepage.group=Video"
+      - "homepage.name=Stremio"
+      - "homepage.icon=stremio.png"
+      - "homepage.href=https://stremio.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Streaming server (LAN, casting)"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      # Same host rules as gluetun's routers but higher priority, so that if
+      # gluetun is up for qbittorrent its now-dead stremio routers lose.
+      - "traefik.http.routers.stremio-lan-root.rule=Host(`stremio.${HOST_NAME:-pi.lan}`) && Path(`/`)"
+      - "traefik.http.routers.stremio-lan-root.entrypoints=websecure"
+      - "traefik.http.routers.stremio-lan-root.middlewares=frame-deny@docker,lan@docker,stremio-lan-webui-redirect@docker"
+      - "traefik.http.routers.stremio-lan-root.priority=80"
+      - "traefik.http.routers.stremio-lan-root.tls=true"
+      - "traefik.http.routers.stremio-lan-root.service=noop@internal"
+      # No authelia, same reason as the gluetun-hosted router and as comet.
+      - "traefik.http.routers.stremio-lan.rule=Host(`stremio.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.stremio-lan.entrypoints=websecure"
+      - "traefik.http.routers.stremio-lan.middlewares=frame-deny@docker,lan@docker"
+      - "traefik.http.routers.stremio-lan.priority=60"
+      - "traefik.http.routers.stremio-lan.tls=true"
+      - "traefik.http.routers.stremio-lan.service=stremio-lan"
+      - "traefik.http.services.stremio-lan.loadbalancer.server.port=11470"
+      # Its own copy: the gluetun-hosted middleware is gone when gluetun is not selected.
+      - "traefik.http.middlewares.stremio-lan-webui-redirect.redirectregex.regex=^https?://([^/]+)/?$"
+      - "traefik.http.middlewares.stremio-lan-webui-redirect.redirectregex.replacement=https://app.strem.io/shell-v4.4/?streamingServer=https%3A%2F%2F$${1}"
+      - "traefik.http.middlewares.stremio-lan-webui-redirect.redirectregex.permanent=false"
 
   comet:
     <<: *service-defaults
