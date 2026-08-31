@@ -968,6 +968,12 @@ services:
       - ${DATA_LOCATION:-./data}/nextcloud-config:/var/www/html/config
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/var/www/html/themes
       - ${DATA_LOCATION:-./data}/download:/mnt/qbittorrent-downloads:ro
+      # The reading libraries, read-only, so any file can get a public share link.
+      # config/nextcloud/hooks/post-installation/20-external-storage.sh turns these
+      # into files_external mounts; keep the two lists in step.
+      - ${DATA_LOCATION:-./data}/comics:/mnt/library-comics:ro
+      - ${DATA_LOCATION:-./data}/manga:/mnt/library-manga:ro
+      - ${DATA_LOCATION:-./data}/download/books:/mnt/library-books:ro
       - ./config/nextcloud/custom.config.php:/var/www/html/config/custom.config.php:ro
       - ./config/nextcloud/security-headers.conf:/etc/apache2/conf-enabled/security-headers.conf:ro
       - ./config/nextcloud/hooks/post-installation:/docker-entrypoint-hooks.d/post-installation:ro
@@ -1420,6 +1426,9 @@ services:
       # grabbed via the qBittorrent client import with an identity path mapping.
       - ${DATA_LOCATION:-./data}/download:/downloads
       - ${DATA_LOCATION:-./data}/comics:/comics
+      # Second root folder: manga volumes live here so Kavita can serve them from a
+      # Manga-type library instead of the comic parser.
+      - ${DATA_LOCATION:-./data}/manga:/manga
     healthcheck:
       <<: *healthcheck-default
       # python-slim base — no curl/wget; probe the UI with the bundled interpreter.
@@ -1475,13 +1484,16 @@ services:
       - TZ=${TIMEZONE:-Europe/Paris}
     volumes:
       - kavita_config:/config
-      # The curated books subfolder only, never the download root: Kavita walks
+      # One read-only mount per Kavita library, so each gets its own library type
+      # (ComicVine for comics, Manga for right-to-left, Book for epub/pdf).
+      # Kapowarr owns comics/ and manga/; the download/* folders are the save paths
+      # of the matching qBittorrent categories. Never the download root: Kavita walks
       # every subfolder, so a software torrent's installer tree turns into series
-      # named after its internals. Prowlarr routes Books releases here by category.
-      - ${DATA_LOCATION:-./data}/download/books:/library:ro
-      # Kapowarr's managed comic library, read-only: Kapowarr writes comics here,
-      # Kavita serves them. Add a Kavita library pointing at /comics after first start.
+      # named after its internals.
       - ${DATA_LOCATION:-./data}/comics:/comics:ro
+      - ${DATA_LOCATION:-./data}/manga:/manga:ro
+      - ${DATA_LOCATION:-./data}/download/manga:/manga-downloads:ro
+      - ${DATA_LOCATION:-./data}/download/books:/books:ro
     labels:
       - "homepage.group=Books"
       - "homepage.name=Kavita"

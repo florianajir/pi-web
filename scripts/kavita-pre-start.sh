@@ -1,9 +1,10 @@
 #!/bin/sh
-# Pre-start: ensure the folder Kavita reads as its Downloads library exists.
-# Kavita mounts download/books read-only, and Docker creates a missing bind source
-# as root:root - which Kavita could still read, but qBittorrent (PUID 1000) could no
-# longer write the "books" category into. Create it up front and hand it to the
-# project owner. Idempotent.
+# Pre-start: ensure the download folders Kavita reads as libraries exist.
+# Kavita mounts them read-only, and Docker creates a missing bind source as
+# root:root - which Kavita could still read, but qBittorrent (PUID 1000) could no
+# longer write the matching category into. Create them up front and hand them to the
+# project owner. Idempotent. comics/ and manga/ are Kapowarr root folders and belong
+# to kapowarr-pre-start.sh.
 # A pre-start hook (scripts/stack-up.sh), so it runs before docker compose up.
 
 set -eu
@@ -23,13 +24,15 @@ main() {
     # Only chown what this run created: fix_ownership is chown -R, and by the
     # time these exist they hold the whole download tree, which is far too much
     # to walk on every boot. A directory we just made is empty, so it is free.
-    for dir in "$data_location/download" "$data_location/download/books"; do
+    for dir in "$data_location/download" \
+               "$data_location/download/manga" \
+               "$data_location/download/books"; do
         [ -d "$dir" ] && continue
         mkdir -p "$dir"
         fix_ownership "$dir"
     done
 
-    log "Ensured Kavita books library directory"
+    log "Ensured Kavita download library directories"
 }
 
 main "$@"

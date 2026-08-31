@@ -17,9 +17,15 @@ QB_HOST="gluetun"
 QB_PORT="8080"
 # Per-release category mapping on the download client: Prowlarr resolves the
 # qBittorrent category as `GetCategoryForRelease(release) ?? Settings.Category`, and
-# matches parent categories too, so 7000 covers all of Books (7010-7060). Anything
-# else falls back to the client default and stays out of Kavita's library.
-QB_CATEGORY_MAP='[{"clientCategory":"books","categories":[7000]}]'
+# matches parent categories too. Anything unmapped falls back to the client default
+# and stays out of Kavita's library.
+# newznab has no manga category - manga ships as 7030 Books/Comics, the same id as
+# comics - so 7030 goes to manga here and comics come from Kapowarr instead, which
+# imports into its own root folder and never touches these categories.
+QB_CATEGORY_MAP='[
+  {"clientCategory":"manga","categories":[7030]},
+  {"clientCategory":"books","categories":[7010,7020,7040,7050,7060]}
+]'
 FLARESOLVERR_NAME="FlareSolverr"
 FLARESOLVERR_TAG="flaresolverr"
 FLARESOLVERR_HOST="http://flaresolverr:8191/"
@@ -100,7 +106,7 @@ ensure_download_client() {
         fi
         code="$(printf '%s' "$updated" | px_put "downloadclient/$id")"
         case "$code" in
-            20*) log "Updated qBittorrent download client (host $QB_HOST, Books -> books category)" ;;
+            20*) log "Updated qBittorrent download client (host $QB_HOST, library category map)" ;;
             *)   log "WARNING: qBittorrent downloadclient PUT returned HTTP $code" ;;
         esac
         return 0

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Pre-start: ensure Kapowarr's data directories exist with the right ownership.
 # The image entrypoint chowns /app/db and /app/temp_downloads to PUID:PGID, but NOT
-# the /comics library root. Docker would otherwise create /comics as root:root and
+# the /comics and /manga library roots. Docker would create them root:root and
 # Kapowarr (PUID 1000) could not write imported comics into it. Create it up front
 # and hand it (plus the config dirs) to the project owner. Idempotent.
 # A pre-start hook (scripts/stack-up.sh), so it runs before docker compose up.
@@ -17,10 +17,12 @@ main() {
 
     mkdir -p \
         "$data_location/comics" \
+        "$data_location/manga" \
         "$data_location/kapowarr/db" \
         "$data_location/kapowarr/downloads"
 
     fix_ownership "$data_location/comics"
+    fix_ownership "$data_location/manga"
     fix_ownership "$data_location/kapowarr"
 
     log "Ensured Kapowarr data directories"

@@ -72,7 +72,7 @@ Every routed service follows the same path: TLS at Traefik, then the `lan` IP al
 | **Gluetun** | VPN gateway; owns the network namespace for qBittorrent, Kapowarr and Stremio | those three |
 | **qBittorrent** | Torrent client, all traffic through Gluetun | users |
 | **Prowlarr** | Indexer manager, with FlareSolverr for protected indexers | users |
-| **Kapowarr** | Comics manager; feeds the Kavita library | users |
+| **Kapowarr** | Comics and manga manager; feeds the Kavita libraries | users |
 | **Stremio + Comet** | Streaming server and its debrid addon | users |
 | **Open WebUI** | Local AI chat frontend — see [Local AI](AI.md) | users |
 | **llama.cpp / Piper / Parakeet / system-tools** | Inference, TTS, STT and the host-status tool | Open WebUI |
@@ -133,33 +133,56 @@ Persistent state is split deliberately:
 
 | Where | What | Why |
 |-------|------|-----|
-| `${DATA_LOCATION}` (default `./data`) | `nextcloud`, `immich`, `postgres`, `authelia-config`, `lldap`, `vaultwarden`, `uptime-kuma`, `backrest`, `download`, `comics`, `n8n`, `open-webui`, … | Anything you would miss. **Point this at your SSD.** Backrest mounts most of it read-only |
+| `${DATA_LOCATION}` (default `./data`) | `nextcloud`, `immich`, `postgres`, `authelia-config`, `lldap`, `vaultwarden`, `uptime-kuma`, `backrest`, `download`, `comics`, `manga`, `n8n`, `open-webui`, … | Anything you would miss. **Point this at your SSD.** Backrest mounts most of it read-only |
 | Named Docker volumes | Pi-hole, Redis, Headscale, Beszel, ntfy, Kavita config, llama.cpp weights, … | Smaller state, and the model weights that belong on the fast root filesystem rather than in backups |
 
-### Inside `${DATA_LOCATION}/download`
+### The reading libraries
 
-qBittorrent saves everything under one root, and Kavita indexes every subfolder of any
-folder it is given — so pointing Kavita at that root turns a software torrent into
-series named after the installer's internals. The two are separated by category
-instead:
+Kavita gets one library per kind of content, because the library *type* decides how it
+parses filenames and how it reads: right-to-left for manga, a comic parser for issues,
+a text reader for epub/pdf. Each library therefore needs its own folder.
+
+| Kavita library | Type | Reads | Filled by |
+|----------------|------|-------|-----------|
+| Comics | ComicVine | `comics/` | Kapowarr (root folder) |
+| Manga | Manga | `manga/` + `download/manga/` | Kapowarr (second root folder) and the `manga` qBittorrent category |
+| Books | Book | `download/books/` | the `books` qBittorrent category |
+
+Everything else under `download/` stays invisible to Kavita, which matters because
+Kavita indexes *every* subfolder of a folder it is given — point it at the download
+root and a software torrent's installer tree becomes series named after its internals
+(`AdpSdk`, `IPMClient`, `Template`, ...).
 
 | Path | Written by | Read by Kavita |
 |------|-----------|----------------|
-| `download/books/` | qBittorrent's `books` category | yes — mounted as `/library:ro` |
+| `download/manga/`, `download/books/` | the matching qBittorrent category | yes |
 | `download/prowlarr/` | qBittorrent's `prowlarr` category (Prowlarr's default) | no |
 | `download/incomplete/` | qBittorrent's temp path | no |
 | `download/` (root) | torrents added by hand, and Kapowarr's seeding copies (`kapowarr` category) | no |
 
-Prowlarr routes the split automatically: its qBittorrent download client maps newznab
-category 7000 (Books, and through parent matching its subcategories — Mags, EBook,
-Comics, Technical, Other, Foreign) to the `books` client category, and every other
-release falls back to `prowlarr`. Three places must agree on the path, and all three
-are provisioned: the `kavita` volume in `compose.yaml`, `BOOKS_SAVE_PATH` in
-`scripts/qbittorrent-bootstrap.sh`, and `QB_CATEGORY_MAP` in
-`scripts/prowlarr-bootstrap.sh`.
+Prowlarr routes the split automatically: its qBittorrent download client carries a
+category map, and Prowlarr resolves the client category as
+`GetCategoryForRelease(release) ?? Settings.Category`. **newznab has no manga
+category** — manga ships as 7030 `Books/Comics`, the same id as comics — so 7030 goes
+to `manga` and the remaining Books subcategories (7010 Mags, 7020 EBook, 7040
+Technical, 7050 Other, 7060 Foreign) go to `books`. Comics do not come through
+Prowlarr at all: Kapowarr fetches them and imports into its own root folder.
 
-Comics are the other half and sit outside `download` entirely: Kapowarr imports them
-into `${DATA_LOCATION}/comics`, which Kavita mounts read-only as `/comics`.
+Four places must agree on these paths, and all four are provisioned: the `kavita`
+volumes in `compose.yaml`, `LIBRARY_CATEGORIES` in `scripts/qbittorrent-bootstrap.sh`,
+`QB_CATEGORY_MAP` in `scripts/prowlarr-bootstrap.sh`, and `ROOT_FOLDERS` in
+`scripts/kapowarr-bootstrap.sh`.
+
+Kapowarr's `volume_folder_naming` is deliberately flat (`{series_name} ({year})`, no
+volume subfolder): Kavita's ComicVine parser takes the series name from the folder and
+`GetFoldersTillRoot` stops below the scan root, so any intermediate folder makes every
+series come out named `Volume 01`.
+
+The same three libraries are also mounted read-only into Nextcloud as `files_external`
+mounts (`Comics`, `Manga`, `Books`, alongside the existing `Downloads`), so any file
+can get a public share link the way Immich does for photos. The mounts are created by
+`config/nextcloud/hooks/post-installation/20-external-storage.sh`, which is idempotent
+and can be re-run by hand on an existing install.
 
 **Recommended layout:** clone onto the SSD and symlink it into place, so systemd and the docs agree on one path.
 

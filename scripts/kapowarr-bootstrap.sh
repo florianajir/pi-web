@@ -63,16 +63,20 @@ if not key:
     log("WARNING: could not obtain API key; skipping")
     raise SystemExit(0)
 
-# Root folder /comics (idempotent).
+# Root folders, one per Kavita library type: /comics is served by a ComicVine-type
+# library, /manga by a Manga-type one (right-to-left, manga reading defaults).
+# Move a volume between them from Kapowarr's UI; nothing here reassigns volumes.
+ROOT_FOLDERS = ["/comics", "/manga"]
 try:
     _, res = call("GET", "/rootfolder", params={"api_key": key})
     # Kapowarr stores paths with a trailing slash (/comics/), so normalise before comparing.
     folders = [(rf.get("folder") or "").rstrip("/") for rf in (res.get("result") or [])]
-    if "/comics" not in folders:
-        call("POST", "/rootfolder", params={"api_key": key}, body={"folder": "/comics"})
-        log("Added root folder /comics")
-    else:
-        log("Root folder /comics already present")
+    for folder in ROOT_FOLDERS:
+        if folder not in folders:
+            call("POST", "/rootfolder", params={"api_key": key}, body={"folder": folder})
+            log(f"Added root folder {folder}")
+        else:
+            log(f"Root folder {folder} already present")
 except Exception as e:
     log(f"WARNING: root folder step failed: {e}")
 
