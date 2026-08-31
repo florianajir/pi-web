@@ -1504,8 +1504,11 @@ services:
       - "homepage.description=Comics, manga and ebooks reader"
       - "homepage.widget.type=kavita"
       - "homepage.widget.url=http://pi-kavita:5000"
-      - "homepage.widget.username={{HOMEPAGE_VAR_KAVITA_USERNAME}}"
-      - "homepage.widget.password={{HOMEPAGE_VAR_KAVITA_PASSWORD}}"
+      # An API key, not username/password: Kavita's OIDC config sets
+      # DisablePasswordAuthentication, so /api/Account/login rejects every password
+      # ("password authentication disabled"). It exempts apiKey logins from that
+      # check, and Homepage only sends the key when no username/password is set.
+      - "homepage.widget.key={{HOMEPAGE_VAR_KAVITA_API_KEY}}"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       # Kavita has its own account system (and OPDS clients cannot pass interactive SSO),
