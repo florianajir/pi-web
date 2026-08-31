@@ -25,7 +25,20 @@ if [ -z "$SERVICE" ]; then
     exit 1
 fi
 
-SERVICE_UPPER="$(printf '%s' "$SERVICE" | tr '[:lower:]' '[:upper:]')"
+# $SERVICE lands inside the evals below, both as an env var prefix and as a
+# path, so keep it to characters that cannot alter the expansion.
+case "$SERVICE" in
+    *[!a-z0-9-]* | [0-9-]* | *-)
+        echo "Invalid service name '$SERVICE': expected lowercase letters, digits and inner '-'" >&2
+        exit 1
+        ;;
+esac
+
+# '-' must become '_' as well: compose exports OPEN_WEBUI_DB_PASSWORD for the
+# open-webui service, and a hyphen is not valid in a shell name — the eval
+# below would otherwise reparse ${OPEN-WEBUI_DB_PASSWORD:-...} as parameter
+# OPEN with a default word, yielding garbage that still passes the -z guard.
+SERVICE_UPPER="$(printf '%s' "$SERVICE" | tr '[:lower:]-' '[:upper:]_')"
 
 # --- Per-service defaults ---
 eval "BACKUP_DIR=\"\${${SERVICE_UPPER}_SQL_BACKUP_DIR:-/userdata/${SERVICE}/backups}\""
