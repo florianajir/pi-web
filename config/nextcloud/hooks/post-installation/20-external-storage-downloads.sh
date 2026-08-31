@@ -72,5 +72,11 @@ esac
 $OCC files_external:applicable "$MOUNT_ID" --add-group="$MOUNT_GROUP" \
   || warn_and_exit "files_external:applicable failed for mount $MOUNT_ID"
 $OCC files_external:option "$MOUNT_ID" enable_sharing true \
-  || warn_and_exit "files_external:option failed for mount $MOUNT_ID"
-echo "External storage '$MOUNT_NAME' (id $MOUNT_ID) applicable to group '$MOUNT_GROUP', sharing enabled"
+  || warn_and_exit "files_external:option enable_sharing failed for mount $MOUNT_ID"
+# files_external:create leaves this unset, so the mount inherits the system
+# value (0 = never re-stat) and files written by qBittorrent after the first
+# scan stay invisible. The system value cannot fix it — it excludes external
+# storage — so it has to be set per mount, as the web UI does.
+$OCC files_external:option "$MOUNT_ID" filesystem_check_changes 1 \
+  || warn_and_exit "files_external:option filesystem_check_changes failed for mount $MOUNT_ID"
+echo "External storage '$MOUNT_NAME' (id $MOUNT_ID) applicable to group '$MOUNT_GROUP', sharing enabled, change detection on"
