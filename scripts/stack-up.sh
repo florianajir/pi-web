@@ -71,6 +71,7 @@ stremio-lan:stremio-lan-pre-start.sh
 # Best-effort: these need their service answering, and a slow one must not fail
 # the start. All idempotent, so the next run picks up whatever was missed.
 POST_START_HOOKS='
+postgres-bootstrap.sh
 headscale-init.sh
 beszel-agent:beszel-agent-bootstrap.sh
 dockhand:dockhand-oidc-bootstrap.sh

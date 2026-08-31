@@ -49,7 +49,7 @@ credentials_configured() {
 set_credentials() {
     local username="$1"
     local password="$2"
-    local prefs http_code
+    local prefs="" http_code=""
     # jq renders the JSON and --data-urlencode encodes the form field, as in
     # configure_autorun below. Sending the body raw would let qBittorrent's
     # form parser decode a '+' in the password back to a space (silently

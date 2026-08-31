@@ -7,6 +7,9 @@ set -eu
 
 . "$(dirname "$0")/lib.sh"
 
+# The API bodies and responses below all go through host-side jq.
+command -v jq >/dev/null 2>&1 || die "jq is required (apt install jq)"
+
 MAX_RETRIES=60
 RETRY_INTERVAL=5
 PIHOLE_CONTAINER="${PIHOLE_CONTAINER:-pi-pihole}"
@@ -70,14 +73,18 @@ pihole_curl() {
 # not.
 get_session() {
     local password="$1"
-    local response
+    local response=""
     response=$(PIHOLE_PASSWORD="$password" jq -nc '{password: $ENV.PIHOLE_PASSWORD}' \
         | docker exec -i "$PIHOLE_CONTAINER" curl -sS \
             -X POST \
             -H "Content-Type: application/json" \
             -d @- \
             "$PIHOLE_API/auth")
-    printf '%s' "$response" | jq -r '.session.sid // empty' 2>/dev/null
+    # || true: jq exits non-zero on a non-JSON body (an HTML error page while
+    # Pi-hole is still starting), and under set -eu that status would abort the
+    # whole script at the caller's bare assignment — before the caller's die
+    # with its actionable message ever runs. An empty sid is the error signal.
+    printf '%s' "$response" | jq -r '.session.sid // empty' 2>/dev/null || true
 }
 
 # Returns 0 if newly added, 1 if already present or on error.

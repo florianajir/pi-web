@@ -3,3 +3,10 @@ ffmpeg:
   preset: ultrafast
   crf: 28
   transcode: required
+# Off because the immich Postgres role is deliberately not a superuser (see
+# config/postgres/init-databases.sh) and this job shells out to pg_dumpall,
+# which needs one — it would fail every night. Backrest dumps the immich
+# database instead (config/backrest/config.json.template, db-backup.sh immich).
+backup:
+  database:
+    enabled: false

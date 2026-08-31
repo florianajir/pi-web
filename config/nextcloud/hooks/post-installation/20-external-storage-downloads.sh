@@ -3,27 +3,41 @@
 # downloaded file (not just photos, unlike Immich) can get a public
 # Nextcloud share link. Restricted to the "admin" group.
 # This runs once, right after a fresh Nextcloud installation.
+#
+# Never exits non-zero: the nextcloud image's entrypoint aborts the container
+# when a post-installation hook fails, and these hooks are never re-run (the
+# version stamp lands before they do) — so a failure here would leave a fresh
+# install permanently unable to start over a convenience mount. set -u only;
+# every step is checked explicitly and failure logs a warning and exits 0.
 
-set -eu
+set -u
 
 OCC="php /var/www/html/occ"
 MOUNT_NAME="Downloads"
 MOUNT_PATH="/mnt/qbittorrent-downloads"
 MOUNT_GROUP="admin"
 
+warn_and_exit() {
+  echo "WARNING: $* — skipping external storage setup (re-run this hook manually via docker exec)" >&2
+  exit 0
+}
+
 if [ ! -d "$MOUNT_PATH" ]; then
   echo "$MOUNT_PATH not mounted into this container, skipping external storage setup"
   exit 0
 fi
 
-$OCC app:enable files_external
+$OCC app:enable files_external || warn_and_exit "could not enable files_external"
 
 # The mount id for $MOUNT_NAME, or empty. Parsed with php (jq is not in this
-# image) rather than grepped, so a match yields the id the reconciliation below
-# needs — an existence-only check cannot repair a half-created mount.
+# image); any warning noise occ prints before the JSON array is stripped by
+# seeking to the first '['. An existence-only check could not repair a
+# half-created mount, which is why the id is resolved rather than grepped.
 existing_mount_id() {
-  $OCC files_external:list --output=json | php -r '
-    $rows = json_decode(stream_get_contents(STDIN), true);
+  $OCC files_external:list --output=json 2>/dev/null | php -r '
+    $in = stream_get_contents(STDIN);
+    $start = strpos($in, "[");
+    $rows = $start === false ? null : json_decode(substr($in, $start), true);
     if (!is_array($rows)) { exit(0); }
     foreach ($rows as $row) {
         if (ltrim($row["mount_point"] ?? "", "/") === $argv[1]) {
@@ -38,24 +52,25 @@ MOUNT_ID="$(existing_mount_id)"
 if [ -n "$MOUNT_ID" ]; then
   echo "External storage '$MOUNT_NAME' already exists (id $MOUNT_ID), reconciling"
 else
-  MOUNT_ID="$($OCC files_external:create "$MOUNT_NAME" local null::null \
-    -c datadir="$MOUNT_PATH")"
+  # With the default plain output this prints "Storage created with id N",
+  # not a bare number — only the trailing integer is the id.
+  CREATED="$($OCC files_external:create "$MOUNT_NAME" local null::null \
+    -c datadir="$MOUNT_PATH")" || warn_and_exit "files_external:create failed"
+  MOUNT_ID="$(printf '%s' "$CREATED" | grep -oE '[0-9]+' | tail -n1)"
+  # A create that printed no id: fall back to re-resolving from the list.
+  [ -n "$MOUNT_ID" ] || MOUNT_ID="$(existing_mount_id)"
 fi
 
-# occ prints the new mount's numeric id on stdout. Validated before use: an
-# empty or non-numeric value here means create failed, and passing it on would
-# leave a mount applicable to nobody with sharing off — exactly the two
-# settings this hook exists to apply, and the existence check above would then
-# report success on every later run.
 case "$MOUNT_ID" in
   ''|*[!0-9]*)
-    echo "files_external:create did not return a mount id (got: '$MOUNT_ID')" >&2
-    exit 1
+    warn_and_exit "could not determine the mount id for '$MOUNT_NAME' (create printed: '${CREATED:-}')"
     ;;
 esac
 
 # Both are idempotent, so they also repair a mount left half-configured by an
 # earlier failed run.
-$OCC files_external:applicable "$MOUNT_ID" --add-group="$MOUNT_GROUP"
-$OCC files_external:option "$MOUNT_ID" enable_sharing true
+$OCC files_external:applicable "$MOUNT_ID" --add-group="$MOUNT_GROUP" \
+  || warn_and_exit "files_external:applicable failed for mount $MOUNT_ID"
+$OCC files_external:option "$MOUNT_ID" enable_sharing true \
+  || warn_and_exit "files_external:option failed for mount $MOUNT_ID"
 echo "External storage '$MOUNT_NAME' (id $MOUNT_ID) applicable to group '$MOUNT_GROUP', sharing enabled"

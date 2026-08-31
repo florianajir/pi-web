@@ -67,21 +67,26 @@ fetch() {
         # partial belongs to the previous revision and --continue-at - would
         # splice the two together. The byte-count check after the download
         # cannot catch that — a spliced file still totals $expected bytes.
-        rm -f "$dest" "$dest.part"
+        rm -f "$dest" "$dest.part" "$dest.part.size"
     elif [ -z "$expected" ]; then
         log "ERROR: $1 is missing and $url is unreachable"
         return 1
     fi
 
-    # A partial at least as large as the remote object cannot be a prefix of
-    # it, so it is stale rather than resumable.
+    # A partial is only resumable against the very remote object it was cut
+    # from. The sidecar records the remote size the download started against;
+    # a mismatch (upstream pushed a new revision) or a partial already at
+    # least as large as the object means stale, and resuming would splice two
+    # revisions into a file whose byte count still passes the check below.
     if [ -f "$dest.part" ]; then
         actual="$(stat -c '%s' "$dest.part")"
-        if [ "$actual" -ge "$expected" ]; then
-            log "$1 partial is $actual bytes for a $expected byte object - discarding it"
-            rm -f "$dest.part"
+        recorded="$(cat "$dest.part.size" 2>/dev/null || true)"
+        if [ "$recorded" != "$expected" ] || [ "$actual" -ge "$expected" ]; then
+            log "$1 partial is stale (local $actual bytes, started against ${recorded:-unknown}, remote now $expected) - discarding it"
+            rm -f "$dest.part" "$dest.part.size"
         fi
     fi
+    printf '%s' "$expected" > "$dest.part.size"
 
     log "Downloading $1 ($expected bytes)"
     # No progress meter: this runs from systemd, where it would be thousands of
@@ -91,11 +96,12 @@ fetch() {
     actual="$(stat -c '%s' "$dest.part")"
     if [ "$actual" != "$expected" ]; then
         log "ERROR: $1 downloaded $actual bytes, expected $expected"
-        rm -f "$dest.part"
+        rm -f "$dest.part" "$dest.part.size"
         return 1
     fi
 
     mv "$dest.part" "$dest"
+    rm -f "$dest.part.size"
     log "$1 ready"
 }
 

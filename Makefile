@@ -130,7 +130,11 @@ install-system:
 	@echo "🌐 Adding local DNS overrides to /etc/hosts..."
 	@# Read through lib.sh, like check-env above: a third copy of the .env
 	@# reader here would drift from the one install.sh and the scripts use.
-	@. scripts/lib.sh >/dev/null 2>&1; \
+	@# Guarded like check-env — a broken lib.sh under the >/dev/null would
+	@# otherwise abort this recipe with a bare, undiagnosed Error 2.
+	@if [ ! -r scripts/lib.sh ]; then echo "❌ scripts/lib.sh is missing or unreadable"; exit 1; fi; \
+	. scripts/lib.sh >/dev/null 2>&1; \
+	command -v read_env_value_from_file >/dev/null 2>&1 || { echo "❌ scripts/lib.sh did not define read_env_value_from_file"; exit 1; }; \
 	HOST_NAME_VAL=$$(read_env_value_from_file .env HOST_NAME); \
 	HOST_LAN_IP_VAL=$$(read_env_value_from_file .env HOST_LAN_IP); \
 	if [ -n "$$HOST_NAME_VAL" ] && [ -n "$$HOST_LAN_IP_VAL" ]; then \
@@ -333,7 +337,9 @@ headscale-register:
 	@echo "🔐 Registering headscale node..."
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
 	@if [ -z "$(HEADSCALE_KEY)" ]; then echo "❌ Key missing (use: make headscale-register <key>)"; exit 1; fi
-	@. scripts/lib.sh >/dev/null 2>&1; \
+	@if [ ! -r scripts/lib.sh ]; then echo "❌ scripts/lib.sh is missing or unreadable"; exit 1; fi; \
+	. scripts/lib.sh >/dev/null 2>&1; \
+	command -v read_env_value_from_file >/dev/null 2>&1 || { echo "❌ scripts/lib.sh did not define read_env_value_from_file"; exit 1; }; \
 	EMAIL_FROM_ENV="$${EMAIL:-$$(read_env_value_from_file .env EMAIL)}"; \
 	if [ -z "$$EMAIL_FROM_ENV" ]; then echo "❌ EMAIL not set in .env"; exit 1; fi; \
 	$(COMPOSE) run --rm headscale nodes register --key "$(HEADSCALE_KEY)" --user "$$EMAIL_FROM_ENV"

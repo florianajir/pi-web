@@ -70,6 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           files=$(git ls-files '*.sh' 'scripts/pi-pcloud')
+          [ -n "$files" ] || { echo "git ls-files matched no shell files - broken pathspec?"; exit 1; }
           for file in $files; do
             case "$(head -n1 "$file")" in
               *bash*) bash -n "$file" ;;

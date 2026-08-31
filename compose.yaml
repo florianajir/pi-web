@@ -145,6 +145,11 @@ services:
       - OPEN_WEBUI_DB_PASSWORD=${PASSWORD}
       - OPEN_WEBUI_SQL_BACKUP_DIR=/userdata/open-webui/backups
       - OPEN_WEBUI_SQL_BACKUP_KEEP=7
+      - IMMICH_DB_NAME=immich
+      - IMMICH_DB_USER=immich
+      - IMMICH_DB_PASSWORD=${PASSWORD}
+      - IMMICH_SQL_BACKUP_DIR=/userdata/immich/backups
+      - IMMICH_SQL_BACKUP_KEEP=7
       - VAULTWARDEN_DB_NAME=vaultwarden
       - VAULTWARDEN_DB_USER=vaultwarden
       - VAULTWARDEN_DB_PASSWORD=${PASSWORD}
@@ -162,6 +167,10 @@ services:
       - ./config/backrest:/config/backrest
       - ${DATA_LOCATION:-./data}/backrest/repos:/repos
       - ${DATA_LOCATION:-./data}/immich:/userdata/immich:ro
+      # Writable so the db-backup.sh hook can drop its pg_dump here. Also the
+      # only immich DB backup: the immich role is not a superuser, so Immich's
+      # built-in pg_dumpall job cannot run (disabled in config/immich/config.yaml).
+      - ${DATA_LOCATION:-./data}/immich/backups:/userdata/immich/backups
       - ${DATA_LOCATION:-./data}/nextcloud:/userdata/nextcloud-data:ro
       - ${DATA_LOCATION:-./data}/nextcloud-config:/userdata/nextcloud-config
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/userdata/nextcloud-themes:ro
@@ -174,6 +183,9 @@ services:
       - ${DATA_LOCATION:-./data}/lldap/backups:/userdata/lldap/backups
       - ${DATA_LOCATION:-./data}/authelia-config:/userdata/authelia-config
       - ${DATA_LOCATION:-./data}/open-webui/backups:/userdata/open-webui/backups
+      # Open WebUI's uploads and vector store; without this a DB restore points
+      # at blobs that were never snapshotted.
+      - open_webui_data:/userdata/open-webui-data:ro
       - ./scripts/db-backup.sh:/hooks/db-backup.sh:ro
       - ./scripts/backrest-post-hook.sh:/hooks/backrest-post-hook.sh:ro
       - ./scripts/backrest-unlock.sh:/hooks/backrest-unlock.sh:ro

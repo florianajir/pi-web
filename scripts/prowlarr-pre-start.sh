@@ -19,10 +19,16 @@ main() {
     config_dir="$data_location/prowlarr"
     config_file="$config_dir/config.xml"
 
-    if [ -f "$config_file" ]; then
+    # -s, not -f: an empty config.xml left by an earlier failed render must be
+    # regenerated, not accepted forever — Prowlarr would boot with defaults
+    # (no AuthenticationMethod=External) and the two scripts that scrape the
+    # API key out of this file would come up empty.
+    if [ -s "$config_file" ]; then
         log "Config already exists at $config_file, skipping"
         return 0
     fi
+
+    [ -f "$PROWLARR_CONFIG_TEMPLATE" ] || die "Prowlarr config template not found at $PROWLARR_CONFIG_TEMPLATE"
 
     # Prowlarr API keys are 32-char hex; trim the 64-char lib default.
     api_key="$(generate_secret | cut -c1-32)"
@@ -30,7 +36,10 @@ main() {
 
     mkdir -p "$config_dir"
 
-    sed -e "s|__API_KEY__|$(sed_escape "$api_key")|g" "$PROWLARR_CONFIG_TEMPLATE" > "$config_file"
+    render_config() {
+        sed -e "s|__API_KEY__|$(sed_escape "$api_key")|g" "$PROWLARR_CONFIG_TEMPLATE"
+    }
+    write_file_atomic "$config_file" render_config || die "Failed to render $config_file"
 
     # linuxserver's s6 init chowns /config to PUID:PGID on start, but make the file
     # readable by the project owner too (root-run systemd start otherwise leaves root:root).

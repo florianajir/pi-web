@@ -67,7 +67,7 @@ get_env_value() {
 # and writing it back is how a CR or a quote ends up *mid*-value, where it
 # matches no profile at all while --remove-orphans deletes the containers.
 unquote_env_value() {
-    local value
+    local value=""
     value="$(printf '%s' "$1" | tr -d '\r')"
     case "$value" in
         \"*\") value="${value#\"}"; value="${value%\"}" ;;
@@ -126,10 +126,16 @@ fix_ownership() {
 write_file_atomic() {
     local dest="$1"
     shift
-    local tmp
+    local tmp=""
+    # Docker creates a *directory* at a missing bind-mount source; mv into it
+    # would succeed while the caller believes it wrote a file (the same trap
+    # ensure_config_target_is_file exists for). Refuse it explicitly.
+    if [ -d "$dest" ]; then
+        log "ERROR: $dest is a directory (created by a bind mount?) - refusing to write a file there"
+        return 1
+    fi
     tmp="$(mktemp "${dest}.XXXXXX")" || return 1
-    if "$@" > "$tmp" && [ -s "$tmp" ]; then
-        mv "$tmp" "$dest"
+    if "$@" > "$tmp" && [ -s "$tmp" ] && mv "$tmp" "$dest"; then
         return 0
     fi
     rm -f "$tmp"

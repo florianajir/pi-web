@@ -19,14 +19,17 @@ generate_oidc_secret() {
     local txt_file="$SECRETS_DIR/${name}.txt"
     local hash_file="$SECRETS_DIR/${name}_hash"
 
-    if [ ! -f "$txt_file" ]; then
+    # -s, not -f, like vaultwarden-pre-start.sh: write_file_atomic stops NEW
+    # empty files, but a zero-byte leftover from an older install must be
+    # regenerated, not accepted forever.
+    if [ ! -s "$txt_file" ]; then
         write_file_atomic "$txt_file" generate_secret \
             || die "Failed to generate $name"
         safe_chmod 600 "$txt_file"
         log "Generated $name"
     fi
 
-    if [ ! -f "$hash_file" ]; then
+    if [ ! -s "$hash_file" ]; then
         local plaintext
         plaintext="$(cat "$txt_file")"
         # Through write_file_atomic: a plain redirect creates the hash file
@@ -95,7 +98,7 @@ main() {
     safe_chmod 700 "$SECRETS_DIR"
 
     for secret in jwt_secret session_secret storage_encryption_key oidc_hmac_secret; do
-        if [ ! -f "$SECRETS_DIR/$secret" ]; then
+        if [ ! -s "$SECRETS_DIR/$secret" ]; then
             write_file_atomic "$SECRETS_DIR/$secret" generate_secret \
                 || die "Failed to generate $secret"
             safe_chmod 600 "$SECRETS_DIR/$secret"
@@ -104,7 +107,7 @@ main() {
     done
 
     # Authelia binds to lldap as its admin, whose password is PASSWORD.
-    if [ ! -f "$SECRETS_DIR/ldap_password" ]; then
+    if [ ! -s "$SECRETS_DIR/ldap_password" ]; then
         printf '%s' "$PASSWORD" > "$SECRETS_DIR/ldap_password"
         safe_chmod 600 "$SECRETS_DIR/ldap_password"
         log "Written ldap_password"
@@ -112,13 +115,13 @@ main() {
 
     # The credential Authelia actually reads; AUTHELIA_DB_PASSWORD in compose.yaml
     # is not.
-    if [ ! -f "$SECRETS_DIR/db_password" ]; then
+    if [ ! -s "$SECRETS_DIR/db_password" ]; then
         printf '%s' "$PASSWORD" > "$SECRETS_DIR/db_password"
         safe_chmod 600 "$SECRETS_DIR/db_password"
         log "Written db_password"
     fi
 
-    if [ ! -f "$SECRETS_DIR/oidc_private_key.pem" ]; then
+    if [ ! -s "$SECRETS_DIR/oidc_private_key.pem" ]; then
         generate_rsa_key "$SECRETS_DIR/oidc_private_key.pem"
         safe_chmod 600 "$SECRETS_DIR/oidc_private_key.pem"
     fi
@@ -133,7 +136,7 @@ main() {
     mkdir -p "$LLDAP_CONFIG_DIR"
     LLDAP_ENV_FILE="$LLDAP_CONFIG_DIR/lldap.env"
 
-    if [ ! -f "$LLDAP_ENV_FILE" ]; then
+    if [ ! -s "$LLDAP_ENV_FILE" ]; then
         LLDAP_JWT_SECRET=$(generate_secret)
         printf 'LLDAP_JWT_SECRET=%s\n' "$LLDAP_JWT_SECRET" > "$LLDAP_ENV_FILE"
         safe_chmod 600 "$LLDAP_ENV_FILE"

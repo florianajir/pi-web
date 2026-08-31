@@ -389,11 +389,14 @@ rotate_qbittorrent() {
         return 1
     fi
 
-    http_code=$(printf 'json=%s' "$(jq -nc --arg u "$ADMIN_USER" --arg p "$NEW_PASSWORD" '{web_ui_username:$u,web_ui_password:$p}')" | \
+    # --data-urlencode, like qbittorrent-bootstrap.sh's set_credentials: the
+    # generated password is hex and safe raw, but ADMIN_USER is arbitrary
+    # user input — a '+' in it would be decoded to a space and a '&' would
+    # truncate the form field.
+    http_code=$(printf '%s' "$(jq -nc --arg u "$ADMIN_USER" --arg p "$NEW_PASSWORD" '{web_ui_username:$u,web_ui_password:$p}')" | \
         docker exec -i pi-qbittorrent curl -sS \
-        -X POST -H "Referer: http://127.0.0.1:8080" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        -w "%{http_code}" -o /dev/null --data @- \
+        -H "Referer: http://127.0.0.1:8080" \
+        -w "%{http_code}" -o /dev/null --data-urlencode "json@-" \
         "http://127.0.0.1:8080/api/v2/app/setPreferences")
 
     if [ "$http_code" = "200" ]; then
@@ -629,11 +632,11 @@ main() {
         # applies the new role password. Its ADMIN_TOKEN is independent of PASSWORD
         # and deliberately untouched here - see scripts/vaultwarden-pre-start.sh.
         if [ "$VAULTWARDEN_ROLE_OK" = "1" ]; then recreate vaultwarden; else note "… Skipped recreating vaultwarden - its Postgres role didn't rotate"; fi
-        # backrest bundles all five roles above into one environment.
-        if [ "$NEXTCLOUD_ROLE_OK" = "1" ] && [ "$AUTHELIA_ROLE_OK" = "1" ] && [ "$LLDAP_ROLE_OK" = "1" ] && [ "$OPEN_WEBUI_ROLE_OK" = "1" ] && [ "$VAULTWARDEN_ROLE_OK" = "1" ]; then
+        # backrest bundles all six roles above into one environment.
+        if [ "$NEXTCLOUD_ROLE_OK" = "1" ] && [ "$AUTHELIA_ROLE_OK" = "1" ] && [ "$LLDAP_ROLE_OK" = "1" ] && [ "$OPEN_WEBUI_ROLE_OK" = "1" ] && [ "$VAULTWARDEN_ROLE_OK" = "1" ] && [ "$IMMICH_ROLE_OK" = "1" ]; then
             recreate backrest
         else
-            note "… Skipped recreating backrest - not every DB role it backs up (nextcloud/authelia/lldap/open-webui/vaultwarden) rotated cleanly; its scheduled backups keep using their current, still-consistent passwords"
+            note "… Skipped recreating backrest - not every DB role it backs up (nextcloud/authelia/lldap/open-webui/vaultwarden/immich) rotated cleanly; its scheduled backups keep using their current, still-consistent passwords"
         fi
         recreate pihole
         recreate beszel
