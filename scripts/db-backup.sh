@@ -19,6 +19,10 @@
 
 set -eu
 
+# Dumps carry full application data (accounts, messages, vault metadata);
+# keep them and any directory this script creates out of group/other reach.
+umask 077
+
 SERVICE="${1:-}"
 if [ -z "$SERVICE" ]; then
     echo "Usage: $0 <service> (e.g., authelia, lldap, nextcloud)" >&2
