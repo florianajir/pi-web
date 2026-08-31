@@ -20,7 +20,8 @@ generate_oidc_secret() {
     local hash_file="$SECRETS_DIR/${name}_hash"
 
     if [ ! -f "$txt_file" ]; then
-        generate_secret > "$txt_file"
+        write_file_atomic "$txt_file" generate_secret \
+            || die "Failed to generate $name"
         safe_chmod 600 "$txt_file"
         log "Generated $name"
     fi
@@ -28,10 +29,20 @@ generate_oidc_secret() {
     if [ ! -f "$hash_file" ]; then
         local plaintext
         plaintext="$(cat "$txt_file")"
-        hash_pbkdf2 "$plaintext" > "$hash_file"
+        # Through write_file_atomic: a plain redirect creates the hash file
+        # before hash_pbkdf2 runs, so a host without python3 leaves an empty
+        # one that the `[ ! -f ]` guard above then accepts forever — and
+        # Authelia rejects every OIDC login for the client with no error.
+        write_file_atomic "$hash_file" hash_pbkdf2 "$plaintext" \
+            || die "Failed to hash $name (is python3 installed?)"
         safe_chmod 600 "$hash_file"
         log "Generated ${name}_hash"
     fi
+}
+
+# openssl writes progress to stderr; only the key on stdout matters here.
+openssl_genrsa_2048() {
+    openssl genrsa 2048 2>/dev/null
 }
 
 generate_rsa_key() {
@@ -39,7 +50,10 @@ generate_rsa_key() {
     if ! command -v openssl >/dev/null 2>&1; then
         die "openssl is required to generate the OIDC RSA private key. Please install openssl."
     fi
-    openssl genrsa -out "$keyfile" 2048 2>/dev/null
+    # `genrsa -out` writes in place, leaving a truncated key behind if openssl
+    # dies mid-write; that key is then never regenerated.
+    write_file_atomic "$keyfile" openssl_genrsa_2048 \
+        || die "openssl genrsa failed; no OIDC private key written to $keyfile"
     log "Generated RSA private key at $keyfile"
 }
 
@@ -82,7 +96,8 @@ main() {
 
     for secret in jwt_secret session_secret storage_encryption_key oidc_hmac_secret; do
         if [ ! -f "$SECRETS_DIR/$secret" ]; then
-            generate_secret > "$SECRETS_DIR/$secret"
+            write_file_atomic "$SECRETS_DIR/$secret" generate_secret \
+                || die "Failed to generate $secret"
             safe_chmod 600 "$SECRETS_DIR/$secret"
             log "Generated $secret"
         fi
@@ -174,10 +189,14 @@ main() {
 
     IMMICH_OAUTH_CONFIG_FILE="$AUTHELIA_DATA_DIR/immich-oauth-config.yaml"
     IMMICH_OAUTH_SECRET="$(cat "$SECRETS_DIR/oidc_immich_secret.txt")"
+    # Both values go through sed_escape, like the configuration.yml render
+    # above: an unescaped '&' in HOST_NAME is replaced by the whole match (so
+    # every rendered URL silently points at a nonexistent issuer), and a '\' or
+    # '|' corrupts or terminates the expression.
     IMMICH_OAUTH_RENDERED=$(
         sed \
-            -e "s|__HOST_NAME__|$HOST_NAME|g" \
-            -e "s|__OIDC_IMMICH_SECRET__|$IMMICH_OAUTH_SECRET|g" \
+            -e "s|__HOST_NAME__|$(sed_escape "$HOST_NAME")|g" \
+            -e "s|__OIDC_IMMICH_SECRET__|$(sed_escape "$IMMICH_OAUTH_SECRET")|g" \
             "$IMMICH_OAUTH_TEMPLATE"
         printf '\n'
         cat "$IMMICH_CONFIG"

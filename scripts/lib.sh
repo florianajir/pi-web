@@ -61,6 +61,25 @@ get_env_value() {
     read_env_value_from_file "$ENV_FILE" "$1"
 }
 
+# Strip a trailing CR (a .env edited from Windows over Samba) and one layer of
+# surrounding quotes — what Compose, systemd and run-if-enabled.sh all do to a
+# value, and what get_env_value deliberately does not. Reading a list verbatim
+# and writing it back is how a CR or a quote ends up *mid*-value, where it
+# matches no profile at all while --remove-orphans deletes the containers.
+unquote_env_value() {
+    local value
+    value="$(printf '%s' "$1" | tr -d '\r')"
+    case "$value" in
+        \"*\") value="${value#\"}"; value="${value%\"}" ;;
+        \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+    printf '%s' "$value"
+}
+
+get_env_value_clean() {
+    unquote_env_value "$(get_env_value "$1")"
+}
+
 # --- Data location ---
 
 resolve_data_location_path() {
@@ -97,6 +116,26 @@ fix_ownership() {
 
 # --- Secret generation ---
 
+# Run a generator and put its output at $1 only if it succeeded and produced
+# something. `cmd > "$file"` truncates the target *before* cmd runs, so a
+# generator that fails (missing python3, missing openssl, full disk) leaves an
+# empty file behind — and every `[ ! -f "$file" ]` guard in this repo then
+# treats that empty file as already generated, forever. The temp file is made
+# next to the destination so the mv is atomic and inherits its directory mode.
+# Usage: write_file_atomic <dest> <cmd> [args...]
+write_file_atomic() {
+    local dest="$1"
+    shift
+    local tmp
+    tmp="$(mktemp "${dest}.XXXXXX")" || return 1
+    if "$@" > "$tmp" && [ -s "$tmp" ]; then
+        mv "$tmp" "$dest"
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
 generate_secret() {
     if command -v openssl >/dev/null 2>&1; then
         openssl rand -hex 32
@@ -108,17 +147,18 @@ generate_secret() {
 
 # Hash a plaintext secret using PBKDF2-SHA512 (Authelia's default format).
 # Requires python3 with hashlib (stdlib).
+# Passed through the environment rather than argv: argv is world-readable in
+# the host's process table for the lifetime of the python3 call.
 hash_pbkdf2() {
-    local plaintext="$1"
-    python3 -c "
-import hashlib, os, base64, sys
-pw = sys.argv[1].encode()
+    PBKDF2_PLAINTEXT="$1" python3 -c "
+import hashlib, os, base64
+pw = os.environ['PBKDF2_PLAINTEXT'].encode()
 salt = os.urandom(16)
 dk = hashlib.pbkdf2_hmac('sha512', pw, salt, 310000)
 s = base64.b64encode(salt).rstrip(b'=').decode().replace('+','.')
 d = base64.b64encode(dk).rstrip(b'=').decode().replace('+','.')
 print(f'\$pbkdf2-sha512\$310000\${s}\${d}')
-" "$plaintext"
+"
 }
 
 # --- Container helpers ---
