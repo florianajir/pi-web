@@ -108,19 +108,13 @@ configure_autorun() {
 }
 
 # Create the "books" category, whose save path is the only download subfolder Kavita
-# reads (compose mounts it as /library:ro). Prowlarr maps every newznab Books release
-# to this category (scripts/prowlarr-bootstrap.sh), so book grabs land in a folder
-# Kavita scans while software grabs stay in the download root, out of its sight.
-# Without it Kavita would either see the whole root (installer trees become series) or
-# an empty folder. Idempotent: creates when missing, corrects a drifted save path.
-# Best-effort (warns, no die).
+# reads. Prowlarr maps Books releases to it (scripts/prowlarr-bootstrap.sh), keeping
+# software grabs in the download root and out of Kavita. Idempotent, best-effort.
 ensure_books_category() {
     local categories exists current http_code endpoint
     categories="$(qb_curl "$QB_API/torrents/categories" 2>/dev/null || true)"
-    # Existence and save path are two separate questions: a category created through
-    # the WebUI without an explicit path reports savePath "" (AutoTMM then derives
-    # /downloads/<name>), and an empty path must not be read as "not there yet" -
-    # createCategory rejects a name that already exists.
+    # A category created in the WebUI reports savePath "" (AutoTMM derives the path),
+    # so an empty path is not "missing" - and createCategory rejects an existing name.
     exists="$(printf '%s' "$categories" \
         | jq -r --arg c "$BOOKS_CATEGORY" 'if has($c) then "yes" else "" end' 2>/dev/null || true)"
     current="$(printf '%s' "$categories" \

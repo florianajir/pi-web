@@ -15,14 +15,10 @@ PROWLARR_CONTAINER="${PROWLARR_CONTAINER:-pi-prowlarr}"
 QB_CLIENT_NAME="qBittorrent"
 QB_HOST="gluetun"
 QB_PORT="8080"
-# Per-release category mapping on the download client. Prowlarr's QBittorrent client
-# resolves the qBittorrent category as `GetCategoryForRelease(release) ?? Settings.Category`
-# (DownloadClientBase.GetCategoryForRelease), matching a release against these entries
-# directly and through parent categories - so newznab 7000 (Books) also covers its
-# subcategories 7010 Mags, 7020 EBook, 7030 Comics, 7040 Technical, 7050 Other,
-# 7060 Foreign. Books therefore land in qBittorrent's "books" category, whose save path
-# is the only download subfolder Kavita reads, and every other release falls back to the
-# client's default category, staying out of Kavita's library.
+# Per-release category mapping on the download client: Prowlarr resolves the
+# qBittorrent category as `GetCategoryForRelease(release) ?? Settings.Category`, and
+# matches parent categories too, so 7000 covers all of Books (7010-7060). Anything
+# else falls back to the client default and stays out of Kavita's library.
 QB_CATEGORY_MAP='[{"clientCategory":"books","categories":[7000]}]'
 FLARESOLVERR_NAME="FlareSolverr"
 FLARESOLVERR_TAG="flaresolverr"

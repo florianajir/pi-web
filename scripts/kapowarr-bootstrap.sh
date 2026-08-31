@@ -82,38 +82,25 @@ except Exception as e:
 DESIRED_SETTINGS = {
     "download_folder": "/downloads",
     "flaresolverr_base_url": "http://flaresolverr:8191",
-    # GetComics serves a lot of releases as a .zip that *wraps* the real .cbz/.cbr
-    # files. Kapowarr renames the wrapper to the naming convention and imports it as
-    # if it were the issue, so Kavita opens an archive that holds archives instead of
-    # images: 0 pages, no cover, unreadable. `convert` gates the post-processing step
-    # (features/post_processing.py: convert_file returns early when false) and
-    # `extract_issue_ranges` is what makes it unpack any archive that contains comic
-    # files, move the real issues into the volume folder, then rescan and rename them.
+    # GetComics often ships a .zip *wrapping* the real .cbz/.cbr. Without these two
+    # Kapowarr imports the wrapper as the issue and Kavita opens an archive of
+    # archives: 0 pages, no cover. `convert` gates post-processing, and
+    # `extract_issue_ranges` is what unpacks it.
     "convert": True,
     "extract_issue_ranges": True,
-    # Kapowarr's default layout is "{series_name}/Volume {n} ({year})", which puts the
-    # year on the *volume* folder. Kavita's ComicVine library type never reads the
-    # series from the filename: it walks the folders looking for one matching
-    # `^\D+\s\((?<Year>\d+)\)$` and, finding none, falls back to the DEEPEST folder -
-    # so every volume folder became a series literally named "Volume 01", "Volume 02"
-    # (ComicVineParser.Parse). "Volume 01 (1988)" fails that regex because \D+ cannot
-    # cross the digits in "Volume 01". Moving the year up one level makes the parser
-    # match the series folder instead and name the series "Akira (1988)", which is the
-    # parser's documented intent ("Series + first Issue Volume, so Batman (2020)").
-    # Changing this does NOT move existing folders; that needs a mass_rename per volume.
-    "volume_folder_naming": "{series_name} ({year})/Volume {volume_number}",
-    # Deliberately empty. A non-empty preference makes select_converter pick format
-    # converters, and every one that leaves ZIP territory (cbr->cbz, rar->*, *->cbr)
-    # shells out to Kapowarr's bundled rar binary, which ships x86-64 only
-    # (backend/lib/rar_linux_64) and cannot exec on the Pi's aarch64 kernel. Empty
-    # means extract-only, which is all Kavita needs: the extraction path above runs
-    # on Python's zipfile, no rar binary involved.
+    # Flat, one level, year in the folder name. Kavita's ComicVine library type reads
+    # the series from the folder, never the filename, and GetFoldersTillRoot stops
+    # below the scan root - so ANY volume subfolder makes it fall back to that
+    # subfolder's name and every series becomes "Volume 01", "Volume 02", ...
+    # Does not move existing folders; that needs a mass_rename per volume.
+    "volume_folder_naming": "{series_name} ({year})",
+    # Must stay empty: every converter that leaves ZIP territory shells out to the
+    # bundled rar binary, which is x86-64 only and cannot exec on this aarch64 host.
     "format_preference": [],
 }
 
 
 def settings_match(current, desired):
-    "Compare a live setting to the desired one, tolerating Kapowarr's path quirks."
     # Kapowarr stores folders with a trailing slash (/downloads/), so normalise.
     if isinstance(desired, str):
         return (current or "").rstrip("/") == desired.rstrip("/")
