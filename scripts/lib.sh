@@ -497,6 +497,40 @@ api_put_json_with_cookie() {
     fi
 }
 
+# --- qBittorrent ---
+
+# Set the WebUI login through setPreferences, unauthenticated: the config
+# qbittorrent-pre-start.sh renders enables auth bypass for 127.0.0.1. Prints the
+# HTTP status on stdout so each caller reports it in its own voice.
+# Usage: qbittorrent_set_credentials <container> <username> <password>
+#
+# Shared by qbittorrent-bootstrap.sh (first install) and rotate-password.sh
+# (after a leak), which kept two copies that had already drifted: the rotation
+# one passed the new password to jq as a command-line argument, putting it on
+# the host's process table for the length of the call. One copy, the safe way.
+qbittorrent_set_credentials() {
+    local container="$1"
+    local username="$2"
+    local password="$3"
+    local prefs=""
+
+    # The password goes through the environment, not argv, to keep it off the
+    # host's process table.
+    prefs="$(QB_WEB_UI_PASSWORD="$password" jq -nc --arg u "$username" \
+        '{web_ui_username: $u, web_ui_password: $ENV.QB_WEB_UI_PASSWORD}')" || return 1
+
+    # --data-urlencode rather than a raw body: qBittorrent's form parser decodes
+    # a '+' in either value back to a space (silently storing a login nobody can
+    # use), and a '&' truncates the field. Both values can contain either —
+    # ADMIN_USER is arbitrary user input.
+    printf '%s' "$prefs" | docker exec -i "$container" curl -sS \
+        -H "Referer: http://127.0.0.1:8080" \
+        -w '%{http_code}' \
+        -o /dev/null \
+        --data-urlencode "json@-" \
+        "http://127.0.0.1:8080/api/v2/app/setPreferences"
+}
+
 # --- Utilities ---
 
 # Escape a value for use as the replacement in a `sed "s|…|…|g"` render: a

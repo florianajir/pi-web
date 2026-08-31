@@ -70,14 +70,26 @@ jobs:
         run: |
           set -euo pipefail
           files=$(git ls-files '*.sh' 'scripts/pi-pcloud')
-          [ -n "$files" ] || { echo "git ls-files matched no shell files - broken pathspec?"; exit 1; }
+          # A floor, not just a non-empty check: a pathspec that half-breaks (a
+          # renamed directory, a glob that stops matching config/**) still
+          # returns *something*, and the step would pass having checked three
+          # files. There are 51 today; raise the floor when that count grows
+          # well past it, and never lower it to make a failure go away.
+          # `|| true`: grep -c exits 1 on no match, and under `set -e` that
+          # would abort the step with no message rather than the one below.
+          count=$(printf '%s\n' "$files" | grep -c . || true)
+          if [ "$count" -lt 45 ]; then
+            echo "git ls-files matched only $count shell files, expected at least 45 - broken pathspec?"
+            printf '%s\n' "$files"
+            exit 1
+          fi
           for file in $files; do
             case "$(head -n1 "$file")" in
               *bash*) bash -n "$file" ;;
               *)      sh -n "$file" ;;
             esac
           done
-          echo "checked $(printf '%s\n' "$files" | wc -l) shell files"
+          echo "checked $count shell files"
 
       # Only the installer surface: the older bootstrap scripts under scripts/
       # carry a backlog of findings, so linting them here would report noise

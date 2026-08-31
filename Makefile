@@ -11,6 +11,24 @@ HEAD_BEFORE_PULL := $(shell git rev-parse HEAD 2>/dev/null)
 UNIT         := pi-pcloud.service
 WATCH_UNIT   := pi-pcloud-authelia-ntfy.service
 COMPOSE      := docker compose
+
+# Sourcing scripts/lib.sh from a recipe, guarded so a broken lib.sh under the
+# >/dev/null aborts with a diagnosis instead of a bare Error 2.
+#
+# PROJECT_DIR and ENV_FILE are preset because lib.sh derives them from
+# `dirname "$$0"`, and under a recipe $$0 is the shell itself — "sh" — so they
+# resolve to the *parent* of the repository and to ../.env. Every caller here
+# happens to pass an explicit path to read_env_value_from_file, so nothing reads
+# the wrong file today; the next one to reach for get_env_value would. lib.sh
+# takes both from the environment when set. SCRIPT_NAME comes along so its log
+# lines read [make] rather than [sh].
+LIB_SH = if [ ! -r scripts/lib.sh ]; then \
+             echo "❌ scripts/lib.sh is missing or unreadable"; exit 1; \
+         fi; \
+         PROJECT_DIR="$(CURDIR)"; ENV_FILE="$(CURDIR)/.env"; SCRIPT_NAME=make; \
+         export PROJECT_DIR ENV_FILE SCRIPT_NAME; \
+         . scripts/lib.sh >/dev/null 2>&1
+
 # The pi-pcloud command and its completions. /usr/local/bin is on PATH for both
 # users and sudo; the completion directories are Debian's own.
 BIN_LINK        := /usr/local/bin/pi-pcloud
@@ -70,8 +88,7 @@ help:
 check-env:
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
 	@echo "🔍 Checking required .env variables..."; \
-	if [ ! -r scripts/lib.sh ]; then echo "❌ scripts/lib.sh is missing or unreadable"; exit 1; fi; \
-	. scripts/lib.sh >/dev/null 2>&1; \
+	$(LIB_SH); \
 	command -v env_value_is_safe >/dev/null 2>&1 || { echo "❌ scripts/lib.sh did not define env_value_is_safe"; exit 1; }; \
 	missing=0; \
 	for var in $(REQUIRED_ENV_VARS); do \
@@ -131,10 +148,7 @@ install-system:
 	@echo "🌐 Adding local DNS overrides to /etc/hosts..."
 	@# Read through lib.sh, like check-env above: a third copy of the .env
 	@# reader here would drift from the one install.sh and the scripts use.
-	@# Guarded like check-env — a broken lib.sh under the >/dev/null would
-	@# otherwise abort this recipe with a bare, undiagnosed Error 2.
-	@if [ ! -r scripts/lib.sh ]; then echo "❌ scripts/lib.sh is missing or unreadable"; exit 1; fi; \
-	. scripts/lib.sh >/dev/null 2>&1; \
+	@$(LIB_SH); \
 	command -v read_env_value_from_file >/dev/null 2>&1 || { echo "❌ scripts/lib.sh did not define read_env_value_from_file"; exit 1; }; \
 	HOST_NAME_VAL=$$(read_env_value_from_file .env HOST_NAME); \
 	HOST_LAN_IP_VAL=$$(read_env_value_from_file .env HOST_LAN_IP); \
@@ -351,8 +365,7 @@ headscale-register:
 	@echo "🔐 Registering headscale node..."
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
 	@if [ -z "$(HEADSCALE_KEY)" ]; then echo "❌ Key missing (use: make headscale-register <key>)"; exit 1; fi
-	@if [ ! -r scripts/lib.sh ]; then echo "❌ scripts/lib.sh is missing or unreadable"; exit 1; fi; \
-	. scripts/lib.sh >/dev/null 2>&1; \
+	@$(LIB_SH); \
 	command -v read_env_value_from_file >/dev/null 2>&1 || { echo "❌ scripts/lib.sh did not define read_env_value_from_file"; exit 1; }; \
 	EMAIL_FROM_ENV="$${EMAIL:-$$(read_env_value_from_file .env EMAIL)}"; \
 	if [ -z "$$EMAIL_FROM_ENV" ]; then echo "❌ EMAIL not set in .env"; exit 1; fi; \

@@ -50,25 +50,14 @@ credentials_configured() {
     return 0
 }
 
-# Unauthenticated: the config template enables auth bypass for 127.0.0.1.
+# lib.sh's qbittorrent_set_credentials is the shared call; rotate-password.sh
+# makes the same one after a leak.
 set_credentials() {
     local username="$1"
     local password="$2"
-    local prefs="" http_code=""
-    # jq renders the JSON and --data-urlencode encodes the form field, as in
-    # configure_autorun below. Sending the body raw would let qBittorrent's
-    # form parser decode a '+' in the password back to a space (silently
-    # storing a login nobody can use), and a '"' or '&' would corrupt the body.
-    # The password goes through the environment, not argv, to keep it off the
-    # host's process table.
-    prefs="$(QB_WEB_UI_PASSWORD="$password" jq -nc --arg u "$username" \
-        '{web_ui_username: $u, web_ui_password: $ENV.QB_WEB_UI_PASSWORD}')"
-    http_code="$(printf '%s' "$prefs" | docker exec -i "$QB_CONTAINER" curl -sS \
-        -H "Referer: http://127.0.0.1:8080" \
-        -w "%{http_code}" \
-        -o /dev/null \
-        --data-urlencode "json@-" \
-        "$QB_API/app/setPreferences")"
+    local http_code=""
+
+    http_code="$(qbittorrent_set_credentials "$QB_CONTAINER" "$username" "$password")"
     # Non-fatal: the notifications below must still get configured, and the WebUI
     # stays reachable behind the VPN + Authelia either way.
     if [ "$http_code" != "200" ]; then

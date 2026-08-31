@@ -389,15 +389,8 @@ rotate_qbittorrent() {
         return 1
     fi
 
-    # --data-urlencode, like qbittorrent-bootstrap.sh's set_credentials: the
-    # generated password is hex and safe raw, but ADMIN_USER is arbitrary
-    # user input — a '+' in it would be decoded to a space and a '&' would
-    # truncate the form field.
-    http_code=$(printf '%s' "$(jq -nc --arg u "$ADMIN_USER" --arg p "$NEW_PASSWORD" '{web_ui_username:$u,web_ui_password:$p}')" | \
-        docker exec -i pi-qbittorrent curl -sS \
-        -H "Referer: http://127.0.0.1:8080" \
-        -w "%{http_code}" -o /dev/null --data-urlencode "json@-" \
-        "http://127.0.0.1:8080/api/v2/app/setPreferences")
+    # The same call qbittorrent-bootstrap.sh makes on a first install.
+    http_code=$(qbittorrent_set_credentials pi-qbittorrent "$ADMIN_USER" "$NEW_PASSWORD")
 
     if [ "$http_code" = "200" ]; then
         note "✔ Rotated qBittorrent WebUI password"
