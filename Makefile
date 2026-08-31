@@ -102,7 +102,7 @@ preflight: check-env
 	@if ! docker info >/dev/null 2>&1; then echo "❌ Docker not reachable"; exit 1; fi
 	@echo "✔ Docker OK"
 	@if mount | grep -q ' type cgroup2 '; then echo "✔ cgroup v2"; else echo "ℹ legacy cgroup"; fi
-	@if docker run --rm -m 32m busybox sh -c 'cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null' | grep -qE '33554432|32'; then echo "✔ memory limits enforced"; else echo "⚠ memory limits NOT enforced"; fi
+	@if docker run --rm -m 32m busybox:1.37.0@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0 sh -c 'cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null' | grep -qE '33554432|32'; then echo "✔ memory limits enforced"; else echo "⚠ memory limits NOT enforced"; fi
 	@echo "Done"
 
 install: check-env install-system
@@ -128,8 +128,11 @@ install-system:
 	$(SUDO) cp config/sysctl.d/pi-pcloud.conf /etc/sysctl.d/99-pi-pcloud.conf
 	$(SUDO) $(SYSCTL) --system >/dev/null
 	@echo "🌐 Adding local DNS overrides to /etc/hosts..."
-	@HOST_NAME_VAL=$$(grep -E '^HOST_NAME=' .env | tail -n1 | cut -d= -f2-); \
-	HOST_LAN_IP_VAL=$$(grep -E '^HOST_LAN_IP=' .env | tail -n1 | cut -d= -f2-); \
+	@# Read through lib.sh, like check-env above: a third copy of the .env
+	@# reader here would drift from the one install.sh and the scripts use.
+	@. scripts/lib.sh >/dev/null 2>&1; \
+	HOST_NAME_VAL=$$(read_env_value_from_file .env HOST_NAME); \
+	HOST_LAN_IP_VAL=$$(read_env_value_from_file .env HOST_LAN_IP); \
 	if [ -n "$$HOST_NAME_VAL" ] && [ -n "$$HOST_LAN_IP_VAL" ]; then \
 		$(SUDO) sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts; \
 		printf "# pi-pcloud local overrides\n$$HOST_LAN_IP_VAL\theadscale.$$HOST_NAME_VAL\n# end pi-pcloud local overrides\n" | $(SUDO) tee -a /etc/hosts >/dev/null; \
@@ -137,12 +140,17 @@ install-system:
 	else \
 		echo "  ⚠ HOST_NAME or HOST_LAN_IP not set, skipping"; \
 	fi
-	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/pi-pcloud.service > /tmp/$(UNIT)
-	$(SUDO) cp /tmp/$(UNIT) /etc/systemd/system/
-	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/$(WATCH_UNIT) > /tmp/$(WATCH_UNIT)
-	$(SUDO) cp /tmp/$(WATCH_UNIT) /etc/systemd/system/
-	sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' config/systemd/system/nextcloud-cron.service > /tmp/nextcloud-cron.service
-	$(SUDO) cp /tmp/nextcloud-cron.service /etc/systemd/system/
+	@# Rendered through mktemp rather than a predictable /tmp path: any other
+	@# local account could pre-create /tmp/<unit> as a symlink it controls and
+	@# have its own ExecStart installed as a root unit by the sudo below.
+	@# mktemp also keeps the destination untouched if the render fails.
+	@set -e; \
+	rendered=$$(mktemp); \
+	trap 'rm -f "$$rendered"' EXIT INT TERM; \
+	for unit in $(UNIT) $(WATCH_UNIT) nextcloud-cron.service; do \
+		sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' "config/systemd/system/$$unit" > "$$rendered"; \
+		$(SUDO) install -m 644 -o root -g root "$$rendered" "/etc/systemd/system/$$unit"; \
+	done
 	$(SUDO) cp config/systemd/system/nextcloud-cron.timer /etc/systemd/system/
 	$(SUDO) systemctl daemon-reload
 	$(SUDO) systemctl enable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer
@@ -325,7 +333,8 @@ headscale-register:
 	@echo "🔐 Registering headscale node..."
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
 	@if [ -z "$(HEADSCALE_KEY)" ]; then echo "❌ Key missing (use: make headscale-register <key>)"; exit 1; fi
-	@EMAIL_FROM_ENV="$${EMAIL:-$$(grep -E '^EMAIL=' .env | tail -n1 | cut -d= -f2-)}"; \
+	@. scripts/lib.sh >/dev/null 2>&1; \
+	EMAIL_FROM_ENV="$${EMAIL:-$$(read_env_value_from_file .env EMAIL)}"; \
 	if [ -z "$$EMAIL_FROM_ENV" ]; then echo "❌ EMAIL not set in .env"; exit 1; fi; \
 	$(COMPOSE) run --rm headscale nodes register --key "$(HEADSCALE_KEY)" --user "$$EMAIL_FROM_ENV"
 
