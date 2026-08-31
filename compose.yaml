@@ -1178,7 +1178,8 @@ services:
       - "homepage.href=https://stremio.${HOST_NAME:-pi.lan}"
       - "homepage.description=Streaming server (VPN protected)"
 
-  # Casting alternative to `stremio` above, never both (stack-up.sh refuses it).
+  # Casting alternative to `stremio` above, never both: the conflicts-with label
+  # below is what services.sh, the picker and stack-up.sh all read to refuse it.
   # Discovery is SSDP/mDNS multicast, which reaches no renderer from a Docker
   # bridge and which gluetun's firewall rejects outright (EPERM on 239.255.255.250),
   # so a cast-capable server needs its own address on the physical LAN. That
@@ -1204,6 +1205,7 @@ services:
       - "homepage.icon=stremio.png"
       - "homepage.href=https://stremio.${HOST_NAME:-pi.lan}"
       - "homepage.description=Streaming server (LAN, casting)"
+      - "pi-pcloud.conflicts-with=stremio"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       # Same host rules as gluetun's routers but higher priority, so that if

@@ -4,7 +4,7 @@
 Usage: services-picker.py <rows-file> <out-file>
 
 The rows file holds one service per line, as
-"service:section:companion-of:needs:state:description",
+"service:section:companion-of:needs:conflicts-with:state:description",
 as produced by scripts/services.sh (which owns everything else: reading
 compose.yaml, writing .env, running the per-service hooks). This script only
 lets the user choose, then writes the services that stay ticked to the out
@@ -13,12 +13,14 @@ file, one per line. Exit status is 0 on confirm, 1 on cancel.
 Files rather than stdio: curses owns the terminal, so a captured stdout would
 either swallow the UI or the result.
 
-Two relations reach us, and they are deliberately different. `companion-of` is
+Three relations reach us, and they are deliberately different. `companion-of` is
 "pointless on its own" -- comet only makes sense with stremio, n8n-runners with
 n8n -- and is drawn as an indented row. `needs` is "cannot run without", which
 crosses sections: qbittorrent is a download service listed under Download, but
-it runs inside gluetun's network namespace. Toggling propagates along both,
-transitively, so the screen always shows a set the stack can actually run.
+it runs inside gluetun's network namespace. `conflicts-with` is the opposite:
+stremio and stremio-lan are one server in two networking modes and cannot both
+run. Toggling propagates along all three, transitively, so the screen always
+shows a set the stack can actually run.
 """
 
 import curses
@@ -37,16 +39,19 @@ def read_rows(path):
             line = line.rstrip("\n")
             if not line:
                 continue
-            fields = line.split(":", 5)
-            if len(fields) != 6:
+            fields = line.split(":", 6)
+            if len(fields) != 7:
                 sys.exit(f"services-picker: malformed row {line!r}")
-            service, section, parent, needs, state, description = fields
+            service, section, parent, needs, excludes, state, description = fields
             rows.append({
                 "service": service,
                 "section": section,
                 "parent": parent,
                 # Everything this service cannot run without, companion included.
                 "needs": [n for n in ([parent] if parent else []) + needs.split() if n],
+                # Everything it can never run alongside. Stated on both sides by
+                # services.sh, so this side never has to look for the other.
+                "excludes": excludes.split(),
                 "on": state == "on",
                 "description": description,
             })
@@ -72,42 +77,121 @@ def index_of(rows, service):
     return None
 
 
+def need_met(rows, service):
+    """True if a needed service is ticked, or something standing in for it is.
+
+    A conflicts-with pair is one service in two modes, so whatever needs one
+    mode is served by the other: comet is a stremio addon and runs against
+    stremio or stremio-lan indifferently (compose.yaml gives stremio-lan its own
+    extra_hosts entry for exactly that). Without this, comet's companion-of
+    would make it a hard dependant of the VPN mode alone, and the picker would
+    be the one place unable to express a setup the rest of the stack supports.
+    """
+    index = index_of(rows, service)
+    if index is None:
+        return True
+    for candidate in [service] + rows[index]["excludes"]:
+        target = index_of(rows, candidate)
+        if target is not None and rows[target]["on"]:
+            return True
+    return False
+
+
+def satisfied(rows, row):
+    """True if everything this service cannot run without is covered."""
+    return all(need_met(rows, service) for service in row["needs"])
+
+
+def turn_off(rows, index, moved):
+    """Untick one row and everything left without what it cannot run without."""
+    rows[index]["on"] = False
+    dropping = True
+    while dropping:
+        dropping = False
+        for row in rows:
+            if row["on"] and not satisfied(rows, row):
+                row["on"] = False
+                moved.append(row["service"])
+                dropping = True
+
+
+def turn_on(rows, index, moved):
+    """Tick one row and everything it cannot run without."""
+    rows[index]["on"] = True
+    pending = [index]
+    while pending:
+        for service in rows[pending.pop()]["needs"]:
+            if need_met(rows, service):
+                continue
+            target = index_of(rows, service)
+            if target is not None:
+                rows[target]["on"] = True
+                moved.append(service)
+                pending.append(target)
+
+
+def drop_conflicts(rows, ticked, moved):
+    """Untick whatever the just-ticked services can never run alongside.
+
+    The newest choice wins: ticking stremio-lan is how you switch to it, so it
+    is the already-ticked stremio that goes, along with anything needing it.
+    """
+    for service in ticked:
+        index = index_of(rows, service)
+        # A row a previous pass already dropped no longer gets to drop anything:
+        # otherwise the two halves of a pair would cancel each other out.
+        if index is None or not rows[index]["on"]:
+            continue
+        for other in rows[index]["excludes"]:
+            target = index_of(rows, other)
+            if target is not None and rows[target]["on"]:
+                moved.append(other)
+                turn_off(rows, target, moved)
+
+
 def toggle(rows, index):
-    """Flip one box and carry along whatever cannot run without it.
+    """Flip one box and carry along whatever cannot run beside it.
 
     Ticking pulls in everything the service needs; unticking drops everything
     that needs it. Both walk the graph, so comet pulls in stremio and gluetun,
-    and dropping gluetun drops stremio and comet with it.
+    and dropping gluetun drops stremio and comet with it. Ticking also drops
+    the services it conflicts with, since the stack refuses to start with both.
     """
     on = not rows[index]["on"]
-    rows[index]["on"] = on
-    moved = []
-    pending = [index]
-    while pending:
-        current = pending.pop()
-        if on:
-            for service in rows[current]["needs"]:
-                target = index_of(rows, service)
-                if target is not None and not rows[target]["on"]:
-                    rows[target]["on"] = True
-                    moved.append(service)
-                    pending.append(target)
-        else:
-            dropped = rows[current]["service"]
-            for target, row in enumerate(rows):
-                if row["on"] and dropped in row["needs"]:
-                    row["on"] = False
-                    moved.append(row["service"])
-                    pending.append(target)
-    if not moved:
-        return ""
-    verb = "also ticked" if on else "also unticked"
-    return f"{verb}: {' '.join(sorted(set(moved)))}"
+    added = []
+    removed = []
+    if on:
+        turn_on(rows, index, added)
+        drop_conflicts(rows, [rows[index]["service"]] + added, removed)
+        # Whatever the conflict took back down was not really added.
+        added = [service for service in added if rows[index_of(rows, service)]["on"]]
+    else:
+        turn_off(rows, index, removed)
+    parts = []
+    if added:
+        parts.append(f"also ticked: {' '.join(sorted(set(added)))}")
+    if removed:
+        verb = "unticked (conflict)" if on else "also unticked"
+        parts.append(f"{verb}: {' '.join(sorted(set(removed)))}")
+    return " · ".join(parts)
 
 
 def set_all(rows, on):
+    """Tick or untick every box, minus the pairs that cannot run together.
+
+    Ticking literally everything would select both networking modes of a
+    service that has a single data volume, which the stack refuses to start;
+    the first of each conflicting pair in display order keeps its box.
+    """
     for row in rows:
         row["on"] = on
+    if not on:
+        return ""
+    skipped = []
+    drop_conflicts(rows, [row["service"] for row in rows], skipped)
+    if not skipped:
+        return ""
+    return f"left unticked (conflict): {' '.join(sorted(set(skipped)))}"
 
 
 def name_column(rows):
@@ -193,9 +277,9 @@ def run(screen, rows):
         elif key == ord(" "):
             message = toggle(rows, lines[cursor][1])
         elif key == ord("a"):
-            set_all(rows, True)
+            message = set_all(rows, True)
         elif key == ord("n"):
-            set_all(rows, False)
+            message = set_all(rows, False)
         elif key == curses.KEY_RESIZE:
             offset = 0
 

@@ -33,6 +33,11 @@ jobs:
           # Validate with every per-service profile enabled too, so optional
           # services' definitions are checked even though they carry profiles.
           COMPOSE_PROFILES=all docker compose -f compose.yaml config >/dev/null
+          # stremio-lan is deliberately outside "all" (it is the alternative to
+          # stremio, never both), so the run above never renders it: without
+          # this second one, a typo in its block would only fail for the user
+          # who enables the profile.
+          COMPOSE_PROFILES=stremio-lan docker compose -f compose.yaml config >/dev/null
           docker compose -f compose.yaml -f compose.test.yaml config >/dev/null
 
       - name: Lint workflow and Compose YAML
