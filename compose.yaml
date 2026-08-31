@@ -1475,8 +1475,14 @@ services:
       - TZ=${TIMEZONE:-Europe/Paris}
     volumes:
       - kavita_config:/config
-      # Downloads mounted read-only as the reading library (qBittorrent output).
-      - ${DATA_LOCATION:-./data}/download:/library:ro
+      # Only the curated books subfolder of the qBittorrent output, read-only.
+      # NOT the download root: that root also holds software torrents, and Kavita
+      # walks every subfolder, so an installer tree turns into series named after
+      # its internals (AdpSdk, IPMClient, Template, 2.0 ...). Prowlarr routes every
+      # Books release (newznab 7000 + subcategories) to the qBittorrent "books"
+      # category, whose save path is this folder, so book grabs land here and
+      # everything else stays invisible to Kavita.
+      - ${DATA_LOCATION:-./data}/download/books:/library:ro
       # Kapowarr's managed comic library, read-only: Kapowarr writes comics here,
       # Kavita serves them. Add a Kavita library pointing at /comics after first start.
       - ${DATA_LOCATION:-./data}/comics:/comics:ro

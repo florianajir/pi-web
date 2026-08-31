@@ -64,6 +64,7 @@ vaultwarden:vaultwarden-pre-start.sh
 qbittorrent:qbittorrent-pre-start.sh
 prowlarr:prowlarr-pre-start.sh
 kapowarr:kapowarr-pre-start.sh
+kavita:kavita-pre-start.sh
 llama-cpp:llama-cpp-pre-start.sh
 stremio-lan:stremio-lan-pre-start.sh
 '

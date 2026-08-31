@@ -15,6 +15,15 @@ PROWLARR_CONTAINER="${PROWLARR_CONTAINER:-pi-prowlarr}"
 QB_CLIENT_NAME="qBittorrent"
 QB_HOST="gluetun"
 QB_PORT="8080"
+# Per-release category mapping on the download client. Prowlarr's QBittorrent client
+# resolves the qBittorrent category as `GetCategoryForRelease(release) ?? Settings.Category`
+# (DownloadClientBase.GetCategoryForRelease), matching a release against these entries
+# directly and through parent categories - so newznab 7000 (Books) also covers its
+# subcategories 7010 Mags, 7020 EBook, 7030 Comics, 7040 Technical, 7050 Other,
+# 7060 Foreign. Books therefore land in qBittorrent's "books" category, whose save path
+# is the only download subfolder Kavita reads, and every other release falls back to the
+# client's default category, staying out of Kavita's library.
+QB_CATEGORY_MAP='[{"clientCategory":"books","categories":[7000]}]'
 FLARESOLVERR_NAME="FlareSolverr"
 FLARESOLVERR_TAG="flaresolverr"
 FLARESOLVERR_HOST="http://flaresolverr:8191/"
@@ -71,7 +80,7 @@ wait_for_prowlarr() {
 }
 
 ensure_download_client() {
-    local user password schema payload code existing current current_host id updated
+    local user password schema payload code existing current id updated
     user="$(get_env_value ADMIN_USER)"
     password="$(get_env_value PASSWORD)"
     [ -n "$user" ] && [ -n "$password" ] || { log "WARNING: ADMIN_USER/PASSWORD not set; skipping download client"; return 0; }
@@ -80,18 +89,22 @@ ensure_download_client() {
     current="$(printf '%s' "$existing" | jq -c --arg n "$QB_CLIENT_NAME" '.[]? | select(.name==$n)' 2>/dev/null)"
 
     if [ -n "$current" ] && [ "$current" != "null" ]; then
-        current_host="$(printf '%s' "$current" | jq -r '.fields[]? | select(.name=="host") | .value' 2>/dev/null)"
-        if [ "$current_host" = "$QB_HOST" ]; then
+        # Reconcile the two fields this script owns: the host (migrating an older
+        # localhost:8080 install after Prowlarr moved off the VPN) and the category
+        # map. Comparing the re-serialised object rather than each field keeps the
+        # "nothing to do" case quiet without a check per field; jq assignment keeps
+        # existing keys in place, so both sides serialise in the same order.
+        id="$(printf '%s' "$current" | jq -r '.id')"
+        updated="$(printf '%s' "$current" | jq -c --arg h "$QB_HOST" --argjson cats "$QB_CATEGORY_MAP" \
+            '.fields = ([.fields[] | if .name=="host" then .value=$h else . end])
+             | .categories = $cats')"
+        if [ "$updated" = "$current" ]; then
             log "qBittorrent download client already present, skipping"
             return 0
         fi
-        # Migrate host (e.g. localhost -> gluetun after moving Prowlarr off the VPN).
-        id="$(printf '%s' "$current" | jq -r '.id')"
-        updated="$(printf '%s' "$current" | jq -c --arg h "$QB_HOST" \
-            '.fields = ([.fields[] | if .name=="host" then .value=$h else . end])')"
         code="$(printf '%s' "$updated" | px_put "downloadclient/$id")"
         case "$code" in
-            20*) log "Updated qBittorrent download client host to $QB_HOST" ;;
+            20*) log "Updated qBittorrent download client (host $QB_HOST, Books -> books category)" ;;
             *)   log "WARNING: qBittorrent downloadclient PUT returned HTTP $code" ;;
         esac
         return 0
@@ -101,10 +114,11 @@ ensure_download_client() {
     schema="$(px_curl -H "X-Api-Key: $KEY" "$API/downloadclient/schema" 2>/dev/null)"
     payload="$(printf '%s' "$schema" | jq -c \
         --arg name "$QB_CLIENT_NAME" --arg host "$QB_HOST" --argjson port "$QB_PORT" \
-        --arg user "$user" --arg pass "$password" '
+        --arg user "$user" --arg pass "$password" --argjson cats "$QB_CATEGORY_MAP" '
         (.[] | select(.implementation == "QBittorrent"))
         | .name = $name
         | .enable = true
+        | .categories = $cats
         | .fields = ([.fields[]
             | if   .name == "host"     then .value = $host
               elif .name == "port"     then .value = $port

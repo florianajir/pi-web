@@ -136,6 +136,31 @@ Persistent state is split deliberately:
 | `${DATA_LOCATION}` (default `./data`) | `nextcloud`, `immich`, `postgres`, `authelia-config`, `lldap`, `vaultwarden`, `uptime-kuma`, `backrest`, `download`, `comics`, `n8n`, `open-webui`, … | Anything you would miss. **Point this at your SSD.** Backrest mounts most of it read-only |
 | Named Docker volumes | Pi-hole, Redis, Headscale, Beszel, ntfy, Kavita config, llama.cpp weights, … | Smaller state, and the model weights that belong on the fast root filesystem rather than in backups |
 
+### Inside `${DATA_LOCATION}/download`
+
+qBittorrent saves everything under one root, and Kavita indexes every subfolder of any
+folder it is given — so pointing Kavita at that root turns a software torrent into
+series named after the installer's internals. The two are separated by category
+instead:
+
+| Path | Written by | Read by Kavita |
+|------|-----------|----------------|
+| `download/books/` | qBittorrent's `books` category | yes — mounted as `/library:ro` |
+| `download/prowlarr/` | qBittorrent's `prowlarr` category (Prowlarr's default) | no |
+| `download/incomplete/` | qBittorrent's temp path | no |
+| `download/` (root) | torrents added by hand, and Kapowarr's seeding copies (`kapowarr` category) | no |
+
+Prowlarr routes the split automatically: its qBittorrent download client maps newznab
+category 7000 (Books, and through parent matching its subcategories — Mags, EBook,
+Comics, Technical, Other, Foreign) to the `books` client category, and every other
+release falls back to `prowlarr`. Three places must agree on the path, and all three
+are provisioned: the `kavita` volume in `compose.yaml`, `BOOKS_SAVE_PATH` in
+`scripts/qbittorrent-bootstrap.sh`, and `QB_CATEGORY_MAP` in
+`scripts/prowlarr-bootstrap.sh`.
+
+Comics are the other half and sit outside `download` entirely: Kapowarr imports them
+into `${DATA_LOCATION}/comics`, which Kavita mounts read-only as `/comics`.
+
 **Recommended layout:** clone onto the SSD and symlink it into place, so systemd and the docs agree on one path.
 
 ```bash
