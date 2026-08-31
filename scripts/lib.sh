@@ -246,6 +246,47 @@ create_headscale_api_key() {
 
 # Like wait_for_health, but a timeout is a warning rather than an error.
 # Usage: wait_for_health_warning <name> [max_retries] [interval_seconds]
+# Echo a Kavita admin's API key, or nothing. Read from kavita.db rather than the API
+# because our own OIDC config sets DisablePasswordAuthentication, so there is no
+# credential a script could log in with - and the one endpoint that works without a
+# password (/api/Plugin/authenticate) needs this very key. Copied out with docker cp
+# because the volume is not host-readable without root; the -wal file comes too, or a
+# key created since the last checkpoint would be missed.
+kavita_admin_api_key() {
+    _kak_container="${1:-pi-kavita}"
+    container_is_running "$_kak_container" || return 0
+
+    _kak_tmp="$(mktemp -d)" || return 0
+    docker cp "$_kak_container:/config/kavita.db" "$_kak_tmp/kavita.db" >/dev/null 2>&1 || {
+        rm -rf "$_kak_tmp"
+        return 0
+    }
+    docker cp "$_kak_container:/config/kavita.db-wal" "$_kak_tmp/kavita.db-wal" >/dev/null 2>&1 || true
+
+    KAVITA_DB="$_kak_tmp/kavita.db" python3 - <<'PY' 2>/dev/null || true
+import os, sqlite3, sys
+
+# Kavita 0.9.x keeps API keys in AppUserAuthKey, not AspNetUsers.ApiKey (always NULL).
+# Guard the whole thing: the schema is not stable across Kavita majors, and a widget
+# key is never worth failing a boot over.
+try:
+    db = sqlite3.connect(f"file:{os.environ['KAVITA_DB']}?mode=ro", uri=True)
+    row = db.execute("""
+        select k.Key from AppUserAuthKey k
+        join AspNetUserRoles ur on ur.UserId = k.AppUserId
+        join AspNetRoles r on r.Id = ur.RoleId
+        where r.Name = 'Admin' and k.Name = 'opds'
+        order by k.AppUserId limit 1
+    """).fetchone()
+except Exception:
+    sys.exit(0)
+
+if row and row[0]:
+    print(row[0], end="")
+PY
+    rm -rf "$_kak_tmp"
+}
+
 wait_for_health_warning() {
     local name="$1"
     local max_retries="${2:-120}"

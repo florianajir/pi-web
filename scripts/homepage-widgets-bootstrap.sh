@@ -92,6 +92,28 @@ sync_headscale() {
     fi
 }
 
+# --- Kavita: the widget authenticates with an API key, not a login ---
+# Kavita's OIDC config sets DisablePasswordAuthentication, so /api/Account/login
+# refuses every password; only apiKey logins are exempt. Homepage sends widget.key
+# as apiKey when no username/password is configured.
+sync_kavita_key() {
+    if ! container_is_running "pi-kavita"; then
+        log "WARNING: pi-kavita not running; skipping Kavita widget key"
+        return 0
+    fi
+
+    key="$(kavita_admin_api_key)"
+
+    if [ -z "$key" ]; then
+        # Expected before anyone has registered the first Kavita admin.
+        log "WARNING: no Kavita admin API key found yet; skipping Kavita widget key"
+        return 0
+    fi
+
+    write_secret "$SECRETS_DIR/kavita_api_key" "$key"
+    log "Kavita API key ready for Homepage widget"
+}
+
 main() {
     log "=== Homepage Widgets Bootstrap ==="
     mkdir -p "$SECRETS_DIR"
@@ -100,6 +122,7 @@ main() {
 
     sync_prowlarr_key || true
     sync_headscale || true
+    sync_kavita_key || true
 
     fix_ownership "$SECRETS_DIR"
 

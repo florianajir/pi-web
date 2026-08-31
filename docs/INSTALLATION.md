@@ -101,7 +101,14 @@ Kavita's OIDC connection is provisioned automatically (`scripts/kavita-oidc-boot
 4. Under **Advanced settings**, set **Roles claim** to `groups`. The default `.../claims/role` is not emitted by Authelia. Leave **Custom scopes** as `groups`.
 5. To grant admin via SSO, put the user in an LLDAP group whose name matches a Kavita role (e.g. `Admin`), or set a **Roles prefix** such as `kavita-` and use groups like `kavita-admin`.
 
-These persist in the `kavita_config` volume. They are deliberately not automated — there is no stable config-file surface for them, and `kavita.db`'s schema is not stable across updates, so do not edit it directly.
+These persist in the `kavita_config` volume, and only these steps are manual: they gate everything else, because with **Disable password authentication** on there is no login a script can use until an admin exists.
+
+Once that admin exists, the rest is provisioned on the next `make update`:
+
+- `scripts/kavita-library-bootstrap.sh` creates the **Comics**, **Manga** and **Books** libraries with the right type and folders, repairs them if they drift, and adds every library to the OIDC default set so auto-provisioned accounts can see one added later.
+- `scripts/homepage-widgets-bootstrap.sh` publishes a Kavita **API key** for the Homepage widget — the widget cannot use a password, since Kavita refuses password logins while OIDC is enforced.
+
+Both read that key out of `kavita.db` (read-only — never edit it, the schema is not stable across Kavita majors) because `/api/Plugin/authenticate` is the only credential path left, and both skip with a warning until the admin account exists.
 
 > Kavita's email settings have the same problem, but with OIDC + Auto-Provision they are usually unnecessary: they only power local-account flows (invites, setup links, password resets) that SSO bypasses. If you want them anyway, fill **Settings → Email** with your `SMTP_*` values from `.env`.
 

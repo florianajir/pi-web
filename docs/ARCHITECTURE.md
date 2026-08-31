@@ -168,9 +168,11 @@ to `manga` and the remaining Books subcategories (7010 Mags, 7020 EBook, 7040
 Technical, 7050 Other, 7060 Foreign) go to `books`. Comics do not come through
 Prowlarr at all: Kapowarr fetches them and imports into its own root folder.
 
-Four places must agree on these paths, and all four are provisioned: the `kavita`
-volumes in `compose.yaml`, `LIBRARY_CATEGORIES` in `scripts/qbittorrent-bootstrap.sh`,
-`QB_CATEGORY_MAP` in `scripts/prowlarr-bootstrap.sh`, and `ROOT_FOLDERS` in
+Five places must agree on these paths, and all five are provisioned: the `kavita`
+volumes in `compose.yaml`, `DESIRED_LIBRARIES` in
+`scripts/kavita-library-bootstrap.sh`, `LIBRARY_CATEGORIES` in
+`scripts/qbittorrent-bootstrap.sh`, `QB_CATEGORY_MAP` in
+`scripts/prowlarr-bootstrap.sh`, and `ROOT_FOLDERS` in
 `scripts/kapowarr-bootstrap.sh`.
 
 Kapowarr's `volume_folder_naming` is deliberately flat (`{series_name} ({year})`, no

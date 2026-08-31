@@ -1042,6 +1042,7 @@ services:
       # Read by widget labels as {{HOMEPAGE_FILE_x}}; written by
       # scripts/homepage-widgets-bootstrap.sh into the mounted config dir.
       - HOMEPAGE_FILE_PROWLARR_API_KEY=/app/config/secrets/prowlarr_api_key
+      - HOMEPAGE_FILE_KAVITA_API_KEY=/app/config/secrets/kavita_api_key
       - HOMEPAGE_FILE_HEADSCALE_API_KEY=/app/config/secrets/headscale_api_key
       - HOMEPAGE_FILE_HEADSCALE_NODE_ID=/app/config/secrets/headscale_node_id
     # Immich/Kavita cannot mint an API key without a logged-in admin session, so
@@ -1508,7 +1509,7 @@ services:
       # DisablePasswordAuthentication, so /api/Account/login rejects every password
       # ("password authentication disabled"). It exempts apiKey logins from that
       # check, and Homepage only sends the key when no username/password is set.
-      - "homepage.widget.key={{HOMEPAGE_VAR_KAVITA_API_KEY}}"
+      - "homepage.widget.key={{HOMEPAGE_FILE_KAVITA_API_KEY}}"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       # Kavita has its own account system (and OPDS clients cannot pass interactive SSO),
