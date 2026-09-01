@@ -85,7 +85,7 @@ kapowarr:kapowarr-bootstrap.sh
 uptime-kuma:uptime-kuma-bootstrap.sh
 kavita:kavita-oidc-bootstrap.sh
 kavita:kavita-library-bootstrap.sh
-shelfmark:shelfmark-oidc-bootstrap.sh
+shelfmark:shelfmark-settings-bootstrap.sh
 open-webui:open-webui-bootstrap.sh
 homepage-widgets-bootstrap.sh
 '

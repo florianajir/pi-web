@@ -98,6 +98,7 @@ Two consequences specific to this stack: **group membership travels in the `grou
 | Traefik dashboard | ✓ | ✓ | — | LAN-only + admin + 2FA |
 | Pi-hole | ✓ | ✓ | — | LAN-only + admin + 2FA |
 | Backrest | ✓ | ✓ | — | LAN-only + admin + 2FA + **its own login** — the API hands the restic repository password and the S3 keys to any caller, and forward-auth only guards the Traefik path, not the container network |
+| Gluetun HTTP proxy | — | — | — | Not routed through Traefik at all. `gluetun:8888` is unauthenticated and reachable by anything on `frontend` — gluetun's firewall accepts the whole Docker network by design. Enabled for Shelfmark's direct downloads; the exposure is VPN egress for a container that already has internet, not a path to data |
 | LLDAP | ✓ | ✓ | — | LAN-only + 2FA + its own auth + `rate-limit-auth` |
 | Stremio | ✓ | — | — | LAN-only; streaming clients and cast receivers can't do the portal |
 | Comet | ✓ | — | — | LAN-only; Stremio fetches manifests programmatically |

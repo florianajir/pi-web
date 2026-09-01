@@ -114,24 +114,29 @@ Both read that key out of `kavita.db` (read-only — never edit it, the schema i
 
 ### 5. Shelfmark — pick your sources
 
-Authentication needs nothing: `scripts/shelfmark-oidc-bootstrap.sh` writes the Authelia
+Authentication needs nothing: `scripts/shelfmark-settings-bootstrap.sh` writes the Authelia
 client into Shelfmark's `plugins/security.json`, password login is off, and the first
 Authelia user to sign in is auto-provisioned (admin if they are in the `admin` group).
 Prowlarr, qBittorrent, ntfy, SMTP and the search language are rendered into
 `config/shelfmark/shelfmark.env` on every start, so those settings show as
 environment-managed and read-only in the UI.
 
-What is *not* preconfigured is where results come from, because the answer is a matter
-of the sources you have and of the law where you live:
+Two release sources are wired up:
 
 - **Prowlarr indexers** work as soon as Prowlarr has some — add French trackers there
   and they appear as a release source. Nothing else to do.
-- **Direct Download** (Anna's Archive and friends) ships disabled with no mirror list,
-  upstream's default. To use it, enable it under **Settings → Direct Download** and add
-  mirror URLs under **Mirrors**. `EXT_BYPASSER_URL` already points at this stack's
-  FlareSolverr, which is what solves the Cloudflare challenges those mirrors put up.
+- **Direct Download** (Anna's Archive) is on, seeded with one mirror,
+  `https://annas-archive.gl` — upstream's recommendation, and the only candidate that
+  was actually serving the site when this was written. Mirrors move; the list is
+  **seeded, not enforced**, so edit it freely under **Settings → Mirrors** and the
+  bootstrap will leave your version alone. `EXT_BYPASSER_URL` points at this stack's
+  FlareSolverr, which solves the Cloudflare challenges those mirrors put up.
 - **AudiobookBay and IRC** are the other audiobook sources; both need a hostname or a
   network only you can choose.
+
+A donator key (**Settings → Direct Download → `AA_DONATOR_KEY`**) removes the wait on
+the slow download hosts. Without one, Anna's Archive queues you for a minute or two per
+file, which is why `RELEASE_SEARCH_TIMEOUT` defaults to 300 s.
 
 Per-account language: the stack sets the default from `DEFAULT_LANGUAGE` (`fr-FR` →
 `fr`), and each user can override it for their own searches.

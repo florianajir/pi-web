@@ -3,7 +3,7 @@
 # that has to be discovered from other services: the Prowlarr API key, the
 # qBittorrent login, the ntfy route and SMTP. The rest is plain `environment:`
 # on the service in compose.yaml, and the OIDC client is
-# shelfmark-oidc-bootstrap.sh (its secret must not travel in an env var).
+# shelfmark-settings-bootstrap.sh (its secret must not travel in an env var).
 #
 # Shelfmark resolves every setting from its environment first and only then from
 # /config (shelfmark/core/settings_registry.py get_setting_value), so what is
@@ -151,7 +151,11 @@ ensure_directories() {
     local data_location="" dir=""
     data_location="$(resolve_data_location_path)"
 
+    # download/books is INGEST_DIR, this service's own destination. kavita-pre-start.sh
+    # also creates it, but that hook is gated on the kavita profile and Shelfmark
+    # runs without it.
     for dir in "$data_location/download" \
+               "$data_location/download/books" \
                "$data_location/download/audiobooks" \
                "$data_location/download/shelfmark" \
                "$data_location/shelfmark"; do

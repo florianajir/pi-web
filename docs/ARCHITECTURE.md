@@ -183,11 +183,20 @@ the same qBittorrent instance (so through the VPN) under its own `shelfmark` cat
 and Shelfmark then renames the finished file into `download/books/`, where Kavita
 already looks — which is why its grabs are saved outside that folder in the first
 place, so Kavita indexes the imported book and not the torrent's directory tree.
-Shelfmark itself sits on `frontend`, not in gluetun's namespace: like Prowlarr it only
-queries indexers and metadata providers, and putting it behind the VPN would add it to
-the set of routers that disappear when gluetun goes unhealthy. Direct downloads (the
-Anna's Archive sources, off by default) would leave on the residential IP; route them
-through `SOCKS5_PROXY` in its settings if that matters.
+Shelfmark itself sits on `frontend`, not in gluetun's namespace: putting it behind the
+VPN would add it to the set of routers that disappear when gluetun goes unhealthy. Its
+direct downloads still egress through the tunnel, via gluetun's internal HTTP proxy
+(`HTTPPROXY=on`, `gluetun:8888`) rather than by sharing its network namespace.
+
+That split is deliberate, and it is narrower than it looks. `PROXY_MODE`/`HTTP_PROXY`
+are set in Shelfmark's `plugins/network.json`, **not** in its environment, because
+`HTTP_PROXY` and `NO_PROXY` are the names `requests` reads out of the environment on its
+own — setting them there would route every other outbound call through the tunnel too.
+In the config file they reach only the callers of `download/network.py get_proxies()`,
+which is the release-source and download path. So Anna's Archive traffic is on the VPN,
+while the Prowlarr API, the FlareSolverr hand-off, the OIDC token exchange and the
+metadata providers stay direct — and a gluetun outage costs you direct downloads, not
+search or login.
 
 Kapowarr's `volume_folder_naming` is deliberately flat (`{series_name} ({year})`, no
 volume subfolder): Kavita's ComicVine parser takes the series name from the folder and
