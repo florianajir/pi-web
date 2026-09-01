@@ -42,7 +42,9 @@ That is not just a compatibility detail — it is the rollback. The old cluster 
 
 4. **Check free space.** The script wants 3× the cluster size and refuses to start below it: the dumps are roughly one copy and the new cluster another.
 
-5. **Take a backup you did not generate for this.** Run the Backrest plan and let its `db-backup.sh` hooks write their per-database dumps, so there is an off-site copy independent of the upgrade's own working files.
+5. **Rehearse first.** `scripts/pg-major-upgrade.sh --to <image> --rehearse`, with `ENV_FILE` pointing at a scratch `.env` whose `DATA_LOCATION` is spare disk, runs the entire dump/restore/verify against the live cluster **without stopping anything** — no service, not Postgres itself — and refuses `--apply`. It proves the migration on your real data for the cost of a read.
+
+6. **Take a backup you did not generate for this.** Run the Backrest plan and let its `db-backup.sh` hooks write their per-database dumps, so there is an off-site copy independent of the upgrade's own working files.
 
 ## The cutover
 
@@ -67,7 +69,9 @@ docker exec pi-postgres psql -U postgres -Atc 'SHOW server_version;'
 make pg-upgrade to=$(grep -m1 'image: ghcr.io/immich-app/postgres:' compose.yaml | awk '{print $2}')
 ```
 
-`make pg-upgrade` then, in order: pulls the target image, dumps roles and all six databases, counts every row in every table, brings the stack down, starts a throwaway container on the new data directory, restores into it, runs `ANALYZE` per database so the new cluster starts with planner statistics, **re-counts every table and compares the two lists whole**, and refuses to touch `compose.yaml` if they differ at all. On a mismatch it stops with the old cluster untouched and the new one left in place for inspection.
+`make pg-upgrade` then, in order: pulls the target image, **stops only the Postgres-backed services** (immich, nextcloud, authelia, lldap, open-webui, vaultwarden, plus backrest so no scheduled dump fires mid-window), dumps roles and all six databases, counts every row in every table, stops Postgres, starts a throwaway container on the new data directory, restores into it, runs `ANALYZE` per database so the new cluster starts with planner statistics, **re-counts every table and compares the two lists whole**, and refuses to touch `compose.yaml` if they differ at all. On a mismatch it stops with the old cluster untouched and the new one left in place for inspection.
+
+**The DNS/VPN path never stops.** Pi-hole, unbound, headscale and tailscale use no Postgres (headscale is SQLite), so devices on the tailnet keep resolving and routing through the whole cutover. What the window does cost: the stopped services themselves are unreachable, and SSO logins fail while Authelia is down — established Tailscale connections and plain internet access are unaffected. The writers stop *before* the dump on purpose: anything written between the dump and the switch would otherwise be silently absent from the new cluster.
 
 The counts are exact `count(*)`, not `pg_stat_user_tables.n_live_tup`. That estimate is only refreshed on (auto)analyze, and a table too small to trip the autovacuum threshold can carry a number that was never right — on this stack `lldap.groups` reported 0 against 4 real rows. Compared against a freshly restored cluster, whose counts *are* accurate, that reads as data loss on a migration that was perfect.
 

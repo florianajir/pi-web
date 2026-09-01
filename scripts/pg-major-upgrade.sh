@@ -5,18 +5,27 @@
 # pre-flight checks, the Backrest client bump this needs alongside it, and the
 # post-cutover verification. Read that first.
 #
-# Usage: pg-major-upgrade.sh --to <image> [--apply] [--keep-dumps]
+# Usage: pg-major-upgrade.sh --to <image> [--apply] [--keep-dumps] [--rehearse]
 #   --to <image>   target image, e.g.
 #                  ghcr.io/immich-app/postgres:18-vectorchord1.1.1@sha256:...
 #   --apply        rewrite compose.yaml's postgres image and data mount on
 #                  success (otherwise the two edits are printed for review)
 #   --keep-dumps   do not delete the dump directory afterwards
+#   --rehearse     dry-run against the live cluster: dump and restore for real
+#                  (into DATA_LOCATION, so point that at scratch space via a
+#                  scratch ENV_FILE), but stop NOTHING — no service, not
+#                  Postgres itself — and refuse --apply. The verification is
+#                  identical; only the outage is missing.
 #
 # Why dump/restore rather than pg_upgrade: the immich-app/postgres image ships
 # exactly one major's binaries, so pg_upgrade (which needs both) would require
 # a custom image carrying two Postgres builds plus VectorChord. A dump/restore
 # also rebuilds the vchord indexes at the new extension version, which is what
 # Immich's docs otherwise ask you to do by hand after any vchord change.
+#
+# Only the Postgres-backed services are stopped for the migration window; the
+# DNS/VPN path (pihole, unbound, headscale, tailscale) keeps running, so
+# tailnet devices never lose name resolution or connectivity.
 #
 # The old data directory is never touched: the new major initialises a fresh
 # one, so rollback is reverting the two compose lines. From Postgres 18 the
@@ -32,20 +41,36 @@ PG_CONTAINER="${PG_CONTAINER:-pi-postgres}"
 TARGET_IMAGE=""
 APPLY=0
 KEEP_DUMPS=0
+REHEARSE=0
 
 # Every database in the cluster, and the role that owns it (same name here).
 DATABASES="immich nextcloud authelia lldap open-webui vaultwarden"
+
+# The containers that hold connections into those databases, plus backrest
+# (whose scheduled db-backup.sh hooks would fire pg_dump against a stopped
+# server mid-migration). ONLY these are stopped: the DNS/VPN path — pihole,
+# unbound, headscale, tailscale, gluetun, traefik — uses no Postgres at all
+# (headscale is SQLite), so devices on the tailnet keep resolving and routing
+# through the whole cutover. The one visible effect of authelia being down is
+# that SSO logins fail for the duration; established sessions and the network
+# itself are untouched.
+WRITER_CONTAINERS="pi-immich pi-immich-machine-learning pi-nextcloud pi-authelia pi-lldap pi-open-webui pi-vaultwarden pi-backrest"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --to) TARGET_IMAGE="${2:-}"; shift 2 ;;
         --apply) APPLY=1; shift ;;
         --keep-dumps) KEEP_DUMPS=1; shift ;;
+        --rehearse) REHEARSE=1; shift ;;
         *) die "unknown argument: $1 (see the header for usage)" ;;
     esac
 done
 
 [ -n "$TARGET_IMAGE" ] || die "--to <image> is required"
+if [ "$REHEARSE" = "1" ]; then
+    [ "$APPLY" = "0" ] || die "--rehearse and --apply are contradictory: a rehearsal must not edit compose.yaml"
+    log "REHEARSAL: nothing will be stopped; the live cluster is only read"
+fi
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 major_of() {
@@ -95,6 +120,21 @@ docker pull -q "$TARGET_IMAGE" >/dev/null || die "could not pull $TARGET_IMAGE"
 
 mkdir -p "$DUMP_DIR"
 safe_chmod 700 "$DUMP_DIR"
+
+# --- Quiesce ---------------------------------------------------------------
+# Writers stop BEFORE the dump, not after: everything a service wrote between
+# the dump and the old `compose down` used to be silently absent from the new
+# cluster. With the writers stopped first, the dump is the complete final
+# state. `|| true` per container: a service the operator disabled is already
+# absent, and that must not abort the migration.
+if [ "$REHEARSE" = "1" ]; then
+    log "REHEARSAL: leaving every service running (writes during the dump stay in the live cluster only)"
+else
+    log "stopping the services that write to Postgres (DNS/VPN keep running)"
+    for c in $WRITER_CONTAINERS; do
+        docker stop "$c" >/dev/null 2>&1 || true
+    done
+fi
 
 # --- Dump, from the live cluster -----------------------------------------
 log "dumping roles"
@@ -147,8 +187,13 @@ sort -o "$DUMP_DIR/counts.before" "$DUMP_DIR/counts.before"
 log "$(wc -l < "$DUMP_DIR/counts.before") tables counted"
 
 # --- Swap ----------------------------------------------------------------
-log "stopping the stack"
-compose down --remove-orphans >/dev/null 2>&1 || true
+# Only Postgres itself; the writers are already stopped and everything else
+# never touches it. Never in a rehearsal: stopping the live server is the one
+# way a dry run can cause a real outage.
+if [ "$REHEARSE" = "0" ]; then
+    log "stopping $PG_CONTAINER"
+    docker stop "$PG_CONTAINER" >/dev/null 2>&1 || true
+fi
 
 log "starting Postgres $TARGET_MAJOR on $NEW_DIR"
 mkdir -p "$NEW_DIR"
@@ -213,7 +258,7 @@ sort -o "$DUMP_DIR/counts.after" "$DUMP_DIR/counts.after"
 if ! counts_diff="$(diff "$DUMP_DIR/counts.before" "$DUMP_DIR/counts.after")"; then
     log "row counts differ (< before, > after):"
     printf '%s\n' "$counts_diff" | head -n 40 >&2
-    die "$NEW_DIR is suspect. The old cluster at $OLD_DIR is untouched: leave compose.yaml as it is and 'make start' to roll back."
+    die "$NEW_DIR is suspect. The old cluster at $OLD_DIR is untouched: leave compose.yaml as it is and 'make start' to bring the stopped services back on it."
 fi
 log "row counts match exactly: $(wc -l < "$DUMP_DIR/counts.after") tables across $(printf '%s' "$DATABASES" | wc -w) databases"
 
@@ -222,6 +267,18 @@ cleanup_target
 trap - EXIT INT TERM
 
 # --- Compose ------------------------------------------------------------
+if [ "$REHEARSE" = "1" ]; then
+    if [ "$KEEP_DUMPS" = "1" ]; then
+        log "dumps kept at $DUMP_DIR"
+    else
+        log "removing $DUMP_DIR (pass --keep-dumps to retain it)"
+        rm -rf "$DUMP_DIR"
+    fi
+    log "REHEARSAL complete: the migration verified end to end, nothing was stopped or edited."
+    log "The migrated scratch cluster is at $NEW_DIR - remove it before the real run."
+    exit 0
+fi
+
 old_image_line="$(grep -n 'image: ghcr.io/immich-app/postgres:' compose.yaml | head -n1)"
 [ -n "$old_image_line" ] || die "could not find the postgres image line in compose.yaml"
 
