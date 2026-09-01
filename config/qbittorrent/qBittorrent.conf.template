@@ -4,6 +4,10 @@ program=
 
 [BitTorrent]
 Session\AddTorrentStopped=false
+# AddTorrentStopped alone is not enough: this one stops a torrent again the
+# moment its metadata arrives, so a Shelfmark/Prowlarr grab lands as "stopped"
+# at 0% and nothing ever resumes it.
+Session\TorrentStopCondition=None
 Session\DefaultSavePath=/downloads/
 Session\Port=6881
 Session\QueueingSystemEnabled=true
