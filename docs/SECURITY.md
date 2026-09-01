@@ -70,6 +70,7 @@ Two consequences specific to this stack: **group membership travels in the `grou
 | **Open WebUI** | openid profile email | client_secret_basic | one_factor | — |
 | **Vaultwarden** | openid profile email offline_access | client_secret_basic | one_factor | Master password still required |
 | **Kavita** | openid profile email groups offline_access | client_secret_post | one_factor | Roles come from the `groups` claim |
+| **Shelfmark** | openid profile email groups | client_secret_basic | one_factor | PKCE (S256) required; admin comes from the `admin` group; local login disabled |
 
 `admin_only` is a named policy in the template: deny by default, `two_factor` for members of the `admin` group.
 
@@ -87,6 +88,7 @@ Two consequences specific to this stack: **group membership travels in the `grou
 | Dockhand | ✓ | — | ✓ | LAN-only + OIDC + admin + 2FA, local login disabled |
 | Headplane | ✓ | ✓ | ✓ | LAN-only + SSO + OIDC + admin + 2FA |
 | Kavita | ✓ | — | ✓ | LAN-only + own accounts / OIDC — OPDS clients can't pass an interactive portal |
+| Shelfmark | ✓ | — | ✓ | LAN-only + OIDC only; password login disabled (`DISABLE_LOCAL_AUTH`), so requests and download history stay per-user |
 | n8n | ✓ | — | — | LAN-only + its own auth |
 | ntfy | ✓ | — | — | LAN-only + its own accounts and ACLs (`deny-all` default) |
 | Homepage | ✓ | ✓ | — | LAN-only + SSO |
@@ -96,11 +98,12 @@ Two consequences specific to this stack: **group membership travels in the `grou
 | Traefik dashboard | ✓ | ✓ | — | LAN-only + admin + 2FA |
 | Pi-hole | ✓ | ✓ | — | LAN-only + admin + 2FA |
 | Backrest | ✓ | ✓ | — | LAN-only + admin + 2FA + **its own login** — the API hands the restic repository password and the S3 keys to any caller, and forward-auth only guards the Traefik path, not the container network |
+| Gluetun HTTP proxy | — | — | — | Not routed through Traefik at all. `gluetun:8888` is unauthenticated and reachable by anything on `frontend` — gluetun's firewall accepts the whole Docker network by design. Enabled for Shelfmark's direct downloads; the exposure is VPN egress for a container that already has internet, not a path to data |
 | LLDAP | ✓ | ✓ | — | LAN-only + 2FA + its own auth + `rate-limit-auth` |
 | Stremio | ✓ | — | — | LAN-only; streaming clients and cast receivers can't do the portal |
 | Comet | ✓ | — | — | LAN-only; Stremio fetches manifests programmatically |
 
-Services with their own account system (Immich, Kavita) deliberately do **not** stack forward-auth on top of OIDC — their apps and clients cannot complete an interactive portal.
+Services with their own account system (Immich, Kavita, Shelfmark) deliberately do **not** stack forward-auth on top of OIDC — their apps and clients cannot complete an interactive portal.
 
 ## The middleware chain
 
@@ -200,7 +203,10 @@ Generated on first start, mode `600`, under `${DATA_LOCATION}/authelia-config/se
 | `vaultwarden_admin_token` | Vaultwarden `/admin` token, plaintext — the one you type. Written by `scripts/vaultwarden-pre-start.sh`, never mounted into any container |
 | `vaultwarden_admin_token_hash` | Argon2id digest of the above, the only form Vaultwarden receives |
 
-OIDC client secrets are injected into services through read-only Docker volumes — never through environment variables or baked into images.
+OIDC client secrets are injected into services through read-only Docker volumes, or written into the
+service's own configuration file by its bootstrap script (Kavita's `appsettings.json`, Shelfmark's
+`plugins/security.json`) — never through environment variables, where `docker inspect` would print them,
+and never baked into images.
 
 ## Sessions
 

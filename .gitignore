@@ -16,6 +16,7 @@
 # Hand-taken backups of it carry the same restic password and S3 keys.
 /config/backrest/config.json.bak.*
 /config/gluetun/gluetun.env
+/config/shelfmark/shelfmark.env
 /config/gluetun/openvpn.ovpn
 /config/homepage/secrets/*
 !/config/homepage/secrets/.gitkeep

@@ -45,6 +45,7 @@ beszel-auxiliary:/userdata/beszel/auxiliary.db
 uptime-kuma:/userdata/uptime-kuma/kuma.db
 prowlarr:/userdata/prowlarr/prowlarr.db
 kapowarr:/userdata/kapowarr-db/Kapowarr.db
+shelfmark:/userdata/shelfmark/users.db
 '
 
 mkdir -p "$DEST"

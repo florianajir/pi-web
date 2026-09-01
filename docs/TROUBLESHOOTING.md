@@ -90,6 +90,43 @@ Add the domain to the `ALLOW_LISTS` in `scripts/pihole-bootstrap.sh`, not only i
 
 **A node shows offline while the device is connected.** "Last seen" lags by design — check `tailscale status` on the device itself before trusting the list.
 
+## Books and audiobooks
+
+**Shelfmark finds nothing on Direct Download.** Check the mirror list first
+(**Settings → Mirrors**): the stack seeds one, `https://annas-archive.gl`, and mirror
+availability moves. `annas-archive.is` resolves and loads but does not work as a source.
+A search that returns empty while the log shows it still running is usually the
+Cloudflare solve, not the mirror — `RELEASE_SEARCH_TIMEOUT` allows 300 s for a cold one.
+
+**A mirror keeps re-challenging even though FlareSolverr solved it.** Expected, and the
+one known rough edge of routing downloads through the VPN. FlareSolverr obtains the
+`cf_clearance` cookie on the residential IP — it is a shared container and is not behind
+gluetun — while Shelfmark then replays that cookie from gluetun's exit IP. Cloudflare
+ties clearance to the IP, so it can challenge again. Two ways out, both deliberate
+choices rather than fixes:
+
+- Give up the tunnel for direct downloads, accepting they leave on the residential IP
+  (torrents are unaffected — they go through qBittorrent, which is inside gluetun).
+  **Changing `PROXY_MODE` in Settings → Network does not stick**: the proxy is
+  reconciled on every stack start by `scripts/shelfmark-settings-bootstrap.sh`, which
+  owns that value. Blank `GLUETUN_HTTP_PROXY` at the top of that script, or drop gluetun
+  from `COMPOSE_PROFILES` — the script then unwinds the setting itself.
+- Move FlareSolverr behind gluetun too, so the solve and the download share one exit IP.
+  That also puts every Prowlarr indexer solve on the VPN — a larger change, and one
+  Prowlarr does not otherwise need.
+
+**Books do not appear in Kavita.** Shelfmark files into `download/books/`, which Kavita
+scans as its **Books** library; its own in-progress grabs live in `download/shelfmark/`
+and are meant to be invisible to Kavita. Check the file actually landed, then trigger a
+library scan. Audiobooks go to `download/audiobooks/` and Kavita never reads them —
+browse those through Nextcloud.
+
+**Nothing downloads and the log mentions the torrent client.** Shelfmark reaches
+qBittorrent through gluetun (`http://gluetun:8080`) with `ADMIN_USER`/`PASSWORD`. If
+`ADMIN_USER` is under 3 characters, qBittorrent rejected it and kept its own generated
+login — `scripts/shelfmark-pre-start.sh` then leaves the client unset on purpose and
+says so in the start log.
+
 ## Email
 
 | Symptom | Cause |

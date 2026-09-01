@@ -112,6 +112,35 @@ Both read that key out of `kavita.db` (read-only — never edit it, the schema i
 
 > Kavita's email settings have the same problem, but with OIDC + Auto-Provision they are usually unnecessary: they only power local-account flows (invites, setup links, password resets) that SSO bypasses. If you want them anyway, fill **Settings → Email** with your `SMTP_*` values from `.env`.
 
+### 5. Shelfmark — pick your sources
+
+Authentication needs nothing: `scripts/shelfmark-settings-bootstrap.sh` writes the Authelia
+client into Shelfmark's `plugins/security.json`, password login is off, and the first
+Authelia user to sign in is auto-provisioned (admin if they are in the `admin` group).
+Prowlarr, qBittorrent, ntfy, SMTP and the search language are rendered into
+`config/shelfmark/shelfmark.env` on every start, so those settings show as
+environment-managed and read-only in the UI.
+
+Two release sources are wired up:
+
+- **Prowlarr indexers** work as soon as Prowlarr has some — add French trackers there
+  and they appear as a release source. Nothing else to do.
+- **Direct Download** (Anna's Archive) is on, seeded with one mirror,
+  `https://annas-archive.gl` — upstream's recommendation, and the only candidate that
+  was actually serving the site when this was written. Mirrors move; the list is
+  **seeded, not enforced**, so edit it freely under **Settings → Mirrors** and the
+  bootstrap will leave your version alone. `EXT_BYPASSER_URL` points at this stack's
+  FlareSolverr, which solves the Cloudflare challenges those mirrors put up.
+- **AudiobookBay and IRC** are the other audiobook sources; both need a hostname or a
+  network only you can choose.
+
+A donator key (**Settings → Direct Download → `AA_DONATOR_KEY`**) removes the wait on
+the slow download hosts. Without one, Anna's Archive queues you for a minute or two per
+file, which is why `RELEASE_SEARCH_TIMEOUT` defaults to 300 s.
+
+Per-account language: the stack sets the default from `DEFAULT_LANGUAGE` (`fr-FR` →
+`fr`), and each user can override it for their own searches.
+
 ## Next steps
 
 - **[Connect your devices to the VPN](TAILSCALE.md)** — one command per device.

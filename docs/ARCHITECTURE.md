@@ -73,6 +73,7 @@ Every routed service follows the same path: TLS at Traefik, then the `lan` IP al
 | **qBittorrent** | Torrent client, all traffic through Gluetun | users |
 | **Prowlarr** | Indexer manager, with FlareSolverr for protected indexers | users |
 | **Kapowarr** | Comics and manga manager; feeds the Kavita libraries | users |
+| **Shelfmark** | Book and audiobook search; files what it downloads into the Kavita Books library | users |
 | **Stremio + Comet** | Streaming server and its debrid addon | users |
 | **Open WebUI** | Local AI chat frontend — see [Local AI](AI.md) | users |
 | **llama.cpp / Piper / Parakeet / system-tools** | Inference, TTS, STT and the host-status tool | Open WebUI |
@@ -146,7 +147,7 @@ a text reader for epub/pdf. Each library therefore needs its own folder.
 |----------------|------|-------|-----------|
 | Comics | ComicVine | `comics/` | Kapowarr (root folder) |
 | Manga | Manga | `manga/` + `download/manga/` | Kapowarr (second root folder) and the `manga` qBittorrent category |
-| Books | Book | `download/books/` | the `books` qBittorrent category |
+| Books | Book | `download/books/` | the `books` qBittorrent category, and Shelfmark's imports |
 
 Everything else under `download/` stays invisible to Kavita, which matters because
 Kavita indexes *every* subfolder of a folder it is given — point it at the download
@@ -156,6 +157,8 @@ root and a software torrent's installer tree becomes series named after its inte
 | Path | Written by | Read by Kavita |
 |------|-----------|----------------|
 | `download/manga/`, `download/books/` | the matching qBittorrent category | yes |
+| `download/audiobooks/` | Shelfmark (`DESTINATION_AUDIOBOOK`) — Kavita has no audiobook library type | no |
+| `download/shelfmark/` | qBittorrent's `shelfmark` category, where Shelfmark's own grabs land before import | no |
 | `download/prowlarr/` | qBittorrent's `prowlarr` category (Prowlarr's default) | no |
 | `download/incomplete/` | qBittorrent's temp path | no |
 | `download/` (root) | torrents added by hand, and Kapowarr's seeding copies (`kapowarr` category) | no |
@@ -168,23 +171,52 @@ to `manga` and the remaining Books subcategories (7010 Mags, 7020 EBook, 7040
 Technical, 7050 Other, 7060 Foreign) go to `books`. Comics do not come through
 Prowlarr at all: Kapowarr fetches them and imports into its own root folder.
 
-Five places must agree on these paths, and all five are provisioned: the `kavita`
+Six places must agree on these paths, and all six are provisioned: the `kavita`
 volumes in `compose.yaml`, `DESIRED_LIBRARIES` in
 `scripts/kavita-library-bootstrap.sh`, `LIBRARY_CATEGORIES` in
 `scripts/qbittorrent-bootstrap.sh`, `QB_CATEGORY_MAP` in
-`scripts/prowlarr-bootstrap.sh`, and `ROOT_FOLDERS` in
-`scripts/kapowarr-bootstrap.sh`.
+`scripts/prowlarr-bootstrap.sh`, `ROOT_FOLDERS` in
+`scripts/kapowarr-bootstrap.sh`, and `INGEST_DIR` on the `shelfmark` service.
+
+Shelfmark is the manual half of that: you search, it fetches. Torrents go out through
+the same qBittorrent instance (so through the VPN) under its own `shelfmark` category,
+and Shelfmark then renames the finished file into `download/books/`, where Kavita
+already looks — which is why its grabs are saved outside that folder in the first
+place, so Kavita indexes the imported book and not the torrent's directory tree.
+Shelfmark itself sits on `frontend`, not in gluetun's namespace: putting it behind the
+VPN would add it to the set of routers that disappear when gluetun goes unhealthy. Its
+direct downloads still egress through the tunnel, via gluetun's internal HTTP proxy
+(`HTTPPROXY=on`, `gluetun:8888`) rather than by sharing its network namespace.
+
+The dependency is soft, and stays soft: Shelfmark is **not** in gluetun's profile list,
+so enabling it does not force a VPN container on an install that only wants
+Prowlarr-backed search. `scripts/shelfmark-settings-bootstrap.sh` asks
+`docker compose config --services` whether gluetun is part of the current selection —
+not whether it is running, so a gluetun that is merely down does not flip the setting —
+and configures the proxy only then. When it is not selected the script unwinds its own
+proxy setting and says so in the start log; a proxy set by hand is left alone.
+
+That split is deliberate, and it is narrower than it looks. `PROXY_MODE`/`HTTP_PROXY`
+are set in Shelfmark's `plugins/network.json`, **not** in its environment, because
+`HTTP_PROXY` and `NO_PROXY` are the names `requests` reads out of the environment on its
+own — setting them there would route every other outbound call through the tunnel too.
+In the config file they reach only the callers of `download/network.py get_proxies()`,
+which is the release-source and download path. So Anna's Archive traffic is on the VPN,
+while the Prowlarr API, the FlareSolverr hand-off, the OIDC token exchange and the
+metadata providers stay direct — and a gluetun outage costs you direct downloads, not
+search or login.
 
 Kapowarr's `volume_folder_naming` is deliberately flat (`{series_name} ({year})`, no
 volume subfolder): Kavita's ComicVine parser takes the series name from the folder and
 `GetFoldersTillRoot` stops below the scan root, so any intermediate folder makes every
 series come out named `Volume 01`.
 
-The same three libraries are also mounted read-only into Nextcloud as `files_external`
-mounts (`Comics`, `Manga`, `Books`, alongside the existing `Downloads`), so any file
-can get a public share link the way Immich does for photos. The mounts are created by
-`config/nextcloud/hooks/post-installation/20-external-storage.sh`, which is idempotent
-and can be re-run by hand on an existing install.
+The same libraries are also mounted read-only into Nextcloud as `files_external`
+mounts (`Comics`, `Manga`, `Books` and `Audiobooks`, alongside the existing
+`Downloads`), so any file can get a public share link the way Immich does for photos —
+and audiobooks, which no library service here reads, are shared from there. The mounts
+are created by `config/nextcloud/hooks/post-installation/20-external-storage.sh`, which
+is idempotent and can be re-run by hand on an existing install.
 
 **Recommended layout:** clone onto the SSD and symlink it into place, so systemd and the docs agree on one path.
 

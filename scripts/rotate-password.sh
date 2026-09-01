@@ -402,6 +402,32 @@ rotate_qbittorrent() {
     return 1
 }
 
+# --- Shelfmark: PASSWORD is baked into its generated env_file ---
+# It holds QBITTORRENT_PASSWORD, so the file is re-rendered and the container
+# recreated - a `restart` keeps the environment compose resolved at creation
+# time, which is the whole point of the recreate.
+#
+# Deliberately NOT gated on QBITTORRENT_CREDENTIALS_OK, unlike Prowlarr's copy.
+# Prowlarr's lives in its database and nothing else rewrites it, so a gate there
+# holds. Shelfmark's is re-derived from .env by shelfmark-pre-start.sh on every
+# stack start, so skipping here would only defer the same write to the next
+# reboot while leaving the two out of step in the meantime. When qBittorrent
+# itself did not rotate, rotate_qbittorrent's own ✘ line above is the signal to
+# act on.
+
+rotate_shelfmark() {
+    if ! container_is_running "pi-shelfmark"; then
+        note "✘ SKIPPED Shelfmark (pi-shelfmark not running)"
+        return 0
+    fi
+    if ! sh "$PROJECT_DIR/scripts/shelfmark-pre-start.sh" >/dev/null 2>&1; then
+        note "✘ FAILED to re-render config/shelfmark/shelfmark.env"
+        return 0
+    fi
+    note "✔ Re-rendered Shelfmark's stored qBittorrent password"
+    recreate shelfmark
+}
+
 # --- Prowlarr: update the stored qBittorrent download-client password ---
 
 rotate_prowlarr() {
@@ -663,6 +689,7 @@ main() {
 
         log "=== Live API credential updates (no recreate needed) ==="
         rotate_qbittorrent
+        rotate_shelfmark
         rotate_prowlarr
         rotate_kapowarr
         rotate_dockhand

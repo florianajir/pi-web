@@ -137,6 +137,7 @@ GROUPS = [
             "pi-prowlarr",
             "pi-kapowarr",
             "pi-flaresolverr",
+            "pi-shelfmark",
         ],
     },
     {

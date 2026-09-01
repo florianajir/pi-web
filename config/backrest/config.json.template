@@ -47,6 +47,7 @@
         "/userdata/kavita/cache",
         "/userdata/kavita/cache-long",
         "/userdata/kavita/backups",
+        "/userdata/shelfmark/covers",
         "/userdata/prowlarr/logs.db",
         "/userdata/kavita/cache.db",
         "/userdata/lldap/users.db",

@@ -10,7 +10,7 @@ NTFY_IMAGE="${NTFY_IMAGE:-binwiederhier/ntfy:v2.17.0}"
 # do-not-disturb rule on the phone independently. Publishers only ever get
 # access to the topic they belong to (see AUTH_ACCESS_VALUE below).
 #   monitoring - service health: uptime-kuma, beszel, dockhand, backrest
-#   downloads  - grabs and completed downloads: prowlarr, qbittorrent
+#   downloads  - grabs and completed downloads: prowlarr, qbittorrent, shelfmark
 #   security   - authelia failed logins and regulation bans
 NTFY_MONITORING_TOPIC="monitoring"
 NTFY_DOWNLOADS_TOPIC="downloads"
@@ -56,6 +56,8 @@ main() {
     NTFY_QBITTORRENT_PASSWORD_VALUE=""
     NTFY_QBITTORRENT_TOKEN_VALUE=""
     NTFY_AUTHELIA_PASSWORD_VALUE=""
+    NTFY_SHELFMARK_PASSWORD_VALUE=""
+    NTFY_SHELFMARK_TOKEN_VALUE=""
 
     if [ -f "$OUTPUT_FILE" ]; then
         NTFY_BACKREST_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_BACKREST_PASSWORD)
@@ -72,6 +74,8 @@ main() {
         NTFY_QBITTORRENT_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_QBITTORRENT_PASSWORD)
         NTFY_QBITTORRENT_TOKEN_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_QBITTORRENT_TOKEN)
         NTFY_AUTHELIA_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_AUTHELIA_PASSWORD)
+        NTFY_SHELFMARK_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_SHELFMARK_PASSWORD)
+        NTFY_SHELFMARK_TOKEN_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_SHELFMARK_TOKEN)
     fi
 
     if [ -z "$USER_VALUE" ]; then
@@ -132,6 +136,20 @@ main() {
         log "Generated NTFY_AUTHELIA_PASSWORD for authelia ntfy user"
     fi
 
+    if [ -z "$NTFY_SHELFMARK_PASSWORD_VALUE" ]; then
+        NTFY_SHELFMARK_PASSWORD_VALUE="$(generate_password)"
+        log "Generated NTFY_SHELFMARK_PASSWORD for shelfmark ntfy user"
+    fi
+
+    # Shelfmark publishes through a token rather than the password above: the
+    # credential travels inside an Apprise URL's userinfo field
+    # (scripts/shelfmark-pre-start.sh), where generate_password's base64 would
+    # need percent-encoding to survive.
+    if [ -z "$NTFY_SHELFMARK_TOKEN_VALUE" ]; then
+        NTFY_SHELFMARK_TOKEN_VALUE="$(generate_token)"
+        log "Generated NTFY_SHELFMARK_TOKEN for shelfmark ntfy user"
+    fi
+
     log "Generating bcrypt hashes for ntfy predefined users"
     USER_HASH="$(hash_password "$PASSWORD_VALUE")"
     BACKREST_HASH="$(hash_password "$NTFY_BACKREST_PASSWORD_VALUE")"
@@ -141,12 +159,13 @@ main() {
     PROWLARR_HASH="$(hash_password "$NTFY_PROWLARR_PASSWORD_VALUE")"
     QBITTORRENT_HASH="$(hash_password "$NTFY_QBITTORRENT_PASSWORD_VALUE")"
     AUTHELIA_HASH="$(hash_password "$NTFY_AUTHELIA_PASSWORD_VALUE")"
+    SHELFMARK_HASH="$(hash_password "$NTFY_SHELFMARK_PASSWORD_VALUE")"
 
     mkdir -p "$OUTPUT_DIR"
 
-    AUTH_USERS_VALUE="${USER_VALUE}:${USER_HASH}:admin,backrest:${BACKREST_HASH}:user,beszel:${BESZEL_HASH}:user,dockhand:${DOCKHAND_HASH}:user,uptime-kuma:${UPTIME_KUMA_HASH}:user,prowlarr:${PROWLARR_HASH}:user,qbittorrent:${QBITTORRENT_HASH}:user,authelia:${AUTHELIA_HASH}:user"
-    AUTH_ACCESS_VALUE="backrest:${NTFY_MONITORING_TOPIC}:rw,beszel:${NTFY_MONITORING_TOPIC}:rw,dockhand:${NTFY_MONITORING_TOPIC}:rw,uptime-kuma:${NTFY_MONITORING_TOPIC}:rw,prowlarr:${NTFY_DOWNLOADS_TOPIC}:rw,qbittorrent:${NTFY_DOWNLOADS_TOPIC}:rw,authelia:${NTFY_SECURITY_TOPIC}:rw"
-    AUTH_TOKENS_VALUE="uptime-kuma:${NTFY_UPTIME_KUMA_TOKEN_VALUE}:Uptime Kuma notification token,qbittorrent:${NTFY_QBITTORRENT_TOKEN_VALUE}:qBittorrent download notifications"
+    AUTH_USERS_VALUE="${USER_VALUE}:${USER_HASH}:admin,backrest:${BACKREST_HASH}:user,beszel:${BESZEL_HASH}:user,dockhand:${DOCKHAND_HASH}:user,uptime-kuma:${UPTIME_KUMA_HASH}:user,prowlarr:${PROWLARR_HASH}:user,qbittorrent:${QBITTORRENT_HASH}:user,authelia:${AUTHELIA_HASH}:user,shelfmark:${SHELFMARK_HASH}:user"
+    AUTH_ACCESS_VALUE="backrest:${NTFY_MONITORING_TOPIC}:rw,beszel:${NTFY_MONITORING_TOPIC}:rw,dockhand:${NTFY_MONITORING_TOPIC}:rw,uptime-kuma:${NTFY_MONITORING_TOPIC}:rw,prowlarr:${NTFY_DOWNLOADS_TOPIC}:rw,qbittorrent:${NTFY_DOWNLOADS_TOPIC}:rw,authelia:${NTFY_SECURITY_TOPIC}:rw,shelfmark:${NTFY_DOWNLOADS_TOPIC}:rw"
+    AUTH_TOKENS_VALUE="uptime-kuma:${NTFY_UPTIME_KUMA_TOKEN_VALUE}:Uptime Kuma notification token,qbittorrent:${NTFY_QBITTORRENT_TOKEN_VALUE}:qBittorrent download notifications,shelfmark:${NTFY_SHELFMARK_TOKEN_VALUE}:Shelfmark download notifications"
 
     {
         printf '# Managed by scripts/ntfy-pre-start.sh\n'
@@ -159,6 +178,8 @@ main() {
         printf 'NTFY_QBITTORRENT_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_QBITTORRENT_PASSWORD_VALUE")"
         printf 'NTFY_QBITTORRENT_TOKEN=%s\n' "$(escape_compose_env_value "$NTFY_QBITTORRENT_TOKEN_VALUE")"
         printf 'NTFY_AUTHELIA_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_AUTHELIA_PASSWORD_VALUE")"
+        printf 'NTFY_SHELFMARK_PASSWORD=%s\n' "$(escape_compose_env_value "$NTFY_SHELFMARK_PASSWORD_VALUE")"
+        printf 'NTFY_SHELFMARK_TOKEN=%s\n' "$(escape_compose_env_value "$NTFY_SHELFMARK_TOKEN_VALUE")"
         printf 'NTFY_MONITORING_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_MONITORING_TOPIC")"
         printf 'NTFY_DOWNLOADS_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_DOWNLOADS_TOPIC")"
         printf 'NTFY_SECURITY_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_SECURITY_TOPIC")"
