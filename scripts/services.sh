@@ -21,7 +21,7 @@
 # enable (and config, for newly-enabled services) runs the same per-service
 # hooks the systemd unit runs around `docker compose up`:
 #   scripts/<svc>-pre-start.sh                      before starting
-#   scripts/<svc>-bootstrap.sh, <svc>-oidc-bootstrap.sh   after starting
+#   scripts/<svc>-*bootstrap.sh                     after starting
 # Hooks are found by filename convention, never hardcoded, so future services
 # get theirs automatically. Post hooks tolerate failure, like the systemd
 # unit's `-` prefix does.
@@ -239,6 +239,31 @@ run_pre_start_hook() {
     fi
     log "Running hook $1..."
     /bin/sh "$_hook" || die "hook $1 failed; nothing was started"
+}
+
+# Every scripts/<svc>-*bootstrap.sh, matching stack-up.sh's POST_START_HOOKS.
+# Two exact names used to be hardcoded here, which missed the -settings- and
+# -library- ones and left those services half-configured.
+#
+# A script belongs to the longest service name prefixing it, so
+# beszel-agent-bootstrap.sh stays beszel-agent's and is not also run for beszel.
+run_post_start_hooks() {
+    _svc="$1"
+    _known="$2"
+    for _hook in "$PROJECT_DIR/scripts/$_svc"-*bootstrap.sh; do
+        [ -f "$_hook" ] || continue
+        _base="${_hook##*/}"
+        _owner="$_svc"
+        for _other in $_known; do
+            case "$_base" in
+                "$_other"-*)
+                    [ "${#_other}" -gt "${#_owner}" ] && _owner="$_other"
+                    ;;
+            esac
+        done
+        [ "$_owner" = "$_svc" ] || continue
+        run_hook "$_base"
+    done
 }
 
 # Validate the service argument; on failure print usage plus the valid list.
@@ -513,8 +538,7 @@ cmd_enable() {
     run_pre_start_hook "$svc-pre-start.sh"
     echo "🚀 Starting $svc (and any services it depends on)..."
     run_compose_up_with "$new" up -d "$svc"
-    run_hook "$svc-bootstrap.sh"
-    run_hook "$svc-oidc-bootstrap.sh"
+    run_post_start_hooks "$svc" "$known"
     echo "✅ $svc enabled"
 }
 
@@ -630,8 +654,7 @@ cmd_config() {
     fi
 
     for svc in $newly_on; do
-        run_hook "$svc-bootstrap.sh"
-        run_hook "$svc-oidc-bootstrap.sh"
+        run_post_start_hooks "$svc" "$known"
     done
 
     echo "✅ Applied${newly_on:+ · enabled:$newly_on}${newly_off:+ · disabled:$newly_off}"
