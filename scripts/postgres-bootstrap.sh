@@ -98,8 +98,15 @@ EOF
 }
 
 update_immich_extensions() {
-    if [ "$(psql_postgres -c \
-        "SELECT 1 FROM pg_database WHERE datname = 'immich';")" != "1" ]; then
+    # Separated from the "not there" case on purpose: a psql that fails (the
+    # cluster still in crash recovery, say) also returns an empty string, and
+    # reporting that as "no immich database" would send the reader looking in
+    # entirely the wrong place for why the extension update was skipped.
+    has_db="$(psql_postgres -c \
+        "SELECT 1 FROM pg_database WHERE datname = 'immich';")" \
+        || { log "WARNING: could not list the databases in this cluster"; return 0; }
+
+    if [ "$has_db" != "1" ]; then
         log "no immich database in this cluster, skipping extension updates"
         return 0
     fi

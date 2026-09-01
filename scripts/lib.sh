@@ -419,6 +419,34 @@ docker_curl() {
     docker run --rm --network frontend "$curl_image" -fsS "$@"
 }
 
+# Same, but the request body is read from stdin (`--data @-`) instead of being
+# passed as an argument. `docker run` puts its whole argv in the host's process
+# table, so a `-d '{"password":"..."}'` is readable by any local `ps` for the
+# length of the call. Use this whenever the payload carries a credential.
+docker_curl_stdin() {
+    local curl_image="${CURL_IMAGE:-curlimages/curl:8.12.1}"
+    docker run --rm -i --network frontend "$curl_image" -fsS --data @- "$@"
+}
+
+# Usage: api_send_json_stdin <method> <base_url> <path> [cookie]  (body on stdin)
+api_send_json_stdin() {
+    local method="$1"
+    local base_url="$2"
+    local path="$3"
+    local cookie="${4:-}"
+
+    if [ -n "$cookie" ]; then
+        docker_curl_stdin -X "$method" \
+            -H "Cookie: $cookie" \
+            -H 'Content-Type: application/json' \
+            "$base_url$path"
+    else
+        docker_curl_stdin -X "$method" \
+            -H 'Content-Type: application/json' \
+            "$base_url$path"
+    fi
+}
+
 # Usage: wait_for_http_endpoint <url> <name> [max_retries] [interval_seconds]
 wait_for_http_endpoint() {
     local url="$1"

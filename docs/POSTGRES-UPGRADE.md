@@ -67,7 +67,9 @@ docker exec pi-postgres psql -U postgres -Atc 'SHOW server_version;'
 make pg-upgrade to=$(grep -m1 'image: ghcr.io/immich-app/postgres:' compose.yaml | awk '{print $2}')
 ```
 
-`make pg-upgrade` then, in order: pulls the target image, dumps roles and all six databases, records the five largest tables per database, brings the stack down, starts a throwaway container on the new data directory, restores into it, **re-checks every row count against the pre-dump numbers**, and refuses to touch `compose.yaml` if any of them differ. On a mismatch it stops with the old cluster untouched and the new one left in place for inspection.
+`make pg-upgrade` then, in order: pulls the target image, dumps roles and all six databases, counts every row in every table, brings the stack down, starts a throwaway container on the new data directory, restores into it, runs `ANALYZE` per database so the new cluster starts with planner statistics, **re-counts every table and compares the two lists whole**, and refuses to touch `compose.yaml` if they differ at all. On a mismatch it stops with the old cluster untouched and the new one left in place for inspection.
+
+The counts are exact `count(*)`, not `pg_stat_user_tables.n_live_tup`. That estimate is only refreshed on (auto)analyze, and a table too small to trip the autovacuum threshold can carry a number that was never right — on this stack `lldap.groups` reported 0 against 4 real rows. Compared against a freshly restored cluster, whose counts *are* accurate, that reads as data loss on a migration that was perfect.
 
 ```sh
 # 5. Rebuild Backrest. `up -d` compares image *names*, and pi-backrest:local
@@ -120,7 +122,7 @@ Do these in order — each one exercises a different failure mode, and the first
 | 6 | **Nextcloud** | `docker exec pi-nextcloud php occ status` then `docker exec pi-nextcloud php occ db:add-missing-indices` | `installed: true` and no missing indices; a `dbpassword` mismatch shows here first |
 | 7 | **Open WebUI** | Load a past conversation, not just the login page | SQLAlchemy reads restored history rather than an empty database |
 | 8 | Backups still work | Run the Backrest plan by hand and check all six `db-backup.sh` hooks succeed | The client/server major mismatch from step 5 of the cutover |
-| 9 | Row counts | Compare against the script's own `counts.before` if you passed `--keep-dumps` | — |
+| 9 | Row counts | Already verified by the script; `--keep-dumps` leaves `counts.before`/`counts.after` for a second look | — |
 
 Only once all nine pass:
 

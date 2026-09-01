@@ -188,7 +188,7 @@ uninstall:
 	@echo ""
 	@echo "⚠️  WARNING: This will remove ALL data including:"
 	@echo "   - Docker volumes (pi-hole, headscale, etc.)"
-	@echo "   - Bind-mount data dirs: ./data/nextcloud, ./data/postgres, ./data/n8n, ./data/immich"
+	@echo "   - Bind-mount data dirs: ./data/nextcloud, ./data/postgres*, ./data/n8n, ./data/immich"
 	@echo "   - Generated config: ./data/authelia-config/configuration.yml"
 	@echo "   - Generated config: ./config/headplane/config.yaml" 
 	@echo "   - Generated config: ./config/headscale/config.yaml"
@@ -205,7 +205,12 @@ uninstall:
 	@echo "🐳 Removing containers and volumes..."
 	-$(COMPOSE) down -v --remove-orphans 2>/dev/null || true
 	@echo "🧹 Removing bind-mount data directories..."
-	-$(SUDO) rm -rf ./data/nextcloud ./data/postgres ./data/n8n ./data/immich ./data/lldap ./data/authelia-config
+# postgres* and not postgres: from 18 the cluster directory carries the major
+# (./data/postgres18), so the bare name leaves the whole cluster behind. A
+# reinstall then finds a non-empty PGDATA, never runs init-databases.sh, and
+# every service fails to authenticate against roles still holding the old
+# PASSWORD. The glob also takes any leftover pg-major-upgrade.sh dump directory.
+	-$(SUDO) rm -rf ./data/nextcloud ./data/postgres* ./data/n8n ./data/immich ./data/lldap ./data/authelia-config
 	@echo "🧹 Removing generated config files..."
 	-rm -f ./config/headplane/config.yaml
 	-rm -f ./config/headscale/config.yaml
@@ -350,7 +355,9 @@ doctor:
 
 # Postgres major upgrades are dump/restore: the immich-app/postgres image ships
 # one major's binaries, so pg_upgrade is not available. The old data directory
-# is left untouched, so rollback is reverting compose.yaml.
+# is left untouched, so rollback is reverting compose.yaml *and rebuilding
+# backrest* — its pinned pgNN-client moved with the server, and a client newer
+# than the server writes dumps that server cannot replay.
 #   make pg-upgrade to=ghcr.io/immich-app/postgres:18-vectorchord1.1.1@sha256:...
 # This target is one step of a procedure - docs/POSTGRES-UPGRADE.md has the rest,
 # including the trap that starting the stack on the new compose file first

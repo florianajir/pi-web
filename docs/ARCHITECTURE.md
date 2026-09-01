@@ -133,7 +133,7 @@ Persistent state is split deliberately:
 
 | Where | What | Why |
 |-------|------|-----|
-| `${DATA_LOCATION}` (default `./data`) | `nextcloud`, `immich`, `postgres`, `authelia-config`, `lldap`, `vaultwarden`, `uptime-kuma`, `backrest`, `download`, `comics`, `manga`, `n8n`, `open-webui`, … | Anything you would miss. **Point this at your SSD.** Backrest mounts most of it read-only |
+| `${DATA_LOCATION}` (default `./data`) | `nextcloud`, `immich`, `postgres18`, `authelia-config`, `lldap`, `vaultwarden`, `uptime-kuma`, `backrest`, `download`, `comics`, `manga`, `n8n`, `open-webui`, … | Anything you would miss. **Point this at your SSD.** Backrest mounts most of it read-only |
 | Named Docker volumes | Pi-hole, Redis, Headscale, Beszel, ntfy, Kavita config, llama.cpp weights, … | Smaller state, and the model weights that belong on the fast root filesystem rather than in backups |
 
 ### The reading libraries
