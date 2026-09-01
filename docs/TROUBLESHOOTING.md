@@ -105,11 +105,15 @@ gluetun — while Shelfmark then replays that cookie from gluetun's exit IP. Clo
 ties clearance to the IP, so it can challenge again. Two ways out, both deliberate
 choices rather than fixes:
 
-- Set `PROXY_MODE` back to `none` in **Settings → Network**, accepting that direct
-  downloads leave on the residential IP (torrents still go through the VPN, they go via
-  qBittorrent).
-- Move FlareSolverr behind gluetun too, which also puts every Prowlarr indexer solve on
-  the VPN — a larger change, and one Prowlarr does not otherwise need.
+- Give up the tunnel for direct downloads, accepting they leave on the residential IP
+  (torrents are unaffected — they go through qBittorrent, which is inside gluetun).
+  **Changing `PROXY_MODE` in Settings → Network does not stick**: the proxy is
+  reconciled on every stack start by `scripts/shelfmark-settings-bootstrap.sh`, which
+  owns that value. Blank `GLUETUN_HTTP_PROXY` at the top of that script, or drop gluetun
+  from `COMPOSE_PROFILES` — the script then unwinds the setting itself.
+- Move FlareSolverr behind gluetun too, so the solve and the download share one exit IP.
+  That also puts every Prowlarr indexer solve on the VPN — a larger change, and one
+  Prowlarr does not otherwise need.
 
 **Books do not appear in Kavita.** Shelfmark files into `download/books/`, which Kavita
 scans as its **Books** library; its own in-progress grabs live in `download/shelfmark/`

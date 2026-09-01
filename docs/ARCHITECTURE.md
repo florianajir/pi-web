@@ -188,6 +188,14 @@ VPN would add it to the set of routers that disappear when gluetun goes unhealth
 direct downloads still egress through the tunnel, via gluetun's internal HTTP proxy
 (`HTTPPROXY=on`, `gluetun:8888`) rather than by sharing its network namespace.
 
+The dependency is soft, and stays soft: Shelfmark is **not** in gluetun's profile list,
+so enabling it does not force a VPN container on an install that only wants
+Prowlarr-backed search. `scripts/shelfmark-settings-bootstrap.sh` asks
+`docker compose config --services` whether gluetun is part of the current selection —
+not whether it is running, so a gluetun that is merely down does not flip the setting —
+and configures the proxy only then. When it is not selected the script unwinds its own
+proxy setting and says so in the start log; a proxy set by hand is left alone.
+
 That split is deliberate, and it is narrower than it looks. `PROXY_MODE`/`HTTP_PROXY`
 are set in Shelfmark's `plugins/network.json`, **not** in its environment, because
 `HTTP_PROXY` and `NO_PROXY` are the names `requests` reads out of the environment on its

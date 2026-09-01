@@ -113,6 +113,15 @@ configure_oidc() {
          }'
 }
 
+# Whether gluetun is part of the current selection. Asked of compose rather
+# than of run-if-enabled.sh, because gluetun is usually pulled in transitively
+# by qbittorrent/stremio/kapowarr and never named in COMPOSE_PROFILES itself;
+# and asked of the selection rather than of the running container, so a gluetun
+# that is merely down does not flip the setting back and forth.
+gluetun_selected() {
+    compose config --services 2>/dev/null | grep -qx gluetun
+}
+
 # Direct downloads are plain HTTPS from this container, so unlike the torrents
 # they would leave on the residential IP. Routing them through gluetun's proxy
 # puts them back on the tunnel.
@@ -126,6 +135,15 @@ configure_oidc() {
 # download/network.py get_proxies(). Nothing else breaks when gluetun is down.
 configure_proxy() {
     local host_name="" no_proxy=""
+
+    if ! gluetun_selected; then
+        # Only ever unwind our own setting: a proxy someone configured by hand
+        # is theirs to keep.
+        log "gluetun is not enabled; direct downloads will leave on this host's own IP"
+        apply network --arg proxy "$GLUETUN_HTTP_PROXY" \
+            'if .HTTP_PROXY == $proxy then . + {PROXY_MODE: "none"} else . end'
+        return 0
+    fi
 
     host_name="$(get_env_value HOST_NAME)"
     host_name="${host_name:-pi.lan}"
