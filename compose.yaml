@@ -2111,12 +2111,24 @@ services:
     <<: *service-defaults
     restart: always
     container_name: pi-postgres
-    image: ghcr.io/immich-app/postgres:16-vectorchord0.4.3-pgvectors0.2.0@sha256:1a078b237c1d9b420b0ee59147386b4aa60d3a07a8e6a402fc84a57e41b043a4
+    # Postgres 18. The data directory moved with the major: from 18 the upstream
+    # image keeps PGDATA at /var/lib/postgresql/<major>/docker and refuses to
+    # start with anything mounted at /var/lib/postgresql/data, so the mount is
+    # the parent and the host path carries the major. That also leaves the
+    # Postgres 16 cluster at ${DATA_LOCATION}/postgres intact as the rollback —
+    # which also needs `docker compose build backrest`, since its pinned
+    # pgNN-client moved with this line and a newer client's dumps do not replay
+    # into an older server (config/backrest/Dockerfile).
+    # Migrate with scripts/pg-major-upgrade.sh, never by editing these two lines
+    # alone: 18 cannot read a 16 data directory.
+    # pgvecto.rs is gone from the 18 images; nothing here used it (the immich
+    # database only ever created vchord and earthdistance).
+    image: ghcr.io/immich-app/postgres:18-vectorchord1.1.1-pgvector0.8.5@sha256:4303394b926b7b7af5d4d15a6372c3cfff4ee994a4cf32c5479aa5ef73972077
     environment:
       POSTGRES_PASSWORD: ${PASSWORD}
       POSTGRES_INITDB_ARGS: "--data-checksums"
     volumes:
-      - ${DATA_LOCATION:-./data}/postgres:/var/lib/postgresql/data
+      - ${DATA_LOCATION:-./data}/postgres18:/var/lib/postgresql
       - ./config/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh
     networks:
       - immich

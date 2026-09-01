@@ -24,6 +24,7 @@
 | **[Monitoring](MONITORING.md)** | Beszel, Uptime Kuma, ntfy topics, alerts, backup strategy |
 | **[Email](EMAIL.md)** | SMTP setup and which service sends what |
 | **[Local AI](AI.md)** | The model, speech in and out, the host-status tool |
+| **[Postgres upgrades](POSTGRES-UPGRADE.md)** | Moving the shared cluster to a new major: the cutover, verification, rollback |
 
 ## When something breaks
 

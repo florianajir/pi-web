@@ -389,15 +389,8 @@ rotate_qbittorrent() {
         return 1
     fi
 
-    # --data-urlencode, like qbittorrent-bootstrap.sh's set_credentials: the
-    # generated password is hex and safe raw, but ADMIN_USER is arbitrary
-    # user input — a '+' in it would be decoded to a space and a '&' would
-    # truncate the form field.
-    http_code=$(printf '%s' "$(jq -nc --arg u "$ADMIN_USER" --arg p "$NEW_PASSWORD" '{web_ui_username:$u,web_ui_password:$p}')" | \
-        docker exec -i pi-qbittorrent curl -sS \
-        -H "Referer: http://127.0.0.1:8080" \
-        -w "%{http_code}" -o /dev/null --data-urlencode "json@-" \
-        "http://127.0.0.1:8080/api/v2/app/setPreferences")
+    # The same call qbittorrent-bootstrap.sh makes on a first install.
+    http_code=$(qbittorrent_set_credentials pi-qbittorrent "$ADMIN_USER" "$NEW_PASSWORD")
 
     if [ "$http_code" = "200" ]; then
         note "✔ Rotated qBittorrent WebUI password"
@@ -431,8 +424,10 @@ rotate_prowlarr() {
     [ -n "$existing" ] && [ "$existing" != "null" ] || { note "… Skipped Prowlarr (no qBittorrent download client registered)"; return 0; }
 
     id="$(printf '%s' "$existing" | jq -r '.id')"
-    updated="$(printf '%s' "$existing" | jq -c --arg pass "$NEW_PASSWORD" \
-        '.fields = ([.fields[] | if .name=="password" then .value=$pass else . end])')"
+    # Through the environment, not --arg: jq's argv is in the host's process
+    # table for the length of the call.
+    updated="$(printf '%s' "$existing" | RP_NEW_PASSWORD="$NEW_PASSWORD" jq -c \
+        '.fields = ([.fields[] | if .name=="password" then .value=$ENV.RP_NEW_PASSWORD else . end])')"
     code="$(printf '%s' "$updated" | docker exec -i pi-prowlarr curl -sS -o /dev/null -w '%{http_code}' \
         -X PUT -H "X-Api-Key: $key" -H "Content-Type: application/json" \
         --data @- "http://localhost:9696/api/v1/downloadclient/$id")"
@@ -520,10 +515,15 @@ rotate_dockhand() {
 
     cookie=""
     for candidate in $usernames; do
-        response="$(docker run --rm --network frontend "${CURL_IMAGE:-curlimages/curl:8.12.1}" \
-            -sS -i -X POST -H 'Content-Type: application/json' \
-            -d "$(jq -nc --arg u "$candidate" --arg p "$OLD_PASSWORD" '{username:$u,password:$p,provider:"local"}')" \
-            "$url/api/auth/login" 2>/dev/null || true)"
+        # Both hops keep the password out of a process table: the environment
+        # rather than jq's --arg, and stdin rather than `docker run ... -d`.
+        # -i so the container can read the body; -f is deliberately absent
+        # because a 401 here is an expected answer, not a failure.
+        response="$(RP_OLD_PASSWORD="$OLD_PASSWORD" jq -nc --arg u "$candidate" \
+                '{username:$u,password:$ENV.RP_OLD_PASSWORD,provider:"local"}' \
+            | docker run --rm -i --network frontend "${CURL_IMAGE:-curlimages/curl:8.12.1}" \
+                -sS -i -X POST -H 'Content-Type: application/json' --data @- \
+                "$url/api/auth/login" 2>/dev/null || true)"
         status="$(printf '%s' "$response" | awk 'NR==1 {print $2}')"
         cookie="$(printf '%s' "$response" | awk 'tolower($0) ~ /^set-cookie:/ {sub(/^[^:]*:[[:space:]]*/, "", $0); split($0, a, ";"); print a[1]; exit}' | tr -d '\r\n')"
         [ "$status" = "200" ] && [ -n "$cookie" ] && break
@@ -535,8 +535,8 @@ rotate_dockhand() {
     user_id="$(printf '%s' "$users_json" | jq -r --arg u "$candidate" '[.[] | select(.username==$u)] | first | .id // empty')"
     [ -n "$user_id" ] || { note "✘ FAILED to rotate Dockhand admin password (could not find user id for '$candidate')"; return 0; }
 
-    payload="$(jq -nc --arg p "$NEW_PASSWORD" '{password:$p}')"
-    if api_put_json_with_cookie "$url" "/api/users/$user_id" "$payload" "$cookie" >/dev/null 2>&1; then
+    if RP_NEW_PASSWORD="$NEW_PASSWORD" jq -nc '{password:$ENV.RP_NEW_PASSWORD}' \
+        | api_send_json_stdin PUT "$url" "/api/users/$user_id" "$cookie" >/dev/null 2>&1; then
         note "✔ Rotated Dockhand password for local user '$candidate'"
     else
         note "✘ FAILED to rotate Dockhand admin password (PUT /api/users/$user_id rejected)"

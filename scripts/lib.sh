@@ -419,6 +419,34 @@ docker_curl() {
     docker run --rm --network frontend "$curl_image" -fsS "$@"
 }
 
+# Same, but the request body is read from stdin (`--data @-`) instead of being
+# passed as an argument. `docker run` puts its whole argv in the host's process
+# table, so a `-d '{"password":"..."}'` is readable by any local `ps` for the
+# length of the call. Use this whenever the payload carries a credential.
+docker_curl_stdin() {
+    local curl_image="${CURL_IMAGE:-curlimages/curl:8.12.1}"
+    docker run --rm -i --network frontend "$curl_image" -fsS --data @- "$@"
+}
+
+# Usage: api_send_json_stdin <method> <base_url> <path> [cookie]  (body on stdin)
+api_send_json_stdin() {
+    local method="$1"
+    local base_url="$2"
+    local path="$3"
+    local cookie="${4:-}"
+
+    if [ -n "$cookie" ]; then
+        docker_curl_stdin -X "$method" \
+            -H "Cookie: $cookie" \
+            -H 'Content-Type: application/json' \
+            "$base_url$path"
+    else
+        docker_curl_stdin -X "$method" \
+            -H 'Content-Type: application/json' \
+            "$base_url$path"
+    fi
+}
+
 # Usage: wait_for_http_endpoint <url> <name> [max_retries] [interval_seconds]
 wait_for_http_endpoint() {
     local url="$1"
@@ -495,6 +523,40 @@ api_put_json_with_cookie() {
             -d "$payload" \
             "$base_url$path"
     fi
+}
+
+# --- qBittorrent ---
+
+# Set the WebUI login through setPreferences, unauthenticated: the config
+# qbittorrent-pre-start.sh renders enables auth bypass for 127.0.0.1. Prints the
+# HTTP status on stdout so each caller reports it in its own voice.
+# Usage: qbittorrent_set_credentials <container> <username> <password>
+#
+# Shared by qbittorrent-bootstrap.sh (first install) and rotate-password.sh
+# (after a leak), which kept two copies that had already drifted: the rotation
+# one passed the new password to jq as a command-line argument, putting it on
+# the host's process table for the length of the call. One copy, the safe way.
+qbittorrent_set_credentials() {
+    local container="$1"
+    local username="$2"
+    local password="$3"
+    local prefs=""
+
+    # The password goes through the environment, not argv, to keep it off the
+    # host's process table.
+    prefs="$(QB_WEB_UI_PASSWORD="$password" jq -nc --arg u "$username" \
+        '{web_ui_username: $u, web_ui_password: $ENV.QB_WEB_UI_PASSWORD}')" || return 1
+
+    # --data-urlencode rather than a raw body: qBittorrent's form parser decodes
+    # a '+' in either value back to a space (silently storing a login nobody can
+    # use), and a '&' truncates the field. Both values can contain either —
+    # ADMIN_USER is arbitrary user input.
+    printf '%s' "$prefs" | docker exec -i "$container" curl -sS \
+        -H "Referer: http://127.0.0.1:8080" \
+        -w '%{http_code}' \
+        -o /dev/null \
+        --data-urlencode "json@-" \
+        "http://127.0.0.1:8080/api/v2/app/setPreferences"
 }
 
 # --- Utilities ---

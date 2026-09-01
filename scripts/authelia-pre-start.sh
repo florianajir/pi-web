@@ -43,6 +43,25 @@ generate_oidc_secret() {
     fi
 }
 
+# The two secrets that are not generated but copied from PASSWORD.
+# Usage: write_password_secret <name>
+#
+# Through write_file_atomic like everything else here: `printf > file` truncates
+# before it writes, so an interruption leaves a zero-byte secret in a directory
+# Authelia mounts read-only and reads at start. The `-s` guard would regenerate
+# it on the next run, but the window in between is a start where Authelia cannot
+# bind to lldap or reach Postgres, with an empty file as the only evidence.
+write_password_secret() {
+    local name="$1"
+    local file="$SECRETS_DIR/$name"
+
+    [ ! -s "$file" ] || return 0
+    write_file_atomic "$file" printf '%s' "$PASSWORD" \
+        || die "Failed to write $name"
+    safe_chmod 600 "$file"
+    log "Written $name"
+}
+
 # openssl writes progress to stderr; only the key on stdout matters here.
 openssl_genrsa_2048() {
     openssl genrsa 2048 2>/dev/null
@@ -107,19 +126,11 @@ main() {
     done
 
     # Authelia binds to lldap as its admin, whose password is PASSWORD.
-    if [ ! -s "$SECRETS_DIR/ldap_password" ]; then
-        printf '%s' "$PASSWORD" > "$SECRETS_DIR/ldap_password"
-        safe_chmod 600 "$SECRETS_DIR/ldap_password"
-        log "Written ldap_password"
-    fi
+    write_password_secret ldap_password
 
     # The credential Authelia actually reads; AUTHELIA_DB_PASSWORD in compose.yaml
     # is not.
-    if [ ! -s "$SECRETS_DIR/db_password" ]; then
-        printf '%s' "$PASSWORD" > "$SECRETS_DIR/db_password"
-        safe_chmod 600 "$SECRETS_DIR/db_password"
-        log "Written db_password"
-    fi
+    write_password_secret db_password
 
     if [ ! -s "$SECRETS_DIR/oidc_private_key.pem" ]; then
         generate_rsa_key "$SECRETS_DIR/oidc_private_key.pem"
@@ -136,9 +147,14 @@ main() {
     mkdir -p "$LLDAP_CONFIG_DIR"
     LLDAP_ENV_FILE="$LLDAP_CONFIG_DIR/lldap.env"
 
+    # Same reasoning as write_password_secret, and it matters more here: compose
+    # reads this as an env_file at container-create time, so a truncated one is a
+    # lldap that starts with no JWT secret at all.
     if [ ! -s "$LLDAP_ENV_FILE" ]; then
         LLDAP_JWT_SECRET=$(generate_secret)
-        printf 'LLDAP_JWT_SECRET=%s\n' "$LLDAP_JWT_SECRET" > "$LLDAP_ENV_FILE"
+        write_file_atomic "$LLDAP_ENV_FILE" \
+            printf 'LLDAP_JWT_SECRET=%s\n' "$LLDAP_JWT_SECRET" \
+            || die "Failed to write $LLDAP_ENV_FILE"
         safe_chmod 600 "$LLDAP_ENV_FILE"
         log "Generated lldap JWT secret at $LLDAP_ENV_FILE"
     fi
@@ -179,7 +195,12 @@ main() {
     if [ -f "$CONFIG_FILE" ] && [ "$RENDERED" = "$(cat "$CONFIG_FILE")" ]; then
         log "configuration.yml already up to date"
     else
-        printf '%s\n' "$RENDERED" > "$CONFIG_FILE"
+        # Atomic, so a half-written config can never be what Authelia parses on
+        # the start that follows. Swapping the inode under the single-file bind
+        # mount is fine: Authelia only reads this at start, and Docker re-resolves
+        # the host path every time the container starts.
+        write_file_atomic "$CONFIG_FILE" printf '%s\n' "$RENDERED" \
+            || die "Failed to render configuration.yml to $CONFIG_FILE"
         log "Rendered configuration.yml to $CONFIG_FILE"
     fi
 
@@ -208,7 +229,9 @@ main() {
     if [ -f "$IMMICH_OAUTH_CONFIG_FILE" ] && [ "$IMMICH_OAUTH_RENDERED" = "$(cat "$IMMICH_OAUTH_CONFIG_FILE")" ]; then
         log "immich-oauth-config.yaml already up to date"
     else
-        printf '%s\n' "$IMMICH_OAUTH_RENDERED" > "$IMMICH_OAUTH_CONFIG_FILE"
+        write_file_atomic "$IMMICH_OAUTH_CONFIG_FILE" \
+            printf '%s\n' "$IMMICH_OAUTH_RENDERED" \
+            || die "Failed to render immich-oauth-config.yaml to $IMMICH_OAUTH_CONFIG_FILE"
         safe_chmod 600 "$IMMICH_OAUTH_CONFIG_FILE"
         log "Rendered immich-oauth-config.yaml to $IMMICH_OAUTH_CONFIG_FILE"
     fi

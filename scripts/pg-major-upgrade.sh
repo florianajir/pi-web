@@ -1,18 +1,31 @@
 #!/bin/sh
 # Migrate the shared Postgres cluster to a new major version, by dump/restore.
 #
-# Usage: pg-major-upgrade.sh --to <image> [--apply] [--keep-dumps]
+# One step of the procedure in docs/POSTGRES-UPGRADE.md, which covers the
+# pre-flight checks, the Backrest client bump this needs alongside it, and the
+# post-cutover verification. Read that first.
+#
+# Usage: pg-major-upgrade.sh --to <image> [--apply] [--keep-dumps] [--rehearse]
 #   --to <image>   target image, e.g.
 #                  ghcr.io/immich-app/postgres:18-vectorchord1.1.1@sha256:...
 #   --apply        rewrite compose.yaml's postgres image and data mount on
 #                  success (otherwise the two edits are printed for review)
 #   --keep-dumps   do not delete the dump directory afterwards
+#   --rehearse     dry-run against the live cluster: dump and restore for real
+#                  (into DATA_LOCATION, so point that at scratch space via a
+#                  scratch ENV_FILE), but stop NOTHING — no service, not
+#                  Postgres itself — and refuse --apply. The verification is
+#                  identical; only the outage is missing.
 #
 # Why dump/restore rather than pg_upgrade: the immich-app/postgres image ships
 # exactly one major's binaries, so pg_upgrade (which needs both) would require
 # a custom image carrying two Postgres builds plus VectorChord. A dump/restore
 # also rebuilds the vchord indexes at the new extension version, which is what
 # Immich's docs otherwise ask you to do by hand after any vchord change.
+#
+# Only the Postgres-backed services are stopped for the migration window; the
+# DNS/VPN path (pihole, unbound, headscale, tailscale) keeps running, so
+# tailnet devices never lose name resolution or connectivity.
 #
 # The old data directory is never touched: the new major initialises a fresh
 # one, so rollback is reverting the two compose lines. From Postgres 18 the
@@ -28,20 +41,36 @@ PG_CONTAINER="${PG_CONTAINER:-pi-postgres}"
 TARGET_IMAGE=""
 APPLY=0
 KEEP_DUMPS=0
+REHEARSE=0
 
 # Every database in the cluster, and the role that owns it (same name here).
 DATABASES="immich nextcloud authelia lldap open-webui vaultwarden"
+
+# The containers that hold connections into those databases, plus backrest
+# (whose scheduled db-backup.sh hooks would fire pg_dump against a stopped
+# server mid-migration). ONLY these are stopped: the DNS/VPN path — pihole,
+# unbound, headscale, tailscale, gluetun, traefik — uses no Postgres at all
+# (headscale is SQLite), so devices on the tailnet keep resolving and routing
+# through the whole cutover. The one visible effect of authelia being down is
+# that SSO logins fail for the duration; established sessions and the network
+# itself are untouched.
+WRITER_CONTAINERS="pi-immich pi-immich-machine-learning pi-nextcloud pi-authelia pi-lldap pi-open-webui pi-vaultwarden pi-backrest"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --to) TARGET_IMAGE="${2:-}"; shift 2 ;;
         --apply) APPLY=1; shift ;;
         --keep-dumps) KEEP_DUMPS=1; shift ;;
+        --rehearse) REHEARSE=1; shift ;;
         *) die "unknown argument: $1 (see the header for usage)" ;;
     esac
 done
 
 [ -n "$TARGET_IMAGE" ] || die "--to <image> is required"
+if [ "$REHEARSE" = "1" ]; then
+    [ "$APPLY" = "0" ] || die "--rehearse and --apply are contradictory: a rehearsal must not edit compose.yaml"
+    log "REHEARSAL: nothing will be stopped; the live cluster is only read"
+fi
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 major_of() {
@@ -61,7 +90,14 @@ log "cluster is on Postgres $CURRENT_MAJOR, target is $TARGET_MAJOR"
 [ "$TARGET_MAJOR" -gt "$CURRENT_MAJOR" ] || die "refusing to move backwards ($CURRENT_MAJOR -> $TARGET_MAJOR)"
 
 DATA_LOCATION="$(resolve_data_location_path)"
-OLD_DIR="$DATA_LOCATION/postgres"
+# The pre-18 layout had no major in the path; from 18 it does. Naming the
+# wrong directory here would send a rollback at the next major (18 -> 19) to a
+# stale cluster, or to one that does not exist.
+if [ -d "$DATA_LOCATION/postgres$CURRENT_MAJOR" ]; then
+    OLD_DIR="$DATA_LOCATION/postgres$CURRENT_MAJOR"
+else
+    OLD_DIR="$DATA_LOCATION/postgres"
+fi
 NEW_DIR="$DATA_LOCATION/postgres$TARGET_MAJOR"
 DUMP_DIR="$DATA_LOCATION/postgres-upgrade-$CURRENT_MAJOR-to-$TARGET_MAJOR"
 
@@ -85,6 +121,21 @@ docker pull -q "$TARGET_IMAGE" >/dev/null || die "could not pull $TARGET_IMAGE"
 mkdir -p "$DUMP_DIR"
 safe_chmod 700 "$DUMP_DIR"
 
+# --- Quiesce ---------------------------------------------------------------
+# Writers stop BEFORE the dump, not after: everything a service wrote between
+# the dump and the old `compose down` used to be silently absent from the new
+# cluster. With the writers stopped first, the dump is the complete final
+# state. `|| true` per container: a service the operator disabled is already
+# absent, and that must not abort the migration.
+if [ "$REHEARSE" = "1" ]; then
+    log "REHEARSAL: leaving every service running (writes during the dump stay in the live cluster only)"
+else
+    log "stopping the services that write to Postgres (DNS/VPN keep running)"
+    for c in $WRITER_CONTAINERS; do
+        docker stop "$c" >/dev/null 2>&1 || true
+    done
+fi
+
 # --- Dump, from the live cluster -----------------------------------------
 log "dumping roles"
 docker exec "$PG_CONTAINER" pg_dumpall -U postgres --roles-only > "$DUMP_DIR/roles.sql"
@@ -98,21 +149,51 @@ for db in $DATABASES; do
     [ -s "$DUMP_DIR/$db.sql" ] || die "dump of $db is empty"
 done
 
-# Row counts to compare after the restore. The largest table per database is
-# enough of a canary and costs one query each.
-log "recording row counts"
+# Row counts to compare after the restore.
+#
+# Exact count(*) for every table, not pg_stat_user_tables.n_live_tup: that
+# column is an estimate the stats collector only refreshes on (auto)analyze,
+# and a table too small to trip the autovacuum threshold can carry a figure
+# that was never right. On this stack lldap.groups read 0 against 4 real rows
+# and lldap.users read 2 against 5, with last_analyze and last_autoanalyze both
+# NULL. A freshly restored cluster, by contrast, has accurate counts because
+# the collector just watched every INSERT — so estimate-vs-exact compared as if
+# they were the same thing, and reported a clean migration as data loss.
+#
+# Sampling the top N by that estimate compounded it: the two sides then chose
+# *different sets of tables*, which surfaced as "table absent after" for a
+# table that was present and correct. Counting everything also catches a table
+# that failed to restore at all, which a top-N sample can miss entirely.
+count_all_tables() {
+    _container="$1"
+    _db="$2"
+    _sql="$(docker exec "$_container" psql -U postgres -d "$_db" -Atc "
+        SELECT coalesce(string_agg(
+            format('SELECT %L || ''|'' || %L || ''|'' || (SELECT count(*) FROM %I.%I)',
+                   '$_db', relname, schemaname, relname),
+            ' UNION ALL '), '')
+        FROM pg_stat_user_tables;")" || return 1
+    [ -n "$_sql" ] || return 0
+    docker exec "$_container" psql -U postgres -d "$_db" -Atc "$_sql" || return 1
+}
+
+log "counting rows in every table (exact, not estimated)"
 : > "$DUMP_DIR/counts.before"
 for db in $DATABASES; do
-    docker exec "$PG_CONTAINER" psql -U postgres -d "$db" -Atc "
-        SELECT '$db|' || relname || '|' || n_live_tup
-        FROM pg_stat_user_tables ORDER BY n_live_tup DESC LIMIT 5;
-    " >> "$DUMP_DIR/counts.before"
+    count_all_tables "$PG_CONTAINER" "$db" >> "$DUMP_DIR/counts.before" \
+        || die "could not count the tables in $db"
 done
-log "$(wc -l < "$DUMP_DIR/counts.before") counters recorded"
+sort -o "$DUMP_DIR/counts.before" "$DUMP_DIR/counts.before"
+log "$(wc -l < "$DUMP_DIR/counts.before") tables counted"
 
 # --- Swap ----------------------------------------------------------------
-log "stopping the stack"
-compose down --remove-orphans >/dev/null 2>&1 || true
+# Only Postgres itself; the writers are already stopped and everything else
+# never touches it. Never in a rehearsal: stopping the live server is the one
+# way a dry run can cause a real outage.
+if [ "$REHEARSE" = "0" ]; then
+    log "stopping $PG_CONTAINER"
+    docker stop "$PG_CONTAINER" >/dev/null 2>&1 || true
+fi
 
 log "starting Postgres $TARGET_MAJOR on $NEW_DIR"
 mkdir -p "$NEW_DIR"
@@ -151,40 +232,53 @@ done
 docker exec pg-upgrade-target psql -U postgres -q \
     -c "ALTER DATABASE immich RESET search_path;" >/dev/null 2>&1 || true
 
-# --- Verify --------------------------------------------------------------
-log "verifying row counts"
-docker exec pg-upgrade-target psql -U postgres -q -c 'ANALYZE;' >/dev/null 2>&1 || true
-: > "$DUMP_DIR/counts.after"
+# --- Analyze -------------------------------------------------------------
+# Per database: a bare `ANALYZE` analyzes only the database psql connected to,
+# so the six restored ones were left with no planner statistics at all and the
+# first queries after a cutover ran on default estimates until autovacuum
+# caught up. On immich that is the difference between an index scan and a
+# sequential scan over 227k rows.
 for db in $DATABASES; do
-    docker exec pg-upgrade-target psql -U postgres -d "$db" -Atc "
-        SELECT '$db|' || relname || '|' || n_live_tup
-        FROM pg_stat_user_tables ORDER BY n_live_tup DESC LIMIT 5;
-    " >> "$DUMP_DIR/counts.after"
+    log "analyzing $db"
+    docker exec pg-upgrade-target psql -U postgres -d "$db" -q -c 'ANALYZE;' \
+        >/dev/null 2>&1 || log "warning: ANALYZE of $db failed (planner stats only, data is fine)"
 done
 
-mismatch=0
-while IFS='|' read -r db tbl before; do
-    [ -n "${tbl:-}" ] || continue
-    after="$(awk -F'|' -v d="$db" -v t="$tbl" '$1==d && $2==t {print $3}' "$DUMP_DIR/counts.after")"
-    if [ -z "$after" ]; then
-        log "MISMATCH $db.$tbl: $before rows before, table absent after"
-        mismatch=1
-    elif [ "$after" != "$before" ]; then
-        log "MISMATCH $db.$tbl: $before -> $after"
-        mismatch=1
-    fi
-done < "$DUMP_DIR/counts.before"
+# --- Verify --------------------------------------------------------------
+log "verifying row counts"
+: > "$DUMP_DIR/counts.after"
+for db in $DATABASES; do
+    count_all_tables pg-upgrade-target "$db" >> "$DUMP_DIR/counts.after" \
+        || die "could not count the tables in the restored $db"
+done
+sort -o "$DUMP_DIR/counts.after" "$DUMP_DIR/counts.after"
 
-if [ "$mismatch" != "0" ]; then
-    die "row counts differ; $NEW_DIR is suspect. The old cluster at $OLD_DIR is untouched: leave compose.yaml as it is and 'make start' to roll back."
+# Whole-file compare, so a table that exists on one side only is a mismatch
+# too, not something a per-row lookup can skip over.
+if ! counts_diff="$(diff "$DUMP_DIR/counts.before" "$DUMP_DIR/counts.after")"; then
+    log "row counts differ (< before, > after):"
+    printf '%s\n' "$counts_diff" | head -n 40 >&2
+    die "$NEW_DIR is suspect. The old cluster at $OLD_DIR is untouched: leave compose.yaml as it is and 'make start' to bring the stopped services back on it."
 fi
-log "row counts match across all $(printf '%s' "$DATABASES" | wc -w) databases"
+log "row counts match exactly: $(wc -l < "$DUMP_DIR/counts.after") tables across $(printf '%s' "$DATABASES" | wc -w) databases"
 
 docker stop pg-upgrade-target >/dev/null
 cleanup_target
 trap - EXIT INT TERM
 
 # --- Compose ------------------------------------------------------------
+if [ "$REHEARSE" = "1" ]; then
+    if [ "$KEEP_DUMPS" = "1" ]; then
+        log "dumps kept at $DUMP_DIR"
+    else
+        log "removing $DUMP_DIR (pass --keep-dumps to retain it)"
+        rm -rf "$DUMP_DIR"
+    fi
+    log "REHEARSAL complete: the migration verified end to end, nothing was stopped or edited."
+    log "The migrated scratch cluster is at $NEW_DIR - remove it before the real run."
+    exit 0
+fi
+
 old_image_line="$(grep -n 'image: ghcr.io/immich-app/postgres:' compose.yaml | head -n1)"
 [ -n "$old_image_line" ] || die "could not find the postgres image line in compose.yaml"
 
