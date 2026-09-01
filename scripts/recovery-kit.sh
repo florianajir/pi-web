@@ -4,126 +4,88 @@
 #
 # Why five values and not the whole .env: the S3 repository already holds .env
 # at /userdata/pi-web-env/.env, so these five are the only thing that has to
-# survive off the machine - and unlike .env, they change almost never. That
-# turns "keep a large mutable secret file synced off-site" into "keep a few
-# near-static strings on paper", which needs no tooling, no passphrase to
+# survive off the machine - and unlike .env, they change almost never. Keeping
+# a few near-static strings on paper needs no tooling, no passphrase to
 # remember, and no upload credential living on the machine being protected.
 #
-# Split across two sheets on purpose. Sheet A downloads the ciphertext, sheet B
-# decrypts it; neither is useful alone, so one stolen sheet is not a breach.
-# They are paired by a random code rather than by naming the service, so sheet
-# B reads as a meaningless string to whoever finds it.
+# Read from config.json, not .env: that is the file Backrest actually feeds to
+# restic, so it is the operative truth. Taking it as the single source is why
+# this script has no drift check - there is no second source to disagree with.
 #
-# Usage:
-#   sh scripts/recovery-kit.sh [output-path] [--verify]
-#
-# --verify proves the five values actually open the repository, from a
-# throwaway container with neither config.json nor .env mounted - the same
-# conditions you would be restoring under. Do it at least once: a kit that has
-# never been tested is a guess.
+# Verification is not optional. It runs restic from a throwaway container with
+# nothing mounted, which is the state you would really be restoring in, and it
+# answers "are these the right values" directly. Every indirect check this
+# script used to carry was a worse proxy for this one test.
 set -eu
 
 . "$(dirname "$0")/lib.sh"
 
-OUT=/tmp/pi-web-recovery-kit.txt
-VERIFY=no
-for arg in "$@"; do
-    case "$arg" in
-        --verify) VERIFY=yes ;;
-        -*) die "unknown option: $arg" ;;
-        *) OUT="$arg" ;;
-    esac
-done
-
-# This file holds the keys to every secret in the stack.
+# These are the keys to every secret in the stack.
 umask 077
 
-# The kit must not land anywhere that gets backed up: a recovery kit stored
-# inside the thing it recovers is not a kit.
-DATA_DIR="$(resolve_data_location_path)"
-OUT_DIR="$(cd "$(dirname "$OUT")" 2>/dev/null && pwd || echo "")"
-[ -n "$OUT_DIR" ] || die "directory for $OUT does not exist"
-case "$OUT_DIR/" in
-    "$PROJECT_DIR"/* | "${DATA_DIR%/}"/*)
-        die "refusing to write the kit under $PROJECT_DIR or ${DATA_DIR%/}: it would be swept into the backup it exists to recover. Use a path under /tmp."
-        ;;
-esac
-
-URI="$(get_env_value BACKREST_S3_URI)"
-if [ -z "$URI" ]; then
-    endpoint="$(get_env_value S3_ENDPOINT)"
-    bucket="$(get_env_value S3_BUCKET)"
-    if [ -n "$endpoint" ] && [ -n "$bucket" ]; then
-        URI="s3:${endpoint}/${bucket}/restic"
-    fi
-fi
-REGION="$(get_env_value S3_REGION)"
-[ -n "$REGION" ] || REGION=fr-par
-AK="$(get_env_value S3_ACCESS_KEY_ID)"
-[ -n "$AK" ] || AK="$(get_env_value BACKREST_S3_ACCESS_KEY_ID)"
-SK="$(get_env_value S3_SECRET_ACCESS_KEY)"
-[ -n "$SK" ] || SK="$(get_env_value BACKREST_S3_SECRET_ACCESS_KEY)"
-PW="$(get_env_value BACKREST_S3_REPO_PASSWORD)"
-
-[ -n "$URI" ] || die "BACKREST_S3_URI is empty and cannot be derived from S3_ENDPOINT/S3_BUCKET"
-[ -n "$AK" ]  || die "S3_ACCESS_KEY_ID is empty in .env"
-[ -n "$SK" ]  || die "S3_SECRET_ACCESS_KEY is empty in .env"
-[ -n "$PW" ]  || die "BACKREST_S3_REPO_PASSWORD is empty in .env"
-
-# Backrest reads config.json, not .env, so a divergence means the sheet would
-# carry values the running backup does not use. That drift is silent, and it
-# would only surface on the day the kit is needed.
 CONFIG="$PROJECT_DIR/config/backrest/config.json"
-if [ -r "$CONFIG" ] && command -v jq >/dev/null 2>&1; then
-    c_uri="$(jq -r '.repos[]|select(.id=="s3")|.uri // empty' "$CONFIG" 2>/dev/null || true)"
-    c_pw="$(jq -r '.repos[]|select(.id=="s3")|.password // empty' "$CONFIG" 2>/dev/null || true)"
-    c_ak="$(jq -r '.repos[]|select(.id=="s3")|.env[]?|select(startswith("AWS_ACCESS_KEY_ID="))|sub("^[^=]*=";"")' "$CONFIG" 2>/dev/null || true)"
-    drift=""
-    [ "$c_uri" = "$URI" ] || drift="$drift uri"
-    [ "$c_pw" = "$PW" ] || drift="$drift password"
-    [ "$c_ak" = "$AK" ] || drift="$drift access-key"
-    if [ -n "$drift" ]; then
-        log "WARNING: .env and config.json disagree on:$drift"
-        log "WARNING: Backrest uses config.json. Reconcile them before trusting this sheet."
-    else
-        log "checked: .env and config.json agree"
-    fi
-fi
+[ -r "$CONFIG" ] || die "cannot read $CONFIG - has the stack ever started?"
+command -v jq >/dev/null 2>&1 || die "jq is required"
+command -v docker >/dev/null 2>&1 || die "docker is required (verification is mandatory)"
 
-if [ "$VERIFY" = yes ]; then
-    if command -v docker >/dev/null 2>&1 && docker image inspect pi-backrest:local >/dev/null 2>&1; then
-        log "verifying the five values against the live repository (nothing mounted)..."
-        if docker run --rm --entrypoint sh \
-            -e RESTIC_REPOSITORY="$URI" \
-            -e RESTIC_PASSWORD="$PW" \
-            -e AWS_ACCESS_KEY_ID="$AK" \
-            -e AWS_SECRET_ACCESS_KEY="$SK" \
-            -e AWS_DEFAULT_REGION="$REGION" \
-            pi-backrest:local -c 'restic snapshots --latest 1 >/dev/null 2>&1'; then
-            log "verified: these five values open the repository on their own"
-        else
-            die "the five values did NOT open the repository - do not print this sheet"
-        fi
-    else
-        log "WARNING: docker or the pi-backrest:local image is unavailable; skipping verification"
-    fi
-fi
+repo="$(jq -ec '.repos[]|select(.id=="s3")' "$CONFIG")" || die "no 's3' repository in $CONFIG"
+field() { printf '%s' "$repo" | jq -r "$1"; }
+env_of() { field ".env[]?|select(startswith(\"$1=\"))|sub(\"^[^=]*=\";\"\")"; }
 
+URI="$(field '.uri')"
+PW="$(field '.password')"
+AK="$(env_of AWS_ACCESS_KEY_ID)"
+SK="$(env_of AWS_SECRET_ACCESS_KEY)"
+RG="$(env_of AWS_DEFAULT_REGION)"
+for f in "uri:$URI" "password:$PW" "AWS_ACCESS_KEY_ID:$AK" "AWS_SECRET_ACCESS_KEY:$SK"; do
+    [ -n "${f#*:}" ] || die "the 's3' repository in $CONFIG has no ${f%%:*}"
+done
+
+# mktemp, not a fixed path: created atomically at 0600 under a name nobody can
+# predict. That is the whole reason this script takes no output argument - a
+# caller-supplied path needed a guard against landing inside the backup, and
+# the guard was defeatable by a symlink.
+ENVFILE="$(mktemp)"
+trap 'rm -f "$ENVFILE"' EXIT INT TERM
+
+# --env-file rather than -e: -e puts every secret in the host process table,
+# readable by any local user through /proc/<pid>/cmdline for the length of the
+# call.
+printf 'RESTIC_REPOSITORY=%s\nRESTIC_PASSWORD=%s\nAWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nAWS_DEFAULT_REGION=%s\n' \
+    "$URI" "$PW" "$AK" "$SK" "$RG" > "$ENVFILE"
+
+log "verifying the five values against the live repository..."
+if ! out="$(docker run --rm --env-file "$ENVFILE" --entrypoint restic \
+        pi-backrest:local snapshots --latest 1 2>&1)"; then
+    # Keep restic's message: a locked repo, a wrong region and a wrong password
+    # all fail here, and this is the one place it matters which.
+    die "the five values did NOT open the repository, so this sheet would be useless:
+$out"
+fi
+log "verified: these five values open the repository on their own"
+
+# Created only once verification has passed, so a failed run leaves nothing
+# behind and no half-written sheet can ever be mistaken for a good one.
+OUT="$(mktemp)"
 CODE="PW-$(LC_ALL=C tr -dc 'A-Z0-9' </dev/urandom | head -c4)"
-TODAY="$(date +%Y-%m-%d)"
 
 cat > "$OUT" <<EOF
 ================================================================================
-  FEUILLE A  --  ACCES AU STOCKAGE                    etabli le $TODAY
+  FEUILLE A  --  ACCES AU STOCKAGE                 etabli le $(date +%Y-%m-%d)
 ================================================================================
 
   Sauvegarde du serveur familial. Cette feuille permet de TELECHARGER
   l'archive, pas de la LIRE. Le mot de passe de dechiffrement est sur une
   seconde feuille, rangee ailleurs, portant le code $CODE.
-  Il faut les deux.
+  Il faut les deux pour lire quoi que ce soit.
+
+  ATTENTION : cette feuille seule ne permet pas de lire la sauvegarde, mais
+  elle permet de la SUPPRIMER - la cle ci-dessous a le droit d'effacer, et le
+  bucket n'a ni versioning ni object lock. A ranger aussi soigneusement que
+  l'autre.
 
   Depot        $URI
-  Region       $REGION
+  Region       $RG
   Cle d'acces  $AK
   Cle secrete  $SK
 
@@ -134,24 +96,31 @@ cat > "$OUT" <<EOF
     export RESTIC_REPOSITORY="$URI"
     export AWS_ACCESS_KEY_ID="$AK"
     export AWS_SECRET_ACCESS_KEY="$SK"
-    export AWS_DEFAULT_REGION="$REGION"
+    export AWS_DEFAULT_REGION="$RG"
     export RESTIC_PASSWORD="<le mot de passe de la feuille $CODE>"
 
-    restic snapshots                         # verifier que ca repond
-    restic restore latest --target /tmp/r     # tout restaurer (~243 Go)
+    restic snapshots          # verifier que ca repond
 
   Pour repartir vite, un seul fichier suffit : il contient tous les autres
-  mots de passe du systeme.
+  mots de passe du systeme. Quelques kilo-octets, n'importe quel disque fait
+  l'affaire.
 
     restic restore latest --target /tmp/r --include /userdata/pi-web-env
     # ressort dans  /tmp/r/userdata/pi-web-env/.env
+
+  Pour tout restaurer, il faut environ 250 Go LIBRES sur un vrai disque.
+  Ne pas viser /tmp : c'est souvent de la RAM, la restauration mourrait en
+  route. Monter un disque et viser dessus :
+
+    restic restore latest --target /mnt/restore
 
 --------------------------------------------------------------------------------
   A SAVOIR
 
   - Ces valeurs ne changent quasiment jamais. Apres une rotation de la cle S3
-    ou du mot de passe du depot, regenerer et REIMPRIMER cette feuille :
-        sh scripts/recovery-kit.sh --verify
+    ou du mot de passe du depot, relancer  sh scripts/recovery-kit.sh  puis
+    REIMPRIMER ET REMPLACER LES DEUX FEUILLES : le code d'appariement change
+    a chaque fois, une seule moitie remplacee ne correspondrait plus a l'autre.
   - Ne pas ranger cette feuille au meme endroit que la feuille $CODE.
   - Une fois par an, verifier que 'restic snapshots' repond encore.
 
@@ -179,9 +148,6 @@ cat > "$OUT" <<EOF
 ================================================================================
 EOF
 
-chmod 600 "$OUT"
-log "kit written to $OUT"
-log "pairing code: $CODE"
-log ""
-log "Next: print it, cut along the %%%% line, store the two halves in two"
-log "different places, then remove the file:  shred -u $OUT"
+log "kit written to $OUT (pairing code $CODE)"
+log "print it, cut along the %%%% line, store the two halves apart, then:"
+log "    shred -u $OUT"
