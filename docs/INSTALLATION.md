@@ -112,6 +112,30 @@ Both read that key out of `kavita.db` (read-only — never edit it, the schema i
 
 > Kavita's email settings have the same problem, but with OIDC + Auto-Provision they are usually unnecessary: they only power local-account flows (invites, setup links, password resets) that SSO bypasses. If you want them anyway, fill **Settings → Email** with your `SMTP_*` values from `.env`.
 
+### 5. Shelfmark — pick your sources
+
+Authentication needs nothing: `scripts/shelfmark-oidc-bootstrap.sh` writes the Authelia
+client into Shelfmark's `plugins/security.json`, password login is off, and the first
+Authelia user to sign in is auto-provisioned (admin if they are in the `admin` group).
+Prowlarr, qBittorrent, ntfy, SMTP and the search language are rendered into
+`config/shelfmark/shelfmark.env` on every start, so those settings show as
+environment-managed and read-only in the UI.
+
+What is *not* preconfigured is where results come from, because the answer is a matter
+of the sources you have and of the law where you live:
+
+- **Prowlarr indexers** work as soon as Prowlarr has some — add French trackers there
+  and they appear as a release source. Nothing else to do.
+- **Direct Download** (Anna's Archive and friends) ships disabled with no mirror list,
+  upstream's default. To use it, enable it under **Settings → Direct Download** and add
+  mirror URLs under **Mirrors**. `EXT_BYPASSER_URL` already points at this stack's
+  FlareSolverr, which is what solves the Cloudflare challenges those mirrors put up.
+- **AudiobookBay and IRC** are the other audiobook sources; both need a hostname or a
+  network only you can choose.
+
+Per-account language: the stack sets the default from `DEFAULT_LANGUAGE` (`fr-FR` →
+`fr`), and each user can override it for their own searches.
+
 ## Next steps
 
 - **[Connect your devices to the VPN](TAILSCALE.md)** — one command per device.

@@ -373,8 +373,8 @@ rotate_ntfy() {
 
 # --- qBittorrent: live WebUI API call, no recreate needed ---
 # QBITTORRENT_CREDENTIALS_OK stays "0" for every reason the rotation can fail, so
-# rotate_prowlarr/rotate_kapowarr do not store a password qBittorrent itself
-# never adopted.
+# rotate_shelfmark/rotate_prowlarr/rotate_kapowarr do not store a password
+# qBittorrent itself never adopted.
 
 rotate_qbittorrent() {
     local http_code
@@ -407,6 +407,30 @@ rotate_qbittorrent() {
 
     note "✘ FAILED to rotate qBittorrent WebUI password (HTTP $http_code)"
     return 1
+}
+
+# --- Shelfmark: PASSWORD is baked into its generated env_file ---
+# It holds QBITTORRENT_PASSWORD, so the file is re-rendered and the container
+# recreated - a `restart` keeps the environment compose resolved at creation
+# time, which is the whole point of the recreate. Gated like Prowlarr's stored
+# copy: writing a password qBittorrent never adopted would break a client that
+# still works.
+
+rotate_shelfmark() {
+    if ! container_is_running "pi-shelfmark"; then
+        note "✘ SKIPPED Shelfmark (pi-shelfmark not running)"
+        return 0
+    fi
+    if [ "$QBITTORRENT_CREDENTIALS_OK" != "1" ]; then
+        note "… Skipped Shelfmark's stored qBittorrent password (qBittorrent's own WebUI login was never rotated - see above)"
+        return 0
+    fi
+    if ! sh "$PROJECT_DIR/scripts/shelfmark-pre-start.sh" >/dev/null 2>&1; then
+        note "✘ FAILED to re-render config/shelfmark/shelfmark.env"
+        return 0
+    fi
+    note "✔ Re-rendered Shelfmark's stored qBittorrent password"
+    recreate shelfmark
 }
 
 # --- Prowlarr: update the stored qBittorrent download-client password ---
@@ -663,6 +687,7 @@ main() {
 
         log "=== Live API credential updates (no recreate needed) ==="
         rotate_qbittorrent
+        rotate_shelfmark
         rotate_prowlarr
         rotate_kapowarr
         rotate_dockhand

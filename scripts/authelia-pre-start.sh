@@ -127,7 +127,7 @@ main() {
     fi
 
     # Add a client here when declaring one in configuration.yml.template.
-    for client in nextcloud immich beszel dockhand headplane headscale open-webui kavita vaultwarden; do
+    for client in nextcloud immich beszel dockhand headplane headscale open-webui kavita vaultwarden shelfmark; do
         generate_oidc_secret "oidc_${client}_secret"
     done
 
@@ -181,6 +181,15 @@ main() {
     else
         printf '%s\n' "$RENDERED" > "$CONFIG_FILE"
         log "Rendered configuration.yml to $CONFIG_FILE"
+        # Authelia reads this file once, at startup, and `compose up -d` only
+        # recreates a container whose *definition* changed - which a new OIDC
+        # client or access rule is not. Without this an update renders the new
+        # config and every client added by it fails to authenticate until
+        # someone restarts Authelia by hand.
+        if container_is_running "pi-authelia"; then
+            log "Restarting Authelia to load the new configuration"
+            compose restart authelia >/dev/null || log "WARNING: could not restart Authelia"
+        fi
     fi
 
     if [ ! -f "$IMMICH_OAUTH_TEMPLATE" ]; then

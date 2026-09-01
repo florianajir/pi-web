@@ -73,6 +73,7 @@ Every routed service follows the same path: TLS at Traefik, then the `lan` IP al
 | **qBittorrent** | Torrent client, all traffic through Gluetun | users |
 | **Prowlarr** | Indexer manager, with FlareSolverr for protected indexers | users |
 | **Kapowarr** | Comics and manga manager; feeds the Kavita libraries | users |
+| **Shelfmark** | Book and audiobook search; files what it downloads into the Kavita Books library | users |
 | **Stremio + Comet** | Streaming server and its debrid addon | users |
 | **Open WebUI** | Local AI chat frontend — see [Local AI](AI.md) | users |
 | **llama.cpp / Piper / Parakeet / system-tools** | Inference, TTS, STT and the host-status tool | Open WebUI |
@@ -146,7 +147,7 @@ a text reader for epub/pdf. Each library therefore needs its own folder.
 |----------------|------|-------|-----------|
 | Comics | ComicVine | `comics/` | Kapowarr (root folder) |
 | Manga | Manga | `manga/` + `download/manga/` | Kapowarr (second root folder) and the `manga` qBittorrent category |
-| Books | Book | `download/books/` | the `books` qBittorrent category |
+| Books | Book | `download/books/` | the `books` qBittorrent category, and Shelfmark's imports |
 
 Everything else under `download/` stays invisible to Kavita, which matters because
 Kavita indexes *every* subfolder of a folder it is given — point it at the download
@@ -156,6 +157,8 @@ root and a software torrent's installer tree becomes series named after its inte
 | Path | Written by | Read by Kavita |
 |------|-----------|----------------|
 | `download/manga/`, `download/books/` | the matching qBittorrent category | yes |
+| `download/audiobooks/` | Shelfmark (`DESTINATION_AUDIOBOOK`) — Kavita has no audiobook library type | no |
+| `download/shelfmark/` | qBittorrent's `shelfmark` category, where Shelfmark's own grabs land before import | no |
 | `download/prowlarr/` | qBittorrent's `prowlarr` category (Prowlarr's default) | no |
 | `download/incomplete/` | qBittorrent's temp path | no |
 | `download/` (root) | torrents added by hand, and Kapowarr's seeding copies (`kapowarr` category) | no |
@@ -168,23 +171,35 @@ to `manga` and the remaining Books subcategories (7010 Mags, 7020 EBook, 7040
 Technical, 7050 Other, 7060 Foreign) go to `books`. Comics do not come through
 Prowlarr at all: Kapowarr fetches them and imports into its own root folder.
 
-Five places must agree on these paths, and all five are provisioned: the `kavita`
+Six places must agree on these paths, and all six are provisioned: the `kavita`
 volumes in `compose.yaml`, `DESIRED_LIBRARIES` in
 `scripts/kavita-library-bootstrap.sh`, `LIBRARY_CATEGORIES` in
 `scripts/qbittorrent-bootstrap.sh`, `QB_CATEGORY_MAP` in
-`scripts/prowlarr-bootstrap.sh`, and `ROOT_FOLDERS` in
-`scripts/kapowarr-bootstrap.sh`.
+`scripts/prowlarr-bootstrap.sh`, `ROOT_FOLDERS` in
+`scripts/kapowarr-bootstrap.sh`, and `INGEST_DIR` on the `shelfmark` service.
+
+Shelfmark is the manual half of that: you search, it fetches. Torrents go out through
+the same qBittorrent instance (so through the VPN) under its own `shelfmark` category,
+and Shelfmark then renames the finished file into `download/books/`, where Kavita
+already looks — which is why its grabs are saved outside that folder in the first
+place, so Kavita indexes the imported book and not the torrent's directory tree.
+Shelfmark itself sits on `frontend`, not in gluetun's namespace: like Prowlarr it only
+queries indexers and metadata providers, and putting it behind the VPN would add it to
+the set of routers that disappear when gluetun goes unhealthy. Direct downloads (the
+Anna's Archive sources, off by default) would leave on the residential IP; route them
+through `SOCKS5_PROXY` in its settings if that matters.
 
 Kapowarr's `volume_folder_naming` is deliberately flat (`{series_name} ({year})`, no
 volume subfolder): Kavita's ComicVine parser takes the series name from the folder and
 `GetFoldersTillRoot` stops below the scan root, so any intermediate folder makes every
 series come out named `Volume 01`.
 
-The same three libraries are also mounted read-only into Nextcloud as `files_external`
-mounts (`Comics`, `Manga`, `Books`, alongside the existing `Downloads`), so any file
-can get a public share link the way Immich does for photos. The mounts are created by
-`config/nextcloud/hooks/post-installation/20-external-storage.sh`, which is idempotent
-and can be re-run by hand on an existing install.
+The same libraries are also mounted read-only into Nextcloud as `files_external`
+mounts (`Comics`, `Manga`, `Books` and `Audiobooks`, alongside the existing
+`Downloads`), so any file can get a public share link the way Immich does for photos —
+and audiobooks, which no library service here reads, are shared from there. The mounts
+are created by `config/nextcloud/hooks/post-installation/20-external-storage.sh`, which
+is idempotent and can be re-run by hand on an existing install.
 
 **Recommended layout:** clone onto the SSD and symlink it into place, so systemd and the docs agree on one path.
 

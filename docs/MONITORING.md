@@ -19,7 +19,7 @@ Alerts are split across three topics, one per reading mode, so each can be muted
 | Topic | Publishers | What lands there |
 |-------|------------|------------------|
 | `monitoring` | uptime-kuma, beszel, dockhand, backrest | Service health: outages, thresholds, container events, failed backups |
-| `downloads` | prowlarr, qbittorrent | Grabs and completed downloads |
+| `downloads` | prowlarr, qbittorrent, shelfmark | Grabs and completed downloads |
 | `security` | authelia | Failed logins, unknown-user attempts, regulation bans |
 
 **Subscribe to all three on your phone** — they are independent subscriptions. The Homepage ntfy widget reads a single topic and is pointed at `monitoring`.
@@ -65,7 +65,7 @@ The group decides the check interval, the retry budget and the ntfy priority:
 | **Remote Access** | headscale, headplane, tailscale, gluetun, VPN public IP | 60 s | 4 (high) | each monitor |
 | **External Chain** | route checks, TLS certificate | 120 s | 4 (high) | each monitor |
 | **Personal Data** | immich, immich-ml, nextcloud, vaultwarden, kavita, backrest, backup freshness | 120 s | 3 | each monitor |
-| **Media & Downloads** | qbittorrent, stremio, comet, prowlarr, kapowarr, flaresolverr, route qbittorrent | 300 s | 2 (low) | the group only |
+| **Media & Downloads** | qbittorrent, stremio, comet, prowlarr, kapowarr, flaresolverr, shelfmark, route qbittorrent | 300 s | 2 (low) | the group only |
 | **Tools & Observability** | homepage, beszel, beszel-agent, dockhand | 300 s | 2 (low) | the group only |
 | **Automation & AI** | n8n, n8n-runners, open-webui, llama-cpp, piper | 300 s | 2 (low) | the group only |
 
@@ -144,8 +144,8 @@ Two plans. `s3-backup` carries everything off-site; `usb-env` is a small local o
 | | |
 |---|---|
 | **Runs** | Nightly at 04:00 |
-| **Backs up** | `/userdata/` — Immich, Nextcloud (data, config, themes), LLDAP, Vaultwarden, Uptime Kuma, Authelia config and secrets, Beszel, Open WebUI, and the small unrecoverable state: Headscale (node keys, ACLs), Headplane, n8n, ntfy ACLs, Kavita, Pi-hole, Traefik's ACME certificates, qBittorrent, Prowlarr, Kapowarr |
-| **Excludes** | Immich thumbnails, encoded video and model cache; Nextcloud previews and thumbnails; Open WebUI's model cache; Kavita's cache and its own backups; Pi-hole's query log, list cache and `gravity.db`; Prowlarr's log database; every SQLite `-wal`/`-shm`; the stale pre-PostgreSQL `.db` stubs; `*.log` and rotations — all regenerable or replaced by a consistent copy |
+| **Backs up** | `/userdata/` — Immich, Nextcloud (data, config, themes), LLDAP, Vaultwarden, Uptime Kuma, Authelia config and secrets, Beszel, Open WebUI, and the small unrecoverable state: Headscale (node keys, ACLs), Headplane, n8n, ntfy ACLs, Kavita, Pi-hole, Traefik's ACME certificates, qBittorrent, Prowlarr, Kapowarr, Shelfmark |
+| **Excludes** | Immich thumbnails, encoded video and model cache; Nextcloud previews and thumbnails; Open WebUI's model cache; Kavita's cache and its own backups; Pi-hole's query log, list cache and `gravity.db`; Prowlarr's log database; Shelfmark's cover cache; every SQLite `-wal`/`-shm`; the stale pre-PostgreSQL `.db` stubs; `*.log` and rotations — all regenerable or replaced by a consistent copy |
 | **Databases** | Dumped by pre-snapshot hooks: `nextcloud` and `vaultwarden` (fatal on error), `authelia`, `lldap`, `open-webui`, `immich`. SQLite services get consistent copies from `scripts/sqlite-backup.sh` |
 | **Retention** | 7 daily, 4 weekly, 4 monthly |
 | **Maintenance** | Prune Sundays at 03:00 (25% unused); monthly integrity check that also re-reads 5% of the pack data; stale locks released before every run |
@@ -162,7 +162,7 @@ A second, independent layer for the monitoring history alone: SQLite snapshots o
 
 ### Consistent copies of the live SQLite databases
 
-The plan mounts each service's data read-only, so restic would otherwise read a `.db` and its `-wal` at different instants while the service is mid-write and store a pair that disagrees. `scripts/sqlite-backup.sh` runs as a pre-snapshot hook and writes a proper `sqlite3 .backup` of each one — kavita, n8n, ntfy, headscale, headplane, beszel, uptime-kuma, prowlarr, kapowarr — into `/userdata/sqlite-backups/`. About 33 MB, and **it is the copy to restore from**.
+The plan mounts each service's data read-only, so restic would otherwise read a `.db` and its `-wal` at different instants while the service is mid-write and store a pair that disagrees. `scripts/sqlite-backup.sh` runs as a pre-snapshot hook and writes a proper `sqlite3 .backup` of each one — kavita, n8n, ntfy, headscale, headplane, beszel, uptime-kuma, prowlarr, kapowarr, shelfmark — into `/userdata/sqlite-backups/`. About 33 MB, and **it is the copy to restore from**.
 
 The `-wal` and `-shm` companions are excluded: they are worthless without a consistent read, and they were the single noisiest thing in the snapshot (~17 MB of churn a night). The main `.db` files are deliberately kept as a fallback for the day the hook fails — a main file read without its WAL is an older state, not a torn one.
 

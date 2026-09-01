@@ -21,7 +21,8 @@ MOUNT_GROUP="admin"
 MOUNTS="Downloads:/mnt/qbittorrent-downloads
 Comics:/mnt/library-comics
 Manga:/mnt/library-manga
-Books:/mnt/library-books"
+Books:/mnt/library-books
+Audiobooks:/mnt/library-audiobooks"
 
 # Never fatal, and never aborts the remaining mounts: one missing bind mount must not
 # cost the others. Callers treat a non-zero return as "this mount was skipped".
