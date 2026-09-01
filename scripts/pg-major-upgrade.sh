@@ -65,7 +65,14 @@ log "cluster is on Postgres $CURRENT_MAJOR, target is $TARGET_MAJOR"
 [ "$TARGET_MAJOR" -gt "$CURRENT_MAJOR" ] || die "refusing to move backwards ($CURRENT_MAJOR -> $TARGET_MAJOR)"
 
 DATA_LOCATION="$(resolve_data_location_path)"
-OLD_DIR="$DATA_LOCATION/postgres"
+# The pre-18 layout had no major in the path; from 18 it does. Naming the
+# wrong directory here would send a rollback at the next major (18 -> 19) to a
+# stale cluster, or to one that does not exist.
+if [ -d "$DATA_LOCATION/postgres$CURRENT_MAJOR" ]; then
+    OLD_DIR="$DATA_LOCATION/postgres$CURRENT_MAJOR"
+else
+    OLD_DIR="$DATA_LOCATION/postgres"
+fi
 NEW_DIR="$DATA_LOCATION/postgres$TARGET_MAJOR"
 DUMP_DIR="$DATA_LOCATION/postgres-upgrade-$CURRENT_MAJOR-to-$TARGET_MAJOR"
 
@@ -102,17 +109,42 @@ for db in $DATABASES; do
     [ -s "$DUMP_DIR/$db.sql" ] || die "dump of $db is empty"
 done
 
-# Row counts to compare after the restore. The largest table per database is
-# enough of a canary and costs one query each.
-log "recording row counts"
+# Row counts to compare after the restore.
+#
+# Exact count(*) for every table, not pg_stat_user_tables.n_live_tup: that
+# column is an estimate the stats collector only refreshes on (auto)analyze,
+# and a table too small to trip the autovacuum threshold can carry a figure
+# that was never right. On this stack lldap.groups read 0 against 4 real rows
+# and lldap.users read 2 against 5, with last_analyze and last_autoanalyze both
+# NULL. A freshly restored cluster, by contrast, has accurate counts because
+# the collector just watched every INSERT — so estimate-vs-exact compared as if
+# they were the same thing, and reported a clean migration as data loss.
+#
+# Sampling the top N by that estimate compounded it: the two sides then chose
+# *different sets of tables*, which surfaced as "table absent after" for a
+# table that was present and correct. Counting everything also catches a table
+# that failed to restore at all, which a top-N sample can miss entirely.
+count_all_tables() {
+    _container="$1"
+    _db="$2"
+    _sql="$(docker exec "$_container" psql -U postgres -d "$_db" -Atc "
+        SELECT coalesce(string_agg(
+            format('SELECT %L || ''|'' || %L || ''|'' || (SELECT count(*) FROM %I.%I)',
+                   '$_db', relname, schemaname, relname),
+            ' UNION ALL '), '')
+        FROM pg_stat_user_tables;")" || return 1
+    [ -n "$_sql" ] || return 0
+    docker exec "$_container" psql -U postgres -d "$_db" -Atc "$_sql" || return 1
+}
+
+log "counting rows in every table (exact, not estimated)"
 : > "$DUMP_DIR/counts.before"
 for db in $DATABASES; do
-    docker exec "$PG_CONTAINER" psql -U postgres -d "$db" -Atc "
-        SELECT '$db|' || relname || '|' || n_live_tup
-        FROM pg_stat_user_tables ORDER BY n_live_tup DESC LIMIT 5;
-    " >> "$DUMP_DIR/counts.before"
+    count_all_tables "$PG_CONTAINER" "$db" >> "$DUMP_DIR/counts.before" \
+        || die "could not count the tables in $db"
 done
-log "$(wc -l < "$DUMP_DIR/counts.before") counters recorded"
+sort -o "$DUMP_DIR/counts.before" "$DUMP_DIR/counts.before"
+log "$(wc -l < "$DUMP_DIR/counts.before") tables counted"
 
 # --- Swap ----------------------------------------------------------------
 log "stopping the stack"
@@ -155,34 +187,35 @@ done
 docker exec pg-upgrade-target psql -U postgres -q \
     -c "ALTER DATABASE immich RESET search_path;" >/dev/null 2>&1 || true
 
-# --- Verify --------------------------------------------------------------
-log "verifying row counts"
-docker exec pg-upgrade-target psql -U postgres -q -c 'ANALYZE;' >/dev/null 2>&1 || true
-: > "$DUMP_DIR/counts.after"
+# --- Analyze -------------------------------------------------------------
+# Per database: a bare `ANALYZE` analyzes only the database psql connected to,
+# so the six restored ones were left with no planner statistics at all and the
+# first queries after a cutover ran on default estimates until autovacuum
+# caught up. On immich that is the difference between an index scan and a
+# sequential scan over 227k rows.
 for db in $DATABASES; do
-    docker exec pg-upgrade-target psql -U postgres -d "$db" -Atc "
-        SELECT '$db|' || relname || '|' || n_live_tup
-        FROM pg_stat_user_tables ORDER BY n_live_tup DESC LIMIT 5;
-    " >> "$DUMP_DIR/counts.after"
+    log "analyzing $db"
+    docker exec pg-upgrade-target psql -U postgres -d "$db" -q -c 'ANALYZE;' \
+        >/dev/null 2>&1 || log "warning: ANALYZE of $db failed (planner stats only, data is fine)"
 done
 
-mismatch=0
-while IFS='|' read -r db tbl before; do
-    [ -n "${tbl:-}" ] || continue
-    after="$(awk -F'|' -v d="$db" -v t="$tbl" '$1==d && $2==t {print $3}' "$DUMP_DIR/counts.after")"
-    if [ -z "$after" ]; then
-        log "MISMATCH $db.$tbl: $before rows before, table absent after"
-        mismatch=1
-    elif [ "$after" != "$before" ]; then
-        log "MISMATCH $db.$tbl: $before -> $after"
-        mismatch=1
-    fi
-done < "$DUMP_DIR/counts.before"
+# --- Verify --------------------------------------------------------------
+log "verifying row counts"
+: > "$DUMP_DIR/counts.after"
+for db in $DATABASES; do
+    count_all_tables pg-upgrade-target "$db" >> "$DUMP_DIR/counts.after" \
+        || die "could not count the tables in the restored $db"
+done
+sort -o "$DUMP_DIR/counts.after" "$DUMP_DIR/counts.after"
 
-if [ "$mismatch" != "0" ]; then
-    die "row counts differ; $NEW_DIR is suspect. The old cluster at $OLD_DIR is untouched: leave compose.yaml as it is and 'make start' to roll back."
+# Whole-file compare, so a table that exists on one side only is a mismatch
+# too, not something a per-row lookup can skip over.
+if ! counts_diff="$(diff "$DUMP_DIR/counts.before" "$DUMP_DIR/counts.after")"; then
+    log "row counts differ (< before, > after):"
+    printf '%s\n' "$counts_diff" | head -n 40 >&2
+    die "$NEW_DIR is suspect. The old cluster at $OLD_DIR is untouched: leave compose.yaml as it is and 'make start' to roll back."
 fi
-log "row counts match across all $(printf '%s' "$DATABASES" | wc -w) databases"
+log "row counts match exactly: $(wc -l < "$DUMP_DIR/counts.after") tables across $(printf '%s' "$DATABASES" | wc -w) databases"
 
 docker stop pg-upgrade-target >/dev/null
 cleanup_target
