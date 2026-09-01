@@ -71,65 +71,55 @@ CODE="PW-$(LC_ALL=C tr -dc 'A-Z0-9' </dev/urandom | head -c4)"
 
 cat > "$OUT" <<EOF
 ================================================================================
-  FEUILLE A  --  ACCES AU STOCKAGE                 etabli le $(date +%Y-%m-%d)
+  SHEET A  --  STORAGE ACCESS                        made $(date +%Y-%m-%d)
 ================================================================================
 
-  Sauvegarde du serveur familial. Cette feuille permet de TELECHARGER
-  l'archive, pas de la LIRE. Le mot de passe de dechiffrement est sur une
-  seconde feuille, rangee ailleurs, portant le code $CODE.
-  Il faut les deux pour lire quoi que ce soit.
-
-  ATTENTION : cette feuille seule ne permet pas de lire la sauvegarde, mais
-  elle permet de la SUPPRIMER - la cle ci-dessous a le droit d'effacer, et le
-  bucket n'a ni versioning ni object lock. A ranger aussi soigneusement que
-  l'autre.
-
-  Depot        $URI
+  Repository   $URI
   Region       $RG
-  Cle d'acces  $AK
-  Cle secrete  $SK
+  Access key   $AK
+  Secret key   $SK
+
+  The decryption password is on sheet $CODE, stored somewhere else.
+  Both are needed to read anything.
+
+  This sheet alone cannot read the backup, but it CAN delete it: the key
+  above may erase, and the bucket has no versioning. Store it carefully.
 
 --------------------------------------------------------------------------------
-  QUOI FAIRE  --  depuis n'importe quel ordinateur, apres avoir installe
-  restic (https://restic.net) :
+  TO RESTORE, on any computer, after installing restic (restic.net):
 
     export RESTIC_REPOSITORY="$URI"
     export AWS_ACCESS_KEY_ID="$AK"
     export AWS_SECRET_ACCESS_KEY="$SK"
     export AWS_DEFAULT_REGION="$RG"
-    export RESTIC_PASSWORD="<le mot de passe de la feuille $CODE>"
+    export RESTIC_PASSWORD="<from sheet $CODE>"
 
-    restic snapshots          # verifier que ca repond
+    restic snapshots
 
-  Pour repartir vite, un seul fichier suffit : il contient tous les autres
-  mots de passe du systeme. Quelques kilo-octets, n'importe quel disque fait
-  l'affaire.
+  Just the server's password file, a few KB, enough to rebuild everything:
 
     restic restore latest --target /tmp/r --include /userdata/pi-web-env
-    # ressort dans  /tmp/r/userdata/pi-web-env/.env
+    -> /tmp/r/userdata/pi-web-env/.env
 
-  Pour tout restaurer, il faut environ 250 Go LIBRES sur un vrai disque.
-  Ne pas viser /tmp : c'est souvent de la RAM, la restauration mourrait en
-  route. Monter un disque et viser dessus :
+  Everything, ~250 GB. Needs a real disk with that much free -- not /tmp,
+  which is usually RAM and would die partway:
 
     restic restore latest --target /mnt/restore
 
 --------------------------------------------------------------------------------
-  A SAVOIR
+  After rotating the S3 key or the repository password, run
+  "make recovery-kit" and reprint BOTH sheets: the pairing code changes
+  every time, so replacing one half alone leaves a mismatched pair.
 
-  - Ces valeurs ne changent quasiment jamais. Apres une rotation de la cle S3
-    ou du mot de passe du depot, relancer  sh scripts/recovery-kit.sh  puis
-    REIMPRIMER ET REMPLACER LES DEUX FEUILLES : le code d'appariement change
-    a chaque fois, une seule moitie remplacee ne correspondrait plus a l'autre.
-  - Ne pas ranger cette feuille au meme endroit que la feuille $CODE.
-  - Une fois par an, verifier que 'restic snapshots' repond encore.
+  Once a year, check that "restic snapshots" still answers.
 
+  Do not store this sheet with sheet $CODE.
 ================================================================================
 
 
 
 
-%%%%%%%%%%%%%%%%%%%%%  DECOUPER ICI -- RANGER AILLEURS  %%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%  CUT HERE -- STORE APART  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 
@@ -140,11 +130,8 @@ cat > "$OUT" <<EOF
 
     $PW
 
-  Cette chaine est la seconde moitie d'un jeu de deux. Seule, elle n'ouvre
-  rien et ne designe rien. L'autre feuille indique quoi en faire.
-
-  Ne pas ranger au meme endroit que l'autre feuille.
-
+  Second half of a pair. Useless on its own, and it names nothing.
+  The other sheet says what to do with it. Do not store them together.
 ================================================================================
 EOF
 

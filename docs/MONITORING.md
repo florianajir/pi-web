@@ -213,7 +213,19 @@ restic -r /mnt/usbdrive/backrest/repos/env restore latest --target /tmp/env-rest
 
 The `usb-env` plan treats a failed `.env` copy as fatal (`ON_ERROR_FATAL`), unlike the `s3-backup` plan which ignores it. A plan whose entire contents is one file must alert rather than record a snapshot of yesterday's copy as if it were today's.
 
-**Keep `BACKREST_S3_REPO_PASSWORD` and `BACKREST_S3_URI` somewhere off this machine anyway** — a printed copy, or a password manager that is not Vaultwarden (Vaultwarden is restored *from* the S3 repository). Losing both the Pi and the data disk otherwise leaves 300 GB of unreadable ciphertext.
+#### The off-site half needs a key that is not on this machine
+
+Losing both the Pi and the data disk — fire, theft — leaves only `s3`, and opening it takes five values that exist nowhere else: the URI, the region, both S3 keys and the repository password. All five live on the root filesystem, in `.env` and `config/backrest/config.json`. That is the disk a fire takes, and without them the bucket is 240 GiB of unreadable ciphertext.
+
+Five values rather than the whole `.env`, because `.env` is *inside* the repository those five open. That is the useful part: `.env` changes on every rotation, while these five change almost never — which turns "sync a large mutable secret off-site" into "keep a few near-static strings on paper".
+
+```bash
+make recovery-kit
+```
+
+It reads them from `config/backrest/config.json` rather than `.env` — the file Backrest actually feeds to restic, so there is no second source to drift from it — and prints nothing until it has opened the live repository with them from a throwaway container with nothing mounted. A kit that has never been tested is a guess. Output goes to a `mktemp` file, never to stdout, so a terminal transcript never carries the values.
+
+You get two sheets to cut apart and store in **two different places**: sheet A the S3 access, sheet B the repository password. Neither reads the backup alone — but sheet A *can delete* it, since the key has `DeleteObject` and the bucket has no versioning, so the split protects confidentiality, not availability. Store both carefully, and never in Vaultwarden, which is itself restored *from* this repository. The pairing code is regenerated on every run, so after a rotation reprint and replace **both** halves.
 
 ### The API holds the keys
 

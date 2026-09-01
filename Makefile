@@ -1,4 +1,4 @@
-.PHONY: help install install-system uninstall start stop restart update update-images status logs doctor preflight check-env print-required-vars test services enable disable config headscale-register headscale-reset rotate-password rotate-password-full
+.PHONY: help install install-system uninstall start stop restart update update-images status logs doctor preflight check-env print-required-vars test services enable disable config headscale-register headscale-reset rotate-password rotate-password-full recovery-kit
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -80,6 +80,7 @@ help:
 	@echo "  pg-upgrade to=<image> Migrate Postgres to a new major (dump/restore, old data kept)"
 	@echo "  rotate-password       Rotate PASSWORD after a leak (LLDAP admin + Authelia only, no Postgres)"
 	@echo "  rotate-password-full  Same, plus every Postgres role and every other service using PASSWORD"
+	@echo "  recovery-kit          Print the five values that open the off-site backup, to store on paper"
 	@echo "  help             This help"
 
 # Both the reader and the safety rule come from scripts/lib.sh, which install.sh
@@ -396,3 +397,8 @@ rotate-password:
 rotate-password-full:
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
 	sh scripts/rotate-password.sh
+
+# No check-env dependency: this reads config/backrest/config.json, not .env, and
+# it is most wanted precisely when the rest of the install is in a bad way.
+recovery-kit:
+	sh scripts/recovery-kit.sh
