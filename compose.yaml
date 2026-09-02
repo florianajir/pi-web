@@ -1614,15 +1614,20 @@ services:
       # French catalogue; on, the '[BD FR]'-style tag in the path is read instead.
       - DIRECT_DOWNLOAD_LANGUAGE_FROM_PATH=true
       # Shelfmark asks Prowlarr for one category per content type - [3030] for an
-      # audiobook, [7000] for everything else - and skips any indexer whose
-      # capabilities do not declare it. 7000 is a parent, so it expands over the whole
-      # Books range and ebook searches are broad; 3030 is a leaf, and the indexers here
-      # that carry French audiobooks under a *different* id (YggReborn and Torrent9 tag
-      # essentially everything 7000, Torrent[CORE] uses 3010 and 8000, Internet Archive
-      # 3000) are therefore never even queried for one. This reruns the search with no
-      # category filter when the filtered pass finds nothing, which is the only way
-      # those releases become visible from inside Shelfmark. Costs a second round of
-      # queries, and only on a search that already failed.
+      # audiobook, [7000] for everything else - and skips any indexer whose capabilities
+      # do not declare it. 7000 is a parent, so it expands over the whole Books range and
+      # ebook searches are broad; 3030 is a leaf, and 5 of the 12 enabled indexers here
+      # (YggReborn and Torrent9 among them) never declare it, so they are not queried for
+      # an audiobook at all. This reruns a query variant with no category filter when
+      # that variant returned nothing and no indexer errored, which is the only way those
+      # indexers are reached from inside Shelfmark. Costs a second round of queries, and
+      # only on a variant that already came back empty.
+      #
+      # It does NOT rescue a release that a queried indexer tagged 7000 rather than 3030
+      # - category follows the tracker section the uploader picked, so this happens even
+      # on indexers that mostly use 3030 - because the search then has results and never
+      # expands. Those need Prowlarr's UI and the `audiobooks` qBittorrent category; see
+      # docs/TROUBLESHOOTING.md.
       - PROWLARR_AUTO_EXPAND=true
       # Kavita's Book library, not its comic ones: cbz/cbr are Kapowarr's job and
       # land in a library with a different parser, so they are dropped here and

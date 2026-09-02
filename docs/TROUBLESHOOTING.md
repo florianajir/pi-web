@@ -244,21 +244,39 @@ are *not* destinations: they are Shelfmark's staging area, and Shelfmark only
 post-processes torrents belonging to one of its own tasks, so a manual add left there
 downloads and then sits forever.
 
-**Shelfmark finds no audiobook for a title a tracker definitely carries.** Not a
-matching problem — the indexer was never asked. Shelfmark queries Prowlarr with one
-category per content type: `[7000]` for anything text, `[3030]` for an audiobook
-(`release_sources/prowlarr/source.py`). 7000 is a *parent*, so it expands over the whole
-Books range and text searches are broad. 3030 is a leaf, and an indexer whose
-capabilities do not declare it is skipped entirely — which on this stack is 5 of the 12
-enabled indexers, including **YggReborn** and **Torrent9**, the two that tag essentially
-every release 7000 whatever it holds. Torrent[CORE] uses 3010 and 8000, Internet Archive
-uses 3000. None of those can be mapped to audiobooks without dragging music and manga
-along with them.
+**Shelfmark finds no audiobook for a title a tracker definitely carries.** Shelfmark
+queries Prowlarr with one category per content type: `[7000]` for anything text, `[3030]`
+for an audiobook (`release_sources/prowlarr/source.py`). 7000 is a *parent*, so it
+expands over the whole Books range and text searches are broad. 3030 is a leaf, and that
+narrowness fails in two independent ways.
 
-`PROWLARR_AUTO_EXPAND=true` in `compose.yaml` is the answer: when the filtered pass
-returns nothing, Shelfmark reruns with no category filter and every indexer is queried.
-It only fires on a search that already failed. Two more knobs if a release is still
-invisible:
+*The indexer is never queried.* `_indexer_supports_search_categories` skips any indexer
+whose capabilities do not declare the requested id — on this stack 5 of the 12 enabled
+ones, including **YggReborn** and **Torrent9**. `PROWLARR_AUTO_EXPAND=true` in
+`compose.yaml` covers this: when a query variant returns nothing and no indexer errored,
+Shelfmark reruns *that variant* with no category filter, and every indexer is queried.
+
+*The indexer answers, but the release is tagged 7000.* The trap, because auto-expand
+cannot help: it only retries a variant that returned **zero** results, and a search that
+found ten other editions of the book returned plenty. Category comes from the tracker
+section the uploader chose, so an indexer that files most audiobooks under 3030 will
+still have some under 7000. Verified on TR4KER —
+`Homère.L'Odyssée.2019.FR.AAC.64kbps.M4B-RACHE` is `[7000, 107000]`, and a Prowlarr
+search for `Homère L'Odyssée` returns it under `categories=7000` and not at all under
+`categories=3030`, while the same indexer serves 3030 for other audiobooks.
+
+Such a release *is* visible in Shelfmark — under an **ebook** search, since 7000 covers
+it. But grabbing it there fails at post-processing, and the error is misleading:
+`content_type` is derived from the release's own categories
+(`_detect_content_type_from_categories`), so 7000 means "book", the `.m4b` is checked
+against `SUPPORTED_FORMATS` and rejected with *"Found 1 book(s) but format not supported
+(.m4b). Enable in Settings > Formats."* Do **not** take that advice — adding `m4b` to
+`SUPPORTED_FORMATS` makes it worse, because `is_audiobook` stays false and the file is
+then filed into `download/books/`, Kavita's Book library, which cannot read it.
+
+So for a mis-tagged release there is no Shelfmark route. Use it to confirm the release
+exists (search as an ebook), then grab it the manual way below, with the `audiobooks`
+category. Two more knobs worth knowing:
 
 - **Manual query** in the search UI — Shelfmark otherwise searches the *metadata
   record's* title and author, so a release named nothing like the Hardcover entry never
