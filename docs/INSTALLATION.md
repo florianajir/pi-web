@@ -165,12 +165,19 @@ the bootstrap seeds that value and never rewrites it.
 
 Two things worth knowing:
 
-- **Local login stays enabled** next to SSO. The root account is the only admin, SSO
-  cannot create one, and it is the account you would need to get back in if Authelia
-  were down. Its password is the one in `.env`.
+- **Local login is switched off**, so SSO is the only way in — for the web app and for
+  the mobile apps, which have their own registered redirect URI. The root account's
+  password stays in step with `.env` (`scripts/rotate-password.sh` updates it) purely so
+  the recovery path below is real; nothing accepts it while `local` is off.
 - **SSO logins are matched to the root account by email.** If the LLDAP account you sign
   in with carries a different address than `EMAIL`, you get a second, plain-user account
   instead — see [Troubleshooting](TROUBLESHOOTING.md#books-and-audiobooks).
+- **The bootstrap keeps its own API key**, at
+  `${DATA_LOCATION}/audiobookshelf/config/pi-web-api-key`, filed in the app as
+  `pi-web-bootstrap`. With local logins off it is the only credential any script has —
+  do not revoke it under **Settings → API Keys**. It is inside the directory Backrest
+  snapshots, so a restore brings it back; [Troubleshooting](TROUBLESHOOTING.md#books-and-audiobooks)
+  has the path back in if both copies are gone.
 
 ## Next steps
 

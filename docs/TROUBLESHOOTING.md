@@ -170,6 +170,43 @@ again, or promote the new account from the root one (Settings → Users). Group 
 deliberately not used: Audiobookshelf reads them as a role and denies anyone whose groups
 contain none of `admin`/`user`/`guest`, which in this stack is every regular user.
 
+**Audiobookshelf offers no password field, or `POST /login` answers 500.** Expected:
+local logins are disabled once the bootstrap holds an API key, and the `/login` route is
+wired to a passport strategy that no longer exists — hence a 500 rather than a 401.
+`/status` reports what is actually active, without authenticating:
+
+```bash
+docker run --rm --network frontend curlimages/curl:8.12.1 -sS http://pi-audiobookshelf/status | jq .authMethods
+```
+
+**Nothing can reach the Audiobookshelf API and SSO is broken too.** The scripts
+authenticate with the key at `${DATA_LOCATION}/audiobookshelf/config/pi-web-api-key`,
+and with local logins off there is no other credential — `audiobookshelf-bootstrap.sh`
+says so and changes nothing rather than guessing. Recover in this order:
+
+1. **The key file is gone but SSO works.** Sign in as the admin, mint a key under
+   **Settings → API Keys**, and write it to that path (`chmod 600`). The next bootstrap
+   run picks it up. A Backrest restore of `/userdata/audiobookshelf/` also brings it
+   back, since the file is inside the snapshotted directory.
+2. **The key still works but SSO does not.** Re-enable the password login with it, then
+   sign in with `ADMIN_USER` / `PASSWORD` from `.env`:
+
+   ```bash
+   KEY=$(cat "$DATA_LOCATION/audiobookshelf/config/pi-web-api-key")
+   docker run --rm --network frontend curlimages/curl:8.12.1 -sS \
+     -X PATCH -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+     -d '{"authActiveAuthMethods":["local","openid"]}' \
+     http://pi-audiobookshelf/api/auth-settings
+   ```
+
+   The next bootstrap run turns `local` back off, so fix the OIDC side first.
+3. **Both are gone.** `restart pi-audiobookshelf` — on start-up Audiobookshelf drops
+   `openid` from the active methods if any of the OIDC settings is *empty*, and then
+   falls back to `local`. That is the only automatic way back, and it is why clearing one
+   field is enough. Settings that are complete but wrong do not trip it, so the last
+   resort is editing `authActiveAuthMethods` in the JSON of the single `server-settings`
+   row in `absdatabase.sqlite`'s `settings` table, with the container stopped.
+
 **Shelfmark downloads an audiobook and nothing appears.** `download/audiobooks/` is the
 one download folder with no writer inside a container to create it, so on stacks built
 before `scripts/audiobookshelf-pre-start.sh` existed the Docker daemon created it as

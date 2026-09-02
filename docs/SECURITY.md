@@ -90,7 +90,7 @@ Two consequences specific to this stack: **group membership travels in the `grou
 | Headplane | ✓ | ✓ | ✓ | LAN-only + SSO + OIDC + admin + 2FA |
 | Kavita | ✓ | — | ✓ | LAN-only + own accounts / OIDC — OPDS clients can't pass an interactive portal |
 | Shelfmark | ✓ | — | ✓ | LAN-only + OIDC only; password login disabled (`DISABLE_LOCAL_AUTH`), so requests and download history stay per-user |
-| Audiobookshelf | ✓ | — | ✓ | LAN-only + own accounts / OIDC — the mobile apps can't pass an interactive portal. Local login stays on: the root account is the only admin, and it is the account SSO logins are matched onto by email |
+| Audiobookshelf | ✓ | — | ✓ | LAN-only + OIDC only; local login disabled once the bootstrap holds an API key, so the shared `PASSWORD` is not a second way into everyone's listening history. No forward-auth: the mobile apps can't pass an interactive portal, and they have their own OIDC redirect URI |
 | n8n | ✓ | — | — | LAN-only + its own auth |
 | ntfy | ✓ | — | — | LAN-only + its own accounts and ACLs (`deny-all` default) |
 | Homepage | ✓ | ✓ | — | LAN-only + SSO |

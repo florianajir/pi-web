@@ -226,13 +226,29 @@ so `scripts/audiobookshelf-bootstrap.sh` picks the provider from `DEFAULT_LANGUA
 None of its configuration can come from the environment or a config file — server
 settings live only in its SQLite database — so that bootstrap drives the admin API
 instead, and has to create the root account first to have anything to authenticate
-with. Two consequences worth knowing. Local login stays enabled next to OIDC, because
-that root account is the only admin and SSO cannot create one; the bootstrap gives it
-`EMAIL` and sets `authOpenIDMatchExistingBy: email`, so signing in through Authelia
-lands on it rather than on a second, plain-user account. And the client asks for no
-`groups` scope: Audiobookshelf reads the group claim as a *role* and denies any login
-whose groups contain none of `admin`/`user`/`guest`, so requesting it would lock out
-every regular user in a stack where only `admin` exists.
+with. Three consequences worth knowing.
+
+The root account *is* the SSO account: the bootstrap gives it `EMAIL` and sets
+`authOpenIDMatchExistingBy: email`, so signing in through Authelia lands on the admin
+rather than on a second, plain-user account.
+
+Local login is then switched off (`authActiveAuthMethods: ["openid"]`), so the shared
+`PASSWORD` is not a second door into a service that holds everyone's listening history —
+the same stance as Shelfmark, Dockhand and Beszel. It is gated on the bootstrap first minting itself an
+API key and storing it at `${DATA_LOCATION}/audiobookshelf/config/pi-web-api-key`,
+because disabling `local` is otherwise a one-way door — `/login` is wired to passport's
+local strategy, and turning the method off *unuses* that strategy, so the route stops
+answering entirely (500, not 401) and the only remaining door is the API. The key is
+what keeps that door open for `audiobookshelf-bootstrap.sh`,
+`homepage-widgets-bootstrap.sh` and `rotate-password.sh` alike; it lives inside the
+`/config` directory Backrest snapshots so a restore brings it back. Every client can do
+OIDC, which is why this is safe here and would not be for Kavita's OPDS readers: the
+mobile apps get their own registered redirect URI (`/auth/openid/mobile-redirect`),
+which Audiobookshelf bounces to `audiobookshelf://oauth` itself.
+
+And the client asks for no `groups` scope: Audiobookshelf reads the group claim as a
+*role* and denies any login whose groups contain none of `admin`/`user`/`guest`, so
+requesting it would lock out every regular user in a stack where only `admin` exists.
 
 Podcasts are deliberately not offered. Audiobookshelf can serve them, but it
 downloads episodes *into* the library folder, and **its own** mount of that

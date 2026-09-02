@@ -287,13 +287,46 @@ PY
     rm -rf "$_kak_tmp"
 }
 
+# Where scripts/audiobookshelf-bootstrap.sh persists the API key every later
+# script authenticates with. Inside /config rather than beside it so Backrest's
+# read-only mount of that directory carries it off-site: local logins are
+# switched off once the key exists, which makes it the only credential left, and
+# a lost one can then only be replaced by hand from a browser SSO session.
+# Usage: audiobookshelf_api_key_file
+audiobookshelf_api_key_file() {
+    printf '%s/audiobookshelf/config/pi-web-api-key' "$(resolve_data_location_path)"
+}
+
+# Echo the stored Audiobookshelf API key, or nothing. Probed rather than
+# trusted: the value is a JWT the server can have forgotten (a key deleted in
+# the UI, a /config restored from a snapshot older than the file), and a dead
+# key must fall through to the password login below rather than fail the caller.
+# Usage: audiobookshelf_api_key [base_url]
+audiobookshelf_api_key() {
+    local base_url="${1:-http://pi-audiobookshelf}"
+    local file="" key=""
+
+    file="$(audiobookshelf_api_key_file)"
+    [ -r "$file" ] || return 1
+    key="$(tr -d '\r\n' < "$file")"
+    [ -n "$key" ] || return 1
+
+    docker_curl -o /dev/null -H "Authorization: Bearer $key" "$base_url/api/me" >/dev/null 2>&1 || return 1
+    printf '%s' "$key"
+}
+
 # Audiobookshelf hands out an access token only in exchange for a login, and the
 # root account it created in scripts/audiobookshelf-bootstrap.sh is the one
 # account whose credentials are known: ADMIN_USER / PASSWORD from .env. Returns
 # nothing before that bootstrap has run, which is the expected state on a fresh
 # install. The body goes over stdin so the password never reaches `ps`.
-# Usage: audiobookshelf_token [base_url]
-audiobookshelf_token() {
+#
+# Only works while `local` is still an active auth method: the /login route is
+# wired to passport's local strategy, and disabling the method unuses that
+# strategy, so the request errors rather than 401s. That is why this is the
+# fallback and the API key is the primary - see audiobookshelf_token.
+# Usage: audiobookshelf_password_token [base_url]
+audiobookshelf_password_token() {
     local base_url="${1:-http://pi-audiobookshelf}"
     local user="" password=""
 
@@ -304,6 +337,18 @@ audiobookshelf_token() {
     jq -cn --arg u "$user" --arg p "$password" '{username: $u, password: $p}' \
         | api_send_json_stdin POST "$base_url" "/login" 2>/dev/null \
         | jq -r '.user.accessToken // empty'
+}
+
+# Echo something that authenticates as the Audiobookshelf root account, or
+# nothing. The stored API key first, because it is what still works once local
+# logins are off; the password login second, because a fresh install has no key
+# yet and minting one needs an authenticated call.
+# Usage: audiobookshelf_token [base_url]
+audiobookshelf_token() {
+    local base_url="${1:-http://pi-audiobookshelf}"
+
+    audiobookshelf_api_key "$base_url" && return 0
+    audiobookshelf_password_token "$base_url"
 }
 
 wait_for_health_warning() {

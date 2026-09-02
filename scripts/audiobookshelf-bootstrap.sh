@@ -10,6 +10,12 @@
 # Audiobookshelf keeps all of this in its own SQLite database and exposes no way
 # to seed it from the environment or a config file, so the API is the only door -
 # and the API needs an account, which is why /init comes first.
+#
+# That account's password is also what OIDC replaces: once SSO works, local
+# logins are switched off, and from then on the only credential this script
+# holds is the API key it minted for itself while they were still on. So the
+# order below is not cosmetic - ensure_api_key must succeed before
+# configure_oidc drops `local`, or the next run has no way back in.
 
 set -eu
 
@@ -22,6 +28,12 @@ ABS_URL="${ABS_URL:-http://pi-audiobookshelf}"
 AUTHELIA_CONTAINER="${AUTHELIA_CONTAINER:-pi-authelia}"
 LIBRARY_NAME="Audiobooks"
 LIBRARY_PATH="/audiobooks"
+# The name the automation key is filed under in Settings > API Keys, so the one
+# key nobody should revoke is recognisable there.
+API_KEY_NAME="pi-web-bootstrap"
+# Set once a key in audiobookshelf_api_key_file() is known to authenticate. The
+# gate on turning local logins off.
+HAVE_API_KEY=0
 
 abs_get() {
     docker_curl -H "Authorization: Bearer $TOKEN" "$ABS_URL$1"
@@ -90,6 +102,69 @@ ensure_root_email() {
     log "Set the Audiobookshelf root account's email to $email"
 }
 
+# --- Automation key ---------------------------------------------------------
+
+# Mint the key this script (and scripts/homepage-widgets-bootstrap.sh, and
+# scripts/rotate-password.sh) authenticates with from here on, and put it on
+# disk. Called only when audiobookshelf_api_key() found nothing usable, so
+# $TOKEN is a password-login token and local logins are necessarily still on.
+#
+# Sets HAVE_API_KEY on success, which is what lets configure_oidc turn them off.
+# A failure is therefore self-limiting: the stack keeps a working password login
+# and the next run tries again.
+ensure_api_key() {
+    local file="" keys="" existing_id="" user_id="" key=""
+
+    file="$(audiobookshelf_api_key_file)"
+
+    keys="$(abs_get "/api/api-keys" 2>/dev/null)" || {
+        log "WARNING: could not list Audiobookshelf API keys; leaving local logins enabled"
+        return 1
+    }
+    existing_id="$(printf '%s' "$keys" | jq -r --arg n "$API_KEY_NAME" \
+        'first(.apiKeys[]? | select(.name == $n) | .id) // empty')"
+
+    # The value is shown once, at creation, and stored hashed after that - so a
+    # record whose file is gone (or whose file the server just rejected, which is
+    # the only way to reach this function) can never be recovered. Drop it and
+    # mint a matching pair; without the delete, every run would leave another
+    # dead key behind in the settings page.
+    if [ -n "$existing_id" ]; then
+        docker_curl -X DELETE -H "Authorization: Bearer $TOKEN" \
+            "$ABS_URL/api/api-keys/$existing_id" >/dev/null 2>&1 \
+            || log "WARNING: could not remove the orphaned '$API_KEY_NAME' API key"
+    fi
+
+    user_id="$(abs_get "/api/me" 2>/dev/null | jq -r '.id // empty')"
+    [ -n "$user_id" ] || {
+        log "WARNING: could not read the Audiobookshelf user id; leaving local logins enabled"
+        return 1
+    }
+
+    # isActive has to be sent: the API stores !!req.body.isActive, so an omitted
+    # field creates a key that authenticates nothing. No expiresIn either - an
+    # expiring key would silently take the OIDC reconcile, the Homepage widget
+    # and password rotation down with it on some date nobody wrote down.
+    key="$(jq -cn --arg n "$API_KEY_NAME" --arg u "$user_id" \
+            '{name: $n, userId: $u, isActive: true}' \
+        | abs_send POST "/api/api-keys" 2>/dev/null | jq -r '.apiKey.apiKey // empty')"
+    [ -n "$key" ] || {
+        log "WARNING: could not create an Audiobookshelf API key; leaving local logins enabled"
+        return 1
+    }
+
+    # umask, not a chmod afterwards: the window between the two is enough for the
+    # key to be world-readable on the data disk.
+    (umask 077 && printf '%s' "$key" > "$file") || {
+        log "WARNING: could not write $file; leaving local logins enabled"
+        return 1
+    }
+    fix_ownership "$file"
+
+    HAVE_API_KEY=1
+    log "Stored an Audiobookshelf API key ('$API_KEY_NAME') at $file"
+}
+
 # --- OIDC -------------------------------------------------------------------
 
 # Authelia's own discovery document, so a path it moves is followed rather than
@@ -118,7 +193,7 @@ authelia_endpoints() {
 }
 
 configure_oidc() {
-    local host_name="" secret="" endpoints="" current="" desired=""
+    local host_name="" secret="" endpoints="" current="" desired="" methods=""
 
     host_name="$(get_env_value HOST_NAME)"
     host_name="${host_name:-pi.lan}"
@@ -141,6 +216,26 @@ configure_oidc() {
         return 0
     }
 
+    # OIDC only, so the shared PASSWORD is not a second way past Authelia into
+    # a service holding everyone's listening history. Every client can do it:
+    # the web app redirects, and the mobile apps get their own registered
+    # redirect URI (see the Authelia client) - which is why this is safe here
+    # and would not be for Kavita's OPDS readers.
+    #
+    # Gated on the API key, not on OIDC looking configured. Audiobookshelf has
+    # no root-password escape hatch and no way to re-enable a method from
+    # outside the API, so switching `local` off without a credential that
+    # survives it is a one-way door: an OIDC config that turns out to be broken
+    # would leave nobody, script or human, able to log in and fix it. The
+    # server's own guard only reaches as far as a restart, where it drops
+    # `openid` if the settings are incomplete and falls back to `local`.
+    methods='["local", "openid"]'
+    if [ "$HAVE_API_KEY" = "1" ]; then
+        methods='["openid"]'
+    else
+        log "WARNING: no Audiobookshelf API key is available; keeping local logins enabled"
+    fi
+
     # authOpenIDSubfolderForRedirectURLs is the empty string on purpose, not
     # merely absent: Audiobookshelf interpolates it into the redirect_uri
     # unguarded, so leaving it undefined builds "undefined/auth/openid/callback"
@@ -157,9 +252,10 @@ configure_oidc() {
     # admin/user/guest is denied outright. Only `admin` exists in this stack.
     desired="$(printf '%s' "$current" | jq -c \
         --argjson e "$endpoints" \
+        --argjson methods "$methods" \
         --arg secret "$secret" \
         '. + {
-            authActiveAuthMethods: ["local", "openid"],
+            authActiveAuthMethods: $methods,
             authOpenIDIssuerURL: $e.issuer,
             authOpenIDAuthorizationURL: $e.authorization_endpoint,
             authOpenIDTokenURL: $e.token_endpoint,
@@ -259,8 +355,20 @@ main() {
 
     ensure_root_user || return 0
 
-    TOKEN="$(audiobookshelf_token "$ABS_URL" || true)"
-    [ -n "${TOKEN:-}" ] || { log "WARNING: could not log in to Audiobookshelf; skipping the rest"; return 0; }
+    # The stored key first: on every run after the first it is the only thing
+    # that works, because configure_oidc has since turned local logins off.
+    TOKEN="$(audiobookshelf_api_key "$ABS_URL" || true)"
+    if [ -n "${TOKEN:-}" ]; then
+        HAVE_API_KEY=1
+    else
+        TOKEN="$(audiobookshelf_password_token "$ABS_URL" || true)"
+        [ -n "${TOKEN:-}" ] || {
+            log "WARNING: could not authenticate to Audiobookshelf; skipping the rest"
+            log "         (no usable $(audiobookshelf_api_key_file), and the password login was refused)"
+            return 0
+        }
+        ensure_api_key || true
+    fi
 
     ensure_root_email
     configure_oidc

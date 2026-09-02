@@ -431,14 +431,17 @@ rotate_shelfmark() {
 # --- Audiobookshelf: the root account's password lives in its own database ---
 # scripts/audiobookshelf-bootstrap.sh creates that account once from
 # ADMIN_USER/PASSWORD and never re-derives it, so without this step a rotation
-# leaves it on the old value: audiobookshelf_token() would 401 forever, and with
-# it both the OIDC reconcile and the Homepage widget key quietly stop being
-# maintained while .env claims the new password works.
+# leaves it on the old value and .env claims a password nothing accepts.
 #
-# Authenticated with the OLD password on purpose - by the time this runs .env
-# already holds the new one, which Audiobookshelf has never seen. API keys are
-# unaffected: a password change destroys session rows only, so the Homepage
-# widget key keeps working.
+# Local logins are off on a bootstrapped stack, which makes that password no
+# longer a way in - but it is still the documented recovery path if OIDC ever
+# breaks (re-enable `local` through the API, sign in with it), so keeping it in
+# step with .env is what makes that path real.
+#
+# Authenticated with the API key the bootstrap stored, falling back to a login
+# with the OLD password - by the time this runs .env already holds the new one,
+# which Audiobookshelf has never seen. The key itself is unaffected by the
+# change: a password update destroys session rows only.
 rotate_audiobookshelf() {
     local url response token user_id
 
@@ -448,17 +451,23 @@ rotate_audiobookshelf() {
     fi
     url="http://pi-audiobookshelf"
 
-    # Password from the environment and body on stdin, so neither the old nor
-    # the new one lands in the host's process table.
-    response="$(RP_OLD_PASSWORD="$OLD_PASSWORD" jq -nc --arg u "$ADMIN_USER" \
-            '{username:$u, password:$ENV.RP_OLD_PASSWORD}' \
-        | docker run --rm -i --network frontend "${CURL_IMAGE:-curlimages/curl:8.12.1}" \
-            -sS -X POST -H 'Content-Type: application/json' --data @- \
-            "$url/login" 2>/dev/null || true)"
-    token="$(printf '%s' "$response" | jq -r '.user.accessToken // empty')"
-    user_id="$(printf '%s' "$response" | jq -r '.user.id // empty')"
+    token="$(audiobookshelf_api_key "$url" || true)"
+    if [ -n "$token" ]; then
+        user_id="$(docker_curl -H "Authorization: Bearer $token" "$url/api/me" 2>/dev/null \
+            | jq -r '.id // empty')"
+    else
+        # Password from the environment and body on stdin, so neither the old nor
+        # the new one lands in the host's process table.
+        response="$(RP_OLD_PASSWORD="$OLD_PASSWORD" jq -nc --arg u "$ADMIN_USER" \
+                '{username:$u, password:$ENV.RP_OLD_PASSWORD}' \
+            | docker run --rm -i --network frontend "${CURL_IMAGE:-curlimages/curl:8.12.1}" \
+                -sS -X POST -H 'Content-Type: application/json' --data @- \
+                "$url/login" 2>/dev/null || true)"
+        token="$(printf '%s' "$response" | jq -r '.user.accessToken // empty')"
+        user_id="$(printf '%s' "$response" | jq -r '.user.id // empty')"
+    fi
     if [ -z "$token" ] || [ -z "$user_id" ]; then
-        note "✘ FAILED to rotate Audiobookshelf (could not authenticate '$ADMIN_USER' with the old password)"
+        note "✘ FAILED to rotate Audiobookshelf (no usable API key, and no local login with the old password)"
         return 0
     fi
 

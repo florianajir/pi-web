@@ -132,10 +132,13 @@ sync_audiobookshelf_key() {
         return 0
     fi
 
+    # Almost always the API key scripts/audiobookshelf-bootstrap.sh stored, since
+    # that hook runs earlier in the chain and switches local logins off - the
+    # password fallback only covers the one run where it has not got there yet.
     token="$(audiobookshelf_token "$abs_url" || true)"
     if [ -z "$token" ]; then
         # Expected until scripts/audiobookshelf-bootstrap.sh has created the root account.
-        log "WARNING: could not log in to Audiobookshelf; skipping its widget key"
+        log "WARNING: could not authenticate to Audiobookshelf; skipping its widget key"
         return 0
     fi
 
