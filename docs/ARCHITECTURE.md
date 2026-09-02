@@ -202,9 +202,12 @@ are set in Shelfmark's `plugins/network.json`, **not** in its environment, becau
 own — setting them there would route every other outbound call through the tunnel too.
 In the config file they reach only the callers of `download/network.py get_proxies()`,
 which is the release-source and download path. So Anna's Archive traffic is on the VPN,
-while the Prowlarr API, the FlareSolverr hand-off, the OIDC token exchange and the
-metadata providers stay direct — and a gluetun outage costs you direct downloads, not
-search or login.
+while the Prowlarr API, the OIDC token exchange and the metadata providers stay direct —
+and a gluetun outage costs you direct downloads, not search or login.
+
+The proxy is addressed as `gluetun.docker`, an alias compose.yaml adds for exactly this:
+the bundled bypasser hands the string to SeleniumBase, whose proxy validation rejects a
+host with no dot in it and then fails to start the browser at all.
 
 Kapowarr's `volume_folder_naming` is deliberately flat (`{series_name} ({year})`, no
 volume subfolder): Kavita's ComicVine parser takes the series name from the folder and

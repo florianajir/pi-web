@@ -22,7 +22,8 @@ SHELFMARK_CONTAINER="${SHELFMARK_CONTAINER:-pi-shelfmark}"
 SHELFMARK_URL_DOCKER="${SHELFMARK_URL_DOCKER:-http://pi-shelfmark:8084}"
 PLUGINS_DIR="/config/plugins"
 OIDC_ADMIN_GROUP="admin"
-GLUETUN_HTTP_PROXY="http://gluetun:8888"
+# The alias, not "gluetun": SeleniumBase rejects a proxy host with no dot in it.
+GLUETUN_HTTP_PROXY="http://gluetun.docker:8888"
 # Verified reachable and serving the real site on 2026-09-02. Upstream's readme
 # calls out annas-archive.is as not working as a source, and annas-archive.li
 # answers with a 1 KB holding page, so neither is seeded.
@@ -148,7 +149,7 @@ configure_proxy() {
     host_name="$(get_env_value HOST_NAME)"
     host_name="${host_name:-pi.lan}"
     # Matched with fnmatch, so the glob is the right shape here.
-    no_proxy="localhost,127.0.0.1,gluetun,prowlarr,flaresolverr,ntfy,*.${host_name}"
+    no_proxy="localhost,127.0.0.1,gluetun,gluetun.docker,prowlarr,flaresolverr,ntfy,*.${host_name}"
 
     apply network \
         --arg proxy "$GLUETUN_HTTP_PROXY" \
