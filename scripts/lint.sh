@@ -35,6 +35,17 @@ gate() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# `docker run` reports a missing image, its layers and the final digest on
+# stderr, which the gates below capture together with the tool's own output: on
+# a cold runner that turned 3 hadolint findings into a count of 11. Pulling
+# first keeps the two streams apart.
+docker_lint() {
+    image="$1"
+    shift
+    docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image" >/dev/null
+    docker run --rm -v "$PROJECT_DIR:/repo:ro" -w /repo "$image" "$@"
+}
+
 # Listed from git rather than globbed, so config/**/*.sh (the postgres init and
 # the nextcloud hooks) and the extensionless scripts/pi-pcloud are covered too.
 shell_files() { git ls-files '*.sh' 'scripts/pi-pcloud'; }
@@ -176,8 +187,7 @@ gate_hadolint() {
     elif have docker; then
         via=" (via $HADOLINT_IMAGE)"
         # shellcheck disable=SC2086
-        output="$(docker run --rm -v "$PROJECT_DIR:/repo:ro" -w /repo "$HADOLINT_IMAGE" \
-            hadolint --no-color $files 2>&1)" && rc=0 || rc=$?
+        output="$(docker_lint "$HADOLINT_IMAGE" hadolint --no-color $files 2>&1)" && rc=0 || rc=$?
     else
         skip "neither hadolint nor docker available"
         return 0
@@ -200,7 +210,7 @@ gate_actionlint() {
     if have actionlint; then
         actionlint && pass "clean" || fail "findings above"
     elif have docker; then
-        docker run --rm -v "$PROJECT_DIR:/repo:ro" -w /repo "$ACTIONLINT_IMAGE" \
+        docker_lint "$ACTIONLINT_IMAGE" \
             && pass "clean (via $ACTIONLINT_IMAGE)" || fail "findings above"
     else
         skip "neither actionlint nor docker available"
@@ -217,8 +227,7 @@ gate_gitleaks() {
     if have gitleaks; then
         gitleaks git --redact --exit-code 1 && pass "no leaks in history" || fail "findings above"
     elif have docker; then
-        docker run --rm -v "$PROJECT_DIR:/repo:ro" -w /repo "$GITLEAKS_IMAGE" \
-            git --redact --exit-code 1 \
+        docker_lint "$GITLEAKS_IMAGE" git --redact --exit-code 1 \
             && pass "no leaks in history (via $GITLEAKS_IMAGE)" || fail "findings above"
     else
         skip "neither gitleaks nor docker available"
