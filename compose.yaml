@@ -1544,7 +1544,7 @@ services:
     # Cloudflare challenges and wants 2 GB to run it. This stack already has
     # FlareSolverr up for Prowlarr, so the lite image points at that instead
     # (EXT_BYPASSER_URL below) rather than paying for a second browser.
-    image: ghcr.io/calibrain/shelfmark-lite:v1.3.13@sha256:800141031f7330418c626d36ef888b3f553df8f0960466fc654e78099d4818cd
+    image: ghcr.io/calibrain/shelfmark-lite:v1.3.14@sha256:6e5e05625961dc63bc80943dca581c6186d0e04af0c729962969c56e3751754e
     container_name: pi-shelfmark
     profiles: ["shelfmark", "all"]
     networks:
