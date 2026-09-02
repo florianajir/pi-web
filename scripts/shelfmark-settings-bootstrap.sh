@@ -1,7 +1,8 @@
 #!/bin/sh
 # Configure the Shelfmark settings that live in its own config files rather than
 # in its environment: the Authelia OIDC client, the proxy that puts direct
-# downloads on the VPN, and the Anna's Archive mirror list.
+# downloads on the VPN, the Hardcover audiobook metadata provider, and the
+# Anna's Archive mirror list.
 # A post-start hook (scripts/stack-up.sh). Idempotent: it writes, and restarts
 # Shelfmark, only when something actually differs.
 #
@@ -21,6 +22,11 @@ RETRY_INTERVAL=2
 SHELFMARK_CONTAINER="${SHELFMARK_CONTAINER:-pi-shelfmark}"
 SHELFMARK_URL_DOCKER="${SHELFMARK_URL_DOCKER:-http://pi-shelfmark:8084}"
 PLUGINS_DIR="/config/plugins"
+# Shelfmark's two core tabs do not get a file of their own: general and
+# search_mode both live in this one (core/settings_registry.py
+# _get_config_file_path). A plugins/search_mode.json looks plausible, is
+# accepted by every write, and is read by nothing.
+SETTINGS_FILE="/config/settings.json"
 OIDC_ADMIN_GROUP="admin"
 # The alias, not "gluetun": SeleniumBase rejects a proxy host with no dot in it.
 GLUETUN_HTTP_PROXY="http://gluetun.docker:8888"
@@ -34,10 +40,20 @@ PGID=1000
 CHANGED=0
 
 read_json() {
-    # read_json <path> ; echoes the file, or {} when absent or unparseable.
+    # read_json <path> ; echoes the file, or {} when absent, empty or not an object.
+    #
+    # The emptiness test has to be the shell's, not jq's: `jq -e` reports success
+    # on empty input, because "no values out" is not an error to it - only a
+    # parse failure is. So a missing file used to fall through as the empty
+    # string, apply() then compared "" against the "" jq echoes back for it, and
+    # every tab whose file did not exist yet was silently reported as already
+    # current. Only tabs Shelfmark had already written were ever reconciled.
     local raw=""
     raw="$(docker exec "$SHELFMARK_CONTAINER" cat "$1" 2>/dev/null || true)"
-    printf '%s' "$raw" | jq -e . >/dev/null 2>&1 || raw='{}'
+    [ -n "$raw" ] || raw='{}'
+    # `type == "object"` rather than `.`: it also rejects a file holding a bare
+    # array or scalar, which the merges below would fail on.
+    printf '%s' "$raw" | jq -e 'type == "object"' >/dev/null 2>&1 || raw='{}'
     printf '%s' "$raw"
 }
 
@@ -49,9 +65,10 @@ write_json() {
     # startup this script has already waited for, but a `cat >` into a missing
     # directory would fail the whole hook, and a tolerant hook failing here
     # means no OIDC - with no password login to fall back on.
-    local path="$1" body="$2"
+    local path="$1" body="$2" dir=""
+    dir="${path%/*}"
     docker exec "$SHELFMARK_CONTAINER" sh -c \
-        "mkdir -p '$PLUGINS_DIR' && chown ${PUID}:${PGID} '$PLUGINS_DIR'" \
+        "mkdir -p '$dir' && chown ${PUID}:${PGID} '$dir'" \
         || return 1
     printf '%s' "$body" | docker exec -i "$SHELFMARK_CONTAINER" sh -c "cat > $path" \
         || return 1
@@ -60,13 +77,24 @@ write_json() {
         || log "WARNING: could not fix ownership of $path"
 }
 
+# tab_path <tab> ; the file that actually backs a settings tab.
+tab_path() {
+    case "$1" in
+        general|search_mode) printf '%s' "$SETTINGS_FILE" ;;
+        *)                   printf '%s/%s.json' "$PLUGINS_DIR" "$1" ;;
+    esac
+}
+
 # apply <tab> <jq filter> [jq args...] ; reads the tab, applies the filter, and
 # writes it back when the result differs. Sets CHANGED so one restart covers
-# every tab this run touched.
+# every tab this run touched. The filter must merge rather than replace:
+# general and search_mode share one file, so a bare object would drop the
+# other tab's settings.
 apply() {
     local tab="$1"
     shift
-    local path="$PLUGINS_DIR/$tab.json" current="" desired=""
+    local path="" current="" desired=""
+    path="$(tab_path "$tab")"
 
     current="$(read_json "$path")"
     desired="$(printf '%s' "$current" | jq "$@")" || die "Failed to build $tab.json"
@@ -157,6 +185,84 @@ configure_proxy() {
         '. + {PROXY_MODE: "http", HTTP_PROXY: $proxy, NO_PROXY: $noproxy}'
 }
 
+# Hardcover is the only metadata provider wired here that carries audiobook
+# editions. Without it METADATA_PROVIDER_AUDIOBOOK falls back to the book
+# provider - Open Library, a *book* catalogue with essentially no audio edition
+# data - so audiobook searches come back with paper metadata or nothing.
+#
+# The key is user-supplied (hardcover.app/account/api) and lives in .env beside
+# the other credentials nobody can mint, like CLOUDFLARE_DNS_API_TOKEN. It is
+# applied here rather than rendered into shelfmark.env for two reasons:
+#
+#   - it is a credential, and `environment:` values are printed by
+#     `docker inspect` - the same rule that keeps the OIDC secret above out of
+#     the environment;
+#   - METADATA_PROVIDER_AUDIOBOOK is user_overridable, and an env value "always
+#     wins" over a per-user override (core/config.py get). Setting it there
+#     would freeze every account's provider choice instead of moving the
+#     deployment default, which is all this is meant to do.
+#
+# Reconciled rather than seeded, so rotating the key in .env is picked up: the
+# key being present in .env is what asks for Hardcover in the first place, and
+# removing it there releases the audiobook provider again.
+configure_hardcover() {
+    local key=""
+
+    key="$(get_env_value HARDCOVER_API_KEY)"
+    if [ -z "$key" ]; then
+        # Unwind, rather than just stop reconciling: leaving Hardcover selected
+        # with a key that is no longer supplied points every audiobook search at
+        # a provider that can only fail. Releasing the selection falls back to
+        # the book provider, which at least answers.
+        #
+        # Only the selection, and only when it is still ours. The stored key is
+        # left alone on purpose: unlike the proxy above there is no constant to
+        # compare against, so a key pasted into Settings -> Hardcover by hand is
+        # indistinguishable from one this function wrote, and clearing it would
+        # destroy someone's credential. Clear it in the UI to be rid of it.
+        log "HARDCOVER_API_KEY is not set in .env; releasing the audiobook metadata provider"
+        apply search_mode \
+            'if .METADATA_PROVIDER_AUDIOBOOK == "hardcover" then .METADATA_PROVIDER_AUDIOBOOK = "" else . end'
+        return 0
+    fi
+
+    apply hardcover --arg key "$key" \
+        '. + {HARDCOVER_ENABLED: true, HARDCOVER_API_KEY: $key}'
+
+    # Only the default, and only when unset: an account that picked another
+    # audiobook provider keeps it, and so does an admin who changed this one.
+    apply search_mode \
+        'if (.METADATA_PROVIDER_AUDIOBOOK // "") == "" then .METADATA_PROVIDER_AUDIOBOOK = "hardcover" else . end'
+}
+
+# The default search-language filter, derived from DEFAULT_LANGUAGE: Shelfmark
+# filters on two-letter codes (its data/book-languages.json) while
+# DEFAULT_LANGUAGE is a BCP 47 tag.
+#
+# Here rather than in shelfmark.env, where it used to be, because this is the
+# one search setting whose own field description promises "Users can override
+# this for their own account" - and an environment value wins over exactly that
+# (core/config.py get checks is_value_from_env before any per-account override),
+# so rendering it there silently froze the language for everyone.
+#
+# Seeded, never reconciled: only an unset value is filled, so changing
+# DEFAULT_LANGUAGE later does not reach back and overwrite a language somebody
+# chose. SEARCH_MODE, DESTINATION and DESTINATION_AUDIOBOOK stay environment
+# values on purpose - the first is a deployment mode, the other two are
+# container paths tied to the mounts in compose.yaml, and a per-account
+# override of those would write outside them.
+seed_book_language() {
+    local lang=""
+
+    lang="$(get_env_value DEFAULT_LANGUAGE)"
+    lang="${lang%%-*}"
+    [ -n "$lang" ] || lang="en"
+    lang="$(printf '%s' "$lang" | tr '[:upper:]' '[:lower:]')"
+
+    apply search_mode --arg lang "$lang" \
+        'if (.BOOK_LANGUAGE // []) == [] then .BOOK_LANGUAGE = [$lang] else . end'
+}
+
 # Seeded, not reconciled: mirror availability moves on its own schedule and the
 # list is the user's to curate in Settings -> Mirrors. Only an empty list is
 # filled, so an edited one is left alone.
@@ -176,6 +282,8 @@ main() {
 
     configure_oidc
     configure_proxy
+    configure_hardcover
+    seed_book_language
     seed_mirrors
 
     if [ "$CHANGED" = "0" ]; then
