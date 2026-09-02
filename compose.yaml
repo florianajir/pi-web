@@ -935,7 +935,11 @@ services:
       # same paths - is gated on that parameter rather than on the path.
       # Fails closed: a missing path 403s from outside while still working from
       # the LAN, so any change here must be validated off-tailnet.
-      - "traefik.http.routers.immich-public.rule=Host(`immich.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/share`) || PathPrefix(`/s/`) || PathPrefix(`/_app`) || Path(`/api/shared-links/me`) || Path(`/api/shared-links/login`) || Path(`/api/server/config`) || Path(`/api/server/features`) || Path(`/api/server/media-types`) || ((PathPrefix(`/api/assets`) || PathPrefix(`/api/download`) || PathPrefix(`/api/timeline`) || PathPrefix(`/api/albums`)) && (QueryRegexp(`key`, `.+`) || QueryRegexp(`slug`, `.+`))))"
+      # The three loose files are not decoration: /service-worker.js was 403ing
+      # in a retry loop on every share view (32 times over one off-tailnet test),
+      # and none of them ever matched the old rule either - they sit at the root,
+      # outside /share, /s/, /_app and /api.
+      - "traefik.http.routers.immich-public.rule=Host(`immich.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/share`) || PathPrefix(`/s/`) || PathPrefix(`/_app`) || Path(`/service-worker.js`) || Path(`/custom.css`) || Path(`/dark_skeleton.png`) || Path(`/api/shared-links/me`) || Path(`/api/shared-links/login`) || Path(`/api/server/config`) || Path(`/api/server/features`) || Path(`/api/server/media-types`) || ((PathPrefix(`/api/assets`) || PathPrefix(`/api/download`) || PathPrefix(`/api/timeline`) || PathPrefix(`/api/albums`)) && (QueryRegexp(`key`, `.+`) || QueryRegexp(`slug`, `.+`))))"
       - "traefik.http.routers.immich-public.entrypoints=websecure"
       - "traefik.http.routers.immich-public.middlewares=frame-deny@docker"
       - "traefik.http.routers.immich-public.tls=true"
@@ -1037,7 +1041,13 @@ services:
       # assets (js, css, l10n, img, theming) that a share page genuinely loads
       # while dropping every app's REST surface. /ocs/ and /remote.php/ were
       # already absent from here, so the OCS API stays behind lan@docker.
-      - "traefik.http.routers.nextcloud-public.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/s/`) || PathPrefix(`/public.php`) || PathPrefix(`/avatar/guest/`) || PathPrefix(`/dist/`) || (PathPrefix(`/apps/`) && !PathRegexp(`^/apps/[^/]+/api/`)) || PathPrefix(`/js/`) || PathPrefix(`/core/`) || PathPrefix(`/themes/`) || PathPrefix(`/remote.php/dav/calendars/`) || PathPrefix(`/remote.php/dav/public-calendars/`))"
+      # `/custom_apps/` is where store-installed apps serve their assets, and it
+      # was never in this rule - which quietly broke public calendar sharing:
+      # /apps/calendar/p/<token> is reachable, but the page it returns pulls
+      # /custom_apps/calendar/js/calendar-main.js, so the calendar never rendered
+      # for anyone outside the LAN. Mirrors the /apps/ negation above so the
+      # store apps' REST surfaces stay private.
+      - "traefik.http.routers.nextcloud-public.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/s/`) || PathPrefix(`/public.php`) || PathPrefix(`/avatar/guest/`) || PathPrefix(`/dist/`) || (PathPrefix(`/apps/`) && !PathRegexp(`^/apps/[^/]+/api/`)) || (PathPrefix(`/custom_apps/`) && !PathRegexp(`^/custom_apps/[^/]+/api/`)) || PathPrefix(`/js/`) || PathPrefix(`/core/`) || PathPrefix(`/themes/`) || PathPrefix(`/remote.php/dav/calendars/`) || PathPrefix(`/remote.php/dav/public-calendars/`))"
       - "traefik.http.routers.nextcloud-public.entrypoints=websecure"
       - "traefik.http.routers.nextcloud-public.middlewares=frame-deny@docker"
       - "traefik.http.routers.nextcloud-public.tls=true"
