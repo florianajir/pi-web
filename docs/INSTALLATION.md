@@ -141,6 +141,25 @@ file, which is why `RELEASE_SEARCH_TIMEOUT` defaults to 300 s.
 Per-account language: the stack sets the default from `DEFAULT_LANGUAGE` (`fr-FR` →
 `fr`), and each user can override it for their own searches.
 
+### 6. Audiobookshelf — nothing, unless you want a second admin
+
+Fully provisioned by `scripts/audiobookshelf-bootstrap.sh` on the first start: the root
+account (`ADMIN_USER` / `PASSWORD` from `.env`), the Authelia client, and an
+**Audiobooks** library on `download/audiobooks/` — the folder Shelfmark files into.
+Its metadata provider is the Audible storefront matching `DEFAULT_LANGUAGE`
+(`fr-FR` → `audible.fr`), because the catalogue is regional and a French audiobook is
+invisible from `audible.com`. Change it under **Library → Edit → Metadata provider**;
+the bootstrap seeds that value and never rewrites it.
+
+Two things worth knowing:
+
+- **Local login stays enabled** next to SSO. The root account is the only admin, SSO
+  cannot create one, and it is the account you would need to get back in if Authelia
+  were down. Its password is the one in `.env`.
+- **SSO logins are matched to the root account by email.** If the LLDAP account you sign
+  in with carries a different address than `EMAIL`, you get a second, plain-user account
+  instead — see [Troubleshooting](TROUBLESHOOTING.md#books-and-audiobooks).
+
 ## Next steps
 
 - **[Connect your devices to the VPN](TAILSCALE.md)** — one command per device.

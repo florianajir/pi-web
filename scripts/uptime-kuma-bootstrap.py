@@ -118,6 +118,7 @@ GROUPS = [
             "pi-nextcloud",
             "pi-vaultwarden",
             "pi-kavita",
+            "pi-audiobookshelf",
             "pi-backrest",
         ],
     },

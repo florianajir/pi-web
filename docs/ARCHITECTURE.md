@@ -74,6 +74,7 @@ Every routed service follows the same path: TLS at Traefik, then the `lan` IP al
 | **Prowlarr** | Indexer manager, with FlareSolverr for protected indexers | users |
 | **Kapowarr** | Comics and manga manager; feeds the Kavita libraries | users |
 | **Shelfmark** | Book and audiobook search; files what it downloads into the Kavita Books library | users |
+| **Audiobookshelf** | Audiobook and podcast player for `download/audiobooks/`, with Audible metadata matching | users |
 | **Stremio + Comet** | Streaming server and its debrid addon | users |
 | **Open WebUI** | Local AI chat frontend — see [Local AI](AI.md) | users |
 | **llama.cpp / Piper / Parakeet / system-tools** | Inference, TTS, STT and the host-status tool | Open WebUI |
@@ -139,6 +140,10 @@ Persistent state is split deliberately:
 
 ### The reading libraries
 
+Two readers, split by medium: Kavita for anything paged, Audiobookshelf for anything
+listened to. Kavita has no audiobook library type at all, and Audiobookshelf reads only
+audio — so neither is a subset of the other and both point at their own folders.
+
 Kavita gets one library per kind of content, because the library *type* decides how it
 parses filenames and how it reads: right-to-left for manga, a comic parser for issues,
 a text reader for epub/pdf. Each library therefore needs its own folder.
@@ -157,7 +162,7 @@ root and a software torrent's installer tree becomes series named after its inte
 | Path | Written by | Read by Kavita |
 |------|-----------|----------------|
 | `download/manga/`, `download/books/` | the matching qBittorrent category | yes |
-| `download/audiobooks/` | Shelfmark (`DESTINATION_AUDIOBOOK`) — Kavita has no audiobook library type | no |
+| `download/audiobooks/` | Shelfmark (`DESTINATION_AUDIOBOOK`); read by **Audiobookshelf**, not Kavita | no |
 | `download/shelfmark/` | qBittorrent's `shelfmark` category, where Shelfmark's own grabs land before import | no |
 | `download/prowlarr/` | qBittorrent's `prowlarr` category (Prowlarr's default) | no |
 | `download/incomplete/` | qBittorrent's temp path | no |
@@ -171,12 +176,13 @@ to `manga` and the remaining Books subcategories (7010 Mags, 7020 EBook, 7040
 Technical, 7050 Other, 7060 Foreign) go to `books`. Comics do not come through
 Prowlarr at all: Kapowarr fetches them and imports into its own root folder.
 
-Six places must agree on these paths, and all six are provisioned: the `kavita`
+Seven places must agree on these paths, and all seven are provisioned: the `kavita`
 volumes in `compose.yaml`, `DESIRED_LIBRARIES` in
 `scripts/kavita-library-bootstrap.sh`, `LIBRARY_CATEGORIES` in
 `scripts/qbittorrent-bootstrap.sh`, `QB_CATEGORY_MAP` in
 `scripts/prowlarr-bootstrap.sh`, `ROOT_FOLDERS` in
-`scripts/kapowarr-bootstrap.sh`, and `INGEST_DIR` on the `shelfmark` service.
+`scripts/kapowarr-bootstrap.sh`, `INGEST_DIR` and `DESTINATION_AUDIOBOOK` on the
+`shelfmark` service, and `LIBRARY_PATH` in `scripts/audiobookshelf-bootstrap.sh`.
 
 Shelfmark is the manual half of that: you search, it fetches. Torrents go out through
 the same qBittorrent instance (so through the VPN) under its own `shelfmark` category,
@@ -209,6 +215,25 @@ The proxy is addressed as `gluetun.docker`, an alias compose.yaml adds for exact
 the bundled bypasser hands the string to SeleniumBase, whose proxy validation rejects a
 host with no dot in it and then fails to start the browser at all.
 
+Audiobookshelf closes the other end of that chain. `download/audiobooks/` had a writer
+and no reader: Shelfmark files audiobooks there, Kavita cannot open them, and Nextcloud
+only stores them. Audiobookshelf mounts the same folder read-only as `/audiobooks` and
+adds the listening half — progress sync across devices, and Audible metadata matching,
+which is the only source in the stack carrying narrator, runtime and chapters. The
+Audible storefront is regional and a French catalogue is invisible from `audible.com`,
+so `scripts/audiobookshelf-bootstrap.sh` picks the provider from `DEFAULT_LANGUAGE`.
+
+None of its configuration can come from the environment or a config file — server
+settings live only in its SQLite database — so that bootstrap drives the admin API
+instead, and has to create the root account first to have anything to authenticate
+with. Two consequences worth knowing. Local login stays enabled next to OIDC, because
+that root account is the only admin and SSO cannot create one; the bootstrap gives it
+`EMAIL` and sets `authOpenIDMatchExistingBy: email`, so signing in through Authelia
+lands on it rather than on a second, plain-user account. And the client asks for no
+`groups` scope: Audiobookshelf reads the group claim as a *role* and denies any login
+whose groups contain none of `admin`/`user`/`guest`, so requesting it would lock out
+every regular user in a stack where only `admin` exists.
+
 Kapowarr's `volume_folder_naming` is deliberately flat (`{series_name} ({year})`, no
 volume subfolder): Kavita's ComicVine parser takes the series name from the folder and
 `GetFoldersTillRoot` stops below the scan root, so any intermediate folder makes every
@@ -216,8 +241,9 @@ series come out named `Volume 01`.
 
 The same libraries are also mounted read-only into Nextcloud as `files_external`
 mounts (`Comics`, `Manga`, `Books` and `Audiobooks`, alongside the existing
-`Downloads`), so any file can get a public share link the way Immich does for photos —
-and audiobooks, which no library service here reads, are shared from there. The mounts
+`Downloads`), so any file can get a public share link the way Immich does for photos.
+Audiobooks are in both places on purpose: Nextcloud shares the file, Audiobookshelf
+plays it and keeps your position. The mounts
 are created by `config/nextcloud/hooks/post-installation/20-external-storage.sh`, which
 is idempotent and can be re-run by hand on an existing install.
 

@@ -71,6 +71,7 @@ Two consequences specific to this stack: **group membership travels in the `grou
 | **Vaultwarden** | openid profile email offline_access | client_secret_basic | one_factor | Master password still required |
 | **Kavita** | openid profile email groups offline_access | client_secret_post | one_factor | Roles come from the `groups` claim |
 | **Shelfmark** | openid profile email groups | client_secret_basic | one_factor | PKCE (S256) required; admin comes from the `admin` group; local login disabled |
+| **Audiobookshelf** | openid profile email | client_secret_basic | one_factor | PKCE (S256) required; **no `groups` scope** — it reads the claim as a role and denies anyone outside admin/user/guest |
 
 `admin_only` is a named policy in the template: deny by default, `two_factor` for members of the `admin` group.
 
@@ -89,6 +90,7 @@ Two consequences specific to this stack: **group membership travels in the `grou
 | Headplane | ✓ | ✓ | ✓ | LAN-only + SSO + OIDC + admin + 2FA |
 | Kavita | ✓ | — | ✓ | LAN-only + own accounts / OIDC — OPDS clients can't pass an interactive portal |
 | Shelfmark | ✓ | — | ✓ | LAN-only + OIDC only; password login disabled (`DISABLE_LOCAL_AUTH`), so requests and download history stay per-user |
+| Audiobookshelf | ✓ | — | ✓ | LAN-only + own accounts / OIDC — the mobile apps can't pass an interactive portal. Local login stays on: the root account is the only admin, and it is the account SSO logins are matched onto by email |
 | n8n | ✓ | — | — | LAN-only + its own auth |
 | ntfy | ✓ | — | — | LAN-only + its own accounts and ACLs (`deny-all` default) |
 | Homepage | ✓ | ✓ | — | LAN-only + SSO |
@@ -103,7 +105,7 @@ Two consequences specific to this stack: **group membership travels in the `grou
 | Stremio | ✓ | — | — | LAN-only; streaming clients and cast receivers can't do the portal |
 | Comet | ✓ | — | — | LAN-only; Stremio fetches manifests programmatically |
 
-Services with their own account system (Immich, Kavita, Shelfmark) deliberately do **not** stack forward-auth on top of OIDC — their apps and clients cannot complete an interactive portal.
+Services with their own account system (Immich, Kavita, Shelfmark, Audiobookshelf) deliberately do **not** stack forward-auth on top of OIDC — their apps and clients cannot complete an interactive portal.
 
 ## The middleware chain
 
@@ -205,8 +207,9 @@ Generated on first start, mode `600`, under `${DATA_LOCATION}/authelia-config/se
 
 OIDC client secrets are injected into services through read-only Docker volumes, or written into the
 service's own configuration file by its bootstrap script (Kavita's `appsettings.json`, Shelfmark's
-`plugins/security.json`) — never through environment variables, where `docker inspect` would print them,
-and never baked into images.
+`plugins/security.json`) or pushed over its admin API (Audiobookshelf's `PATCH /api/auth-settings`, whose
+settings live only in its SQLite database) — never through environment variables, where `docker inspect`
+would print them, and never baked into images.
 
 ## Sessions
 

@@ -287,6 +287,25 @@ PY
     rm -rf "$_kak_tmp"
 }
 
+# Audiobookshelf hands out an access token only in exchange for a login, and the
+# root account it created in scripts/audiobookshelf-bootstrap.sh is the one
+# account whose credentials are known: ADMIN_USER / PASSWORD from .env. Returns
+# nothing before that bootstrap has run, which is the expected state on a fresh
+# install. The body goes over stdin so the password never reaches `ps`.
+# Usage: audiobookshelf_token [base_url]
+audiobookshelf_token() {
+    local base_url="${1:-http://pi-audiobookshelf}"
+    local user="" password=""
+
+    user="$(get_env_value ADMIN_USER)"
+    password="$(get_env_value PASSWORD)"
+    [ -n "$user" ] && [ -n "$password" ] || return 1
+
+    jq -cn --arg u "$user" --arg p "$password" '{username: $u, password: $p}' \
+        | api_send_json_stdin POST "$base_url" "/login" 2>/dev/null \
+        | jq -r '.user.accessToken // empty'
+}
+
 wait_for_health_warning() {
     local name="$1"
     local max_retries="${2:-120}"

@@ -205,6 +205,9 @@ services:
       - ${DATA_LOCATION:-./data}/prowlarr:/userdata/prowlarr:ro
       - ${DATA_LOCATION:-./data}/kapowarr/db:/userdata/kapowarr-db:ro
       - ${DATA_LOCATION:-./data}/shelfmark:/userdata/shelfmark:ro
+      # Only /config: the SQLite database, the server settings and the OIDC
+      # client live there. /metadata is covers and cached art, rebuilt by a scan.
+      - ${DATA_LOCATION:-./data}/audiobookshelf/config:/userdata/audiobookshelf:ro
       # Read by backrest-env-snapshot.sh, which feeds two plans: s3-backup
       # (off-site, but opening that repo needs BACKREST_S3_REPO_PASSWORD, which
       # is inside the .env it stores) and usb-env, a local repo under
@@ -1045,6 +1048,7 @@ services:
       # scripts/homepage-widgets-bootstrap.sh into the mounted config dir.
       - HOMEPAGE_FILE_PROWLARR_API_KEY=/app/config/secrets/prowlarr_api_key
       - HOMEPAGE_FILE_KAVITA_API_KEY=/app/config/secrets/kavita_api_key
+      - HOMEPAGE_FILE_AUDIOBOOKSHELF_API_KEY=/app/config/secrets/audiobookshelf_api_key
       - HOMEPAGE_FILE_HEADSCALE_API_KEY=/app/config/secrets/headscale_api_key
       - HOMEPAGE_FILE_HEADSCALE_NODE_ID=/app/config/secrets/headscale_node_id
       # Immich is the one key nothing can mint: its admin password is set at signup
@@ -1639,6 +1643,78 @@ services:
     # the headroom - the same two settings flaresolverr carries.
     shm_size: "256m"
     mem_limit: 2g
+    oom_score_adj: *oom-score-deprioritize
+
+  audiobookshelf:
+    <<: *service-defaults
+    image: ghcr.io/advplyr/audiobookshelf:2.36.0@sha256:180acad33d69c99ed208676465d8edcb268fa46967735579a7810859885b1a8e
+    container_name: pi-audiobookshelf
+    profiles: ["audiobookshelf", "all"]
+    networks:
+      - frontend
+    extra_hosts:
+      # Authelia's OIDC discovery endpoint, reached through Traefik internally.
+      - "auth.${HOST_NAME:-pi.lan}:172.30.11.250"
+    expose:
+      - 80
+    environment:
+      - TZ=${TIMEZONE:-Europe/Paris}
+      # Empty on purpose, and not redundant: the image sets no ROUTER_BASE_PATH,
+      # and the server reads it as `?? '/audiobookshelf'` - so *unset* means the
+      # subfolder is on. Every request still works, because a URL without the
+      # prefix is rewritten to carry it, which is why this looks fine until SSO:
+      # the login page passes ?callback=<origin>/login, and the check that it is
+      # same-origin also demands it start with the base path. It does not, so
+      # every "Sign in with SSO" answers 400 "Invalid callback URL". Setting the
+      # variable to the empty string is what actually turns the subfolder off.
+      - ROUTER_BASE_PATH=
+    volumes:
+      # Root-owned, like every other container here: the image has no PUID/PGID
+      # and pinning `user:` would only move the problem, since a bind source the
+      # daemon creates is root-owned anyway. It costs nothing because these two
+      # directories are the only things Audiobookshelf writes - the library
+      # below is read-only, so the shared download tree is never touched.
+      - ${DATA_LOCATION:-./data}/audiobookshelf/config:/config
+      # Covers, cached cover art and the app's own backups. Split from /config on
+      # purpose: /config is the small unrecoverable half (the SQLite database)
+      # that Backrest mounts, and this one is regenerable from the audio files.
+      - ${DATA_LOCATION:-./data}/audiobookshelf/metadata:/metadata
+      # Shelfmark's DESTINATION_AUDIOBOOK, which until now only reached Nextcloud
+      # as storage. Read-only for the same reason Kavita's libraries are: with the
+      # default settings Audiobookshelf keeps every scan artefact under /metadata,
+      # so a library it only reads is never written back to.
+      - ${DATA_LOCATION:-./data}/download/audiobooks:/audiobooks:ro
+    labels:
+      - "homepage.group=Books"
+      - "homepage.name=Audiobookshelf"
+      - "homepage.icon=audiobookshelf.png"
+      - "homepage.href=https://audiobooks.${HOST_NAME:-pi.lan}"
+      - "homepage.description=Audiobook and podcast player"
+      - "homepage.widget.type=audiobookshelf"
+      - "homepage.widget.url=http://pi-audiobookshelf"
+      # An API key minted by scripts/homepage-widgets-bootstrap.sh. Audiobookshelf
+      # returns the key once, at creation, so the secret file is the only copy.
+      - "homepage.widget.key={{HOMEPAGE_FILE_AUDIOBOOKSHELF_API_KEY}}"
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      # Audiobookshelf has its own account system, fed by Authelia over OIDC, and
+      # its mobile apps cannot complete an interactive portal - so lan@docker
+      # only, no forward-auth on top (same rationale as Kavita and Shelfmark).
+      - "traefik.http.routers.audiobookshelf.rule=Host(`audiobooks.${HOST_NAME:-pi.lan}`)"
+      - "traefik.http.routers.audiobookshelf.entrypoints=websecure"
+      - "traefik.http.routers.audiobookshelf.middlewares=frame-deny@docker,lan@docker"
+      - "traefik.http.routers.audiobookshelf.tls=true"
+      - "traefik.http.services.audiobookshelf.loadbalancer.server.port=80"
+    healthcheck:
+      <<: *healthcheck-default
+      # node:20-alpine ships no curl; busybox provides wget. /healthcheck is
+      # unauthenticated and answers 200 as soon as the server is listening.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/healthcheck"]
+      start_period: 45s
+    deploy: *cpu-request-small
+    # Idle RSS is ~150 MB; the headroom is for the scanner, which probes every
+    # file with ffprobe, and for the ffmpeg transcode a non-m4b stream triggers.
+    mem_limit: 1g
     oom_score_adj: *oom-score-deprioritize
 
   ntfy:
