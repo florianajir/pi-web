@@ -31,10 +31,29 @@ API="http://localhost:5000/api"
 # folder and /comics-downloads is the qBittorrent category, for issues grabbed by hand
 # when Kapowarr cannot find them. Both feed one library, so the parser and the metadata
 # provider are shared and no new library id has to be added to the OIDC default set.
+#
+# Magazines is Comic (1) though it holds PDFs, because Kavita has no magazine type:
+# issue #2578 is closed but LibraryType still ends at ComicVine. Book (2) would group
+# on calibre:series, which a scanned PDF has not got, so every issue becomes its own
+# series; the comic parser reads "<title> <number>" from the filename and groups them.
+# Not ComicVine (5), whose parser falls back to the deepest folder name - the same
+# "Volume 01" junk it already produces for Kapowarr's layout.
+#
+# Two things this costs, both verified on real issues:
+#   - an issue must be named "<Series> <NNN>.pdf" to join its series. The folder name
+#     is NOT used, so a release left as "Hackable_N59_Mars_Avril.pdf" is a series of
+#     its own, and a file loose at the library root is skipped without a word.
+#   - a PDF carrying an embedded /Title beats the filename, and there is no fixing
+#     that from outside the file.
+#
+# Provider Hardcover (2) with matching off. /api/Library/metadata-providers takes a
+# libraryType and offers only [4,2] for Comic - there is no "none" - and
+# ComicBookRoundup (4) would resolve magazines against a comics review site.
 DESIRED_LIBRARIES='[
   {"name":"Comics","type":5,"folders":["/comics","/comics-downloads"],"fileGroupTypes":[1,2,3,4],"metadataProvider":4},
   {"name":"Manga","type":0,"folders":["/manga","/manga-downloads"],"fileGroupTypes":[1,2,3,4],"metadataProvider":3},
-  {"name":"Books","type":2,"folders":["/books"],"fileGroupTypes":[1,2,3],"metadataProvider":3}
+  {"name":"Books","type":2,"folders":["/books"],"fileGroupTypes":[1,2,3],"metadataProvider":3},
+  {"name":"Magazines","type":1,"folders":["/magazines"],"fileGroupTypes":[1,2,3,4],"metadataProvider":2,"allowMetadataMatching":false}
 ]'
 
 kv_curl() {
@@ -71,7 +90,10 @@ library_payload() {
           manageCollections: false,
           manageReadingLists: false,
           allowScrobbling: false,
-          allowMetadataMatching: true,
+          # Per-library, defaulting to on so the three original libraries keep the
+          # value they were created with. Spelt out rather than `// true`, which
+          # would read an explicit false as absent and flip it back on.
+          allowMetadataMatching: (if has("allowMetadataMatching") then .allowMetadataMatching else true end),
           enableMetadata: true,
           removePrefixForSortName: false,
           inheritWebLinksFromFirstChapter: false,
@@ -108,7 +130,8 @@ ensure_libraries() {
         drift="$(printf '%s' "$current" | jq --argjson d "$desired" '
             (.type != $d.type)
             or ((.folders | sort) != ($d.folders | sort))
-            or ((.libraryFileTypes | sort) != ($d.fileGroupTypes | sort))')"
+            or ((.libraryFileTypes | sort) != ($d.fileGroupTypes | sort))
+            or (.allowMetadataMatching != (if ($d | has("allowMetadataMatching")) then $d.allowMetadataMatching else true end))')"
 
         if [ "$drift" != "true" ]; then
             log "Kavita library '$name' already correct"

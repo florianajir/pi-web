@@ -47,8 +47,13 @@ NTFY_COMPLETE_URL="http://ntfy/downloads"
 # resolves to the same folder through AutoTMM, and rewriting it would ask qBittorrent to
 # relocate torrents that are seeding.
 #
+# magazines takes the 7010 route prowlarr-bootstrap.sh sends here, which only catches
+# the releases an indexer bothers to tag as such - the 1337x monthlies arrive as 7020
+# and land in books - so like comics it is also picked by hand, which the relocation
+# below turns into a one-click fix.
+#
 # Everything else keeps the client default ("prowlarr"), which no reader looks at.
-LIBRARY_CATEGORIES="manga:/downloads/manga comics:/downloads/comics books:/downloads/books audiobooks:/downloads/audiobooks shelfmark-audiobooks:/downloads/shelfmark"
+LIBRARY_CATEGORIES="manga:/downloads/manga comics:/downloads/comics books:/downloads/books audiobooks:/downloads/audiobooks magazines:/downloads/magazines shelfmark-audiobooks:/downloads/shelfmark"
 
 qb_curl() {
     docker exec "$QB_CONTAINER" curl -sS "$@"

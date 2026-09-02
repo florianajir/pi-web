@@ -72,11 +72,18 @@ QB_PORT="8080"
 #     books above them, 7000 would win and both would land in the Book library.
 #   - manga must stay above books, so the indexers that report a leaf *and* its parent
 #     (Knaben sends [7030,7000]) still reach manga rather than becoming books.
+#   - magazines must stay above books, which claimed 7010 until now.
+#
+# 7010 Books/Mags is the one Books leaf naming a kind rather than a format, so it gets
+# its own destination; 107010 is C411's id for the same, and C411 always sends the
+# pair. 7020 Books/EBook stays with books on purpose: on 1337x it carries the monthly
+# magazine rips and ordinary ebooks alike, with nothing to tell them apart.
 QB_CATEGORY_MAP='[
   {"clientCategory":"comics","categories":[107102,107104]},
   {"clientCategory":"manga","categories":[7030,107103,117084,156719,111160]},
   {"clientCategory":"audiobooks","categories":[3030,107105]},
-  {"clientCategory":"books","categories":[7000,7010,7020,7040,7050,7060]}
+  {"clientCategory":"magazines","categories":[7010,107010]},
+  {"clientCategory":"books","categories":[7000,7020,7040,7050,7060]}
 ]'
 FLARESOLVERR_NAME="FlareSolverr"
 FLARESOLVERR_TAG="flaresolverr"

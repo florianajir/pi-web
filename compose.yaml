@@ -1529,6 +1529,9 @@ services:
       # torrent seeding from there. Same split as manga/ + download/manga/.
       - ${DATA_LOCATION:-./data}/download/comics:/comics-downloads:ro
       - ${DATA_LOCATION:-./data}/download/books:/books:ro
+      # Read as a Comic library despite holding PDFs; see kavita-library-bootstrap.sh
+      # for why, and for the naming an issue has to follow to join its series.
+      - ${DATA_LOCATION:-./data}/download/magazines:/magazines:ro
     labels:
       - "homepage.group=Books"
       - "homepage.name=Kavita"
