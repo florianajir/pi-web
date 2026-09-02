@@ -288,9 +288,11 @@ category. Two more knobs worth knowing:
 **Grabbing from Prowlarr's own UI, for any media type.** It works, but the category is
 resolved from the release's newznab id, not from what you know the file to be — Prowlarr
 sends `GetCategoryForRelease(release) ?? Settings.Category`, and the default is
-`prowlarr`, a folder no reader indexes. On the indexers here that means 3030, 7020 and
-7030 land correctly and a bare `7000`, `3000`, `3010` or `8000` does not. Two ways
-through:
+`prowlarr`, a folder no reader indexes. On the indexers here 3030, 7000 and the Books
+subcategories all land somewhere; a bare `3000`, `3010` or `8000` does not. Note that
+7000 is mapped to `books` regardless of what the release holds, so a Nyaa.si manga or a
+mis-tagged audiobook arrives in `download/books/` — see ARCHITECTURE.md for why that is
+the lesser evil. Two ways through:
 
 1. **Copy the magnet or .torrent out of Prowlarr and add it in qBittorrent**, choosing
    the category yourself. Deterministic for every media type; this is the reliable one.

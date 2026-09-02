@@ -182,7 +182,7 @@ the list, `scripts/prowlarr-bootstrap.sh` the newznab ids Prowlarr maps onto it.
 
 | Category | Save path | Destination | Prowlarr ids |
 |----------|-----------|-------------|--------------|
-| `books` | `download/books/` | Kavita, **Books** | 7010, 7020, 7040, 7050, 7060 |
+| `books` | `download/books/` | Kavita, **Books** | 7000, 7010, 7020, 7040, 7050, 7060 |
 | `manga` | `download/manga/` | Kavita, **Manga** | 7030 |
 | `comics` | `download/comics/` | Kavita, **Comics** | — (hand-pick) |
 | `audiobooks` | `download/audiobooks/` | **Audiobookshelf** | 3030 |
@@ -214,6 +214,22 @@ Technical, 7050 Other, 7060 Foreign) go to `books`. Audiobooks are 3030
 subcategory, so they are mapped on their own and 3010 MP3 and 3040 Lossless keep
 falling through to the default. Comics do not come through Prowlarr at all: Kapowarr
 fetches them and imports into its own root folder.
+
+`books` also claims **7000**, the bare Books parent, which says nothing about *which*
+kind of book. It has to: 6 of the enabled indexers — YggReborn, Torrent9, Nyaa.si,
+World-torrent, Internet Archive, Torrent[CORE] — declare no Books subcategory at all, so
+every book grab from them was unroutable and landed in the default `prowlarr` folder
+that nothing indexes. The cost is Nyaa.si, whose 7000 is manga rather than ebooks and
+now arrives in Kavita's Book library: visible under the wrong parser, and moved by hand
+into `download/manga/`. Wrong library beats invisible.
+
+**The order of the mappings is load-bearing, and `manga` must stay first.** Prowlarr
+resolves the client category with `FirstOrDefault(x => x.Categories.Intersect(release
+.Categories).Any())` (`DownloadClientBase.cs`) — first match in list order, not most
+specific. Indexers that report a leaf *and* its parent, as Knaben does with
+`[7030, 7000]`, therefore still reach `manga`; swap the two lines and every one of them
+becomes a book. Verified by grabbing a `[7030, 7000]` release and watching it land in
+`manga` with 7000 mapped to `books`.
 
 Seven places must agree on these paths, and all seven are provisioned: the `kavita`
 volumes in `compose.yaml`, `DESIRED_LIBRARIES` in

@@ -26,9 +26,23 @@ QB_PORT="8080"
 # than a Books subcategory; mapped on its own so 3010 MP3 and 3040 Lossless keep
 # falling through to the client default. Shelfmark's own grabs bypass this map - it
 # adds them to qBittorrent itself, under QBITTORRENT_CATEGORY_AUDIOBOOK.
+#
+# 7000, the bare Books parent, is mapped even though it says nothing about *which*
+# kind of book: 6 of the enabled indexers declare no Books subcategory at all
+# (YggReborn, Torrent9, Nyaa.si, World-torrent, Internet Archive, Torrent[CORE]), so
+# without it every book grab from them was unroutable and landed in the client default,
+# which nothing indexes. The cost is Nyaa.si, whose 7000 is manga rather than ebooks and
+# now arrives in Kavita's Book library - visible under the wrong parser, and moved by
+# hand into download/manga/. Accepted deliberately: wrong library beats invisible.
+#
+# ORDER MATTERS, and manga must stay first. Prowlarr resolves the client category with
+# `categories.FirstOrDefault(x => x.Categories.Intersect(release.Categories).Any())`
+# (DownloadClientBase.cs) - first match in list order, not most specific. Indexers that
+# report a leaf *and* its parent (Knaben sends [7030,7000]) therefore still reach manga;
+# swap these two lines and every one of them becomes a book instead.
 QB_CATEGORY_MAP='[
   {"clientCategory":"manga","categories":[7030]},
-  {"clientCategory":"books","categories":[7010,7020,7040,7050,7060]},
+  {"clientCategory":"books","categories":[7000,7010,7020,7040,7050,7060]},
   {"clientCategory":"audiobooks","categories":[3030]}
 ]'
 FLARESOLVERR_NAME="FlareSolverr"
