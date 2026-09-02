@@ -19,6 +19,14 @@ place to look.
 Everything except Immich regenerates on every stack boot - idempotent, only
 rewritten when the value actually changed, and Homepage is restarted only then.
 
+**Adding a new secret here needs `make update`, not just the bootstrap.** The
+script ends with `docker restart pi-homepage`, which is enough for a changed
+*file* but not for the new `HOMEPAGE_FILE_*` variable in `compose.yaml` that
+points at it: environment is fixed when a container is created, so a restart
+keeps the old set, `{{HOMEPAGE_FILE_...}}` never resolves and the widget shows
+a bare "API Error". `make update` runs `compose up -d`, which recreates the
+container first.
+
 Immich is the exception, and not for lack of trying: its admin password is set
 at signup and is not derivable from `.env`, and `api_key.key` is stored hashed,
 so neither its API nor its database can hand a key back. The bootstrap creates
