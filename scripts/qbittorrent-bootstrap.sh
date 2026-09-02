@@ -122,6 +122,40 @@ configure_autorun() {
     fi
 }
 
+# Relocate a torrent when its category changes, so correcting a misfiled grab is one
+# dropdown away instead of a category change plus a setLocation. This is the recovery
+# path for a Prowlarr UI grab: Prowlarr resolves the client category from the release's
+# newznab id, and the ids the French indexers actually emit are often the bare parents
+# (7000 Books, 3000 Audio) or 8000 Other, none of which can be mapped without sending
+# music or manga into the wrong library - so those land in the default "prowlarr"
+# folder, and the fix is to set the right category by hand.
+#
+# Only this one preference: "when Default Save Path changed" and "when Category Save
+# Path changed" are separate switches (save_path_changed_tmm_enabled and
+# torrent_changed_tmm_enabled), and the latter is why ensure_library_categories must
+# not rewrite the save path of a category holding torrents that are seeding.
+# Idempotent: reads the preference first. Best-effort (warns, no die).
+configure_category_relocation() {
+    local current prefs http_code
+    current="$(qb_curl "$QB_API/app/preferences" 2>/dev/null \
+        | jq -r '.category_changed_tmm_enabled // false' 2>/dev/null || true)"
+    if [ "$current" = "true" ]; then
+        log "qBittorrent category relocation already enabled, skipping"
+        return 0
+    fi
+
+    prefs='{"category_changed_tmm_enabled": true}'
+    http_code="$(printf '%s' "$prefs" | docker exec -i "$QB_CONTAINER" curl -sS -o /dev/null -w '%{http_code}' \
+        -H "Referer: http://127.0.0.1:8080" \
+        --data-urlencode "json@-" \
+        "$QB_API/app/setPreferences")"
+    if [ "$http_code" = "200" ]; then
+        log "Enabled qBittorrent relocate-on-category-change"
+    else
+        log "WARNING: qBittorrent category relocation setPreferences returned HTTP $http_code"
+    fi
+}
+
 # Create the categories whose save paths Kavita indexes, so a Books or Comics grab
 # lands in a folder Kavita scans while everything else stays in the download root and
 # out of its sight. Prowlarr maps releases to them (scripts/prowlarr-bootstrap.sh).
@@ -189,6 +223,7 @@ main() {
     fi
 
     configure_autorun
+    configure_category_relocation
     ensure_library_categories
     log "qBittorrent bootstrap complete"
 }

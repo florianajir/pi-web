@@ -190,6 +190,12 @@ the list, `scripts/prowlarr-bootstrap.sh` the newznab ids Prowlarr maps onto it.
 | `shelfmark-audiobooks` | `download/shelfmark/` | staging, same folder; a label so the list distinguishes the two | — |
 | `prowlarr` | `download/prowlarr/` | nothing; Prowlarr's fallback for unmapped ids | — |
 
+A grab that falls through to `prowlarr` is recoverable rather than lost: qBittorrent has
+`category_changed_tmm_enabled` on, so changing a torrent's category relocates its files
+to the new save path — provided the torrent is in Automatic Torrent Management mode,
+which Prowlarr's grabs are and Shelfmark's are not (it passes an explicit save path,
+which forces Manual).
+
 Two asymmetries are deliberate. **`comics` has no Prowlarr mapping**: comics and manga
 share newznab id 7030, which goes to `manga`, so Prowlarr cannot tell them apart and the
 category is hand-pick only — which is its whole purpose, as the fallback for issues

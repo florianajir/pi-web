@@ -244,6 +244,57 @@ are *not* destinations: they are Shelfmark's staging area, and Shelfmark only
 post-processes torrents belonging to one of its own tasks, so a manual add left there
 downloads and then sits forever.
 
+**Shelfmark finds no audiobook for a title a tracker definitely carries.** Not a
+matching problem — the indexer was never asked. Shelfmark queries Prowlarr with one
+category per content type: `[7000]` for anything text, `[3030]` for an audiobook
+(`release_sources/prowlarr/source.py`). 7000 is a *parent*, so it expands over the whole
+Books range and text searches are broad. 3030 is a leaf, and an indexer whose
+capabilities do not declare it is skipped entirely — which on this stack is 5 of the 12
+enabled indexers, including **YggReborn** and **Torrent9**, the two that tag essentially
+every release 7000 whatever it holds. Torrent[CORE] uses 3010 and 8000, Internet Archive
+uses 3000. None of those can be mapped to audiobooks without dragging music and manga
+along with them.
+
+`PROWLARR_AUTO_EXPAND=true` in `compose.yaml` is the answer: when the filtered pass
+returns nothing, Shelfmark reruns with no category filter and every indexer is queried.
+It only fires on a search that already failed. Two more knobs if a release is still
+invisible:
+
+- **Manual query** in the search UI — Shelfmark otherwise searches the *metadata
+  record's* title and author, so a release named nothing like the Hardcover entry never
+  matches. A manual query is passed through, and still honours auto-expand.
+- **`PROWLARR_COLLAPSE_DUPLICATES`** (on by default, "Show one row per release")
+  collapses several indexer entries for one release into a single row. Turn it off to
+  see every entry, which is what surfaces filter-specific ones like freeleech.
+
+**Grabbing from Prowlarr's own UI, for any media type.** It works, but the category is
+resolved from the release's newznab id, not from what you know the file to be — Prowlarr
+sends `GetCategoryForRelease(release) ?? Settings.Category`, and the default is
+`prowlarr`, a folder no reader indexes. On the indexers here that means 3030, 7020 and
+7030 land correctly and a bare `7000`, `3000`, `3010` or `8000` does not. Two ways
+through:
+
+1. **Copy the magnet or .torrent out of Prowlarr and add it in qBittorrent**, choosing
+   the category yourself. Deterministic for every media type; this is the reliable one.
+2. **Grab in Prowlarr, then fix the category in qBittorrent.** Since
+   `category_changed_tmm_enabled` is on (set by `scripts/qbittorrent-bootstrap.sh`), the
+   files *move* to the new category's save path — no Set Location needed. Verified: a
+   torrent switched from `prowlarr` to `audiobooks` relocated on its own.
+
+   The catch is that relocation needs the torrent in **Automatic Torrent Management**
+   mode. Prowlarr's grabs are (`auto_tmm=true`); Shelfmark's are not, because it passes
+   an explicit save path on add, which forces Manual mode. Flip one with
+   `torrents/setAutoManagement`.
+
+Either way the file arrives as the **raw release tree**, with none of the renaming
+Shelfmark's own imports get, so the destination's own parsing rules apply:
+
+| Destination | What the raw tree costs you |
+|---|---|
+| `audiobooks` | Fine. A multi-file torrent has its own folder, which is exactly one book; a single-file one is a single loose file, also one book. Metadata comes from the audio tags, not the folder. |
+| `books` | **A single-file torrent breaks.** A lone `.epub` at the root of `download/books/` has no folder to name a series after and Kavita skips it silently. Put it in a subfolder with qBittorrent's `renameFile` so the torrent follows. |
+| `comics`, `manga` | The folder becomes the series name — see the next entry. |
+
 **A hand-grabbed comic lands in Kavita under a scene-release name.** Expected, and
 fixable before the scan. The Comics library is the ComicVine type, whose parser takes
 the series from the *containing folder* and never from the filename — and
