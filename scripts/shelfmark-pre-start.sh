@@ -10,6 +10,13 @@
 # written here wins over the web UI and is reapplied on every start — which is
 # what makes this idempotent without reading Shelfmark's own state.
 #
+# That precedence is stronger than it looks: core/config.py get() checks
+# is_value_from_env *before* any per-account override, so a setting rendered
+# here is frozen for every user, not merely locked in the admin UI. Only put a
+# value here when that is what you want — a discovered credential, a service
+# URL. Anything a user is meant to be able to change belongs in
+# shelfmark-settings-bootstrap.sh as a seeded default instead.
+#
 # A pre-start hook (scripts/stack-up.sh): compose reads env_file at `up`, so the
 # file has to exist before the containers start.
 
@@ -33,16 +40,6 @@ service_enabled() {
 # would be eaten as the start of a variable reference.
 escape_compose_env_value() {
     printf '%s' "$1" | sed 's/[$]/$$/g'
-}
-
-# Shelfmark filters searches by two-letter language codes (its
-# data/book-languages.json), while DEFAULT_LANGUAGE is a BCP 47 tag.
-book_language() {
-    local tag=""
-    tag="$(get_env_value DEFAULT_LANGUAGE)"
-    tag="${tag%%-*}"
-    [ -n "$tag" ] || tag="en"
-    printf '%s' "$tag" | tr '[:upper:]' '[:lower:]'
 }
 
 # From the host copy, not `docker exec`: this is a pre-start hook, so on a cold
@@ -134,9 +131,14 @@ write_smtp() {
     return 0
 }
 
+# BOOK_LANGUAGE is deliberately absent. It used to be rendered here, which made
+# it unchangeable: Shelfmark's environment wins over a per-account setting, not
+# just over the web UI (core/config.py get), so an env value froze the language
+# for everyone - while the field's own description promises "Users can override
+# this for their own account". It is seeded as a plain default by
+# shelfmark-settings-bootstrap.sh instead.
 render() {
     printf '# Managed by scripts/shelfmark-pre-start.sh\n'
-    printf 'BOOK_LANGUAGE=%s\n' "$(book_language)"
     write_prowlarr
     write_qbittorrent
     write_notifications

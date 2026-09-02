@@ -117,9 +117,12 @@ Both read that key out of `kavita.db` (read-only — never edit it, the schema i
 Authentication needs nothing: `scripts/shelfmark-settings-bootstrap.sh` writes the Authelia
 client into Shelfmark's `plugins/security.json`, password login is off, and the first
 Authelia user to sign in is auto-provisioned (admin if they are in the `admin` group).
-Prowlarr, qBittorrent, ntfy, SMTP and the search language are rendered into
+Prowlarr, qBittorrent, ntfy and SMTP are rendered into
 `config/shelfmark/shelfmark.env` on every start, so those settings show as
-environment-managed and read-only in the UI.
+environment-managed and read-only in the UI. Only discovered credentials and
+service URLs go there: Shelfmark's environment outranks per-account settings as
+well as the admin UI, so anything a user is meant to be able to change is
+seeded as a plain default instead.
 
 Two release sources are wired up:
 
@@ -144,8 +147,11 @@ A donator key (**Settings → Direct Download → `AA_DONATOR_KEY`**) removes th
 the slow download hosts. Without one, Anna's Archive queues you for a minute or two per
 file, which is why `RELEASE_SEARCH_TIMEOUT` defaults to 300 s.
 
-Per-account language: the stack sets the default from `DEFAULT_LANGUAGE` (`fr-FR` →
-`fr`), and each user can override it for their own searches.
+Per-account language: the stack seeds the default from `DEFAULT_LANGUAGE`
+(`fr-FR` → `fr`) on first start, and each user can override it for their own
+searches. Seeded, not enforced — changing `DEFAULT_LANGUAGE` later will not
+overwrite a language you or a user has since chosen; adjust it under
+**Settings → Search Mode**.
 
 ### 6. Audiobookshelf — nothing, unless you want a second admin
 

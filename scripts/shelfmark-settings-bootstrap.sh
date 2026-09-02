@@ -223,6 +223,34 @@ configure_hardcover() {
         'if (.METADATA_PROVIDER_AUDIOBOOK // "") == "" then .METADATA_PROVIDER_AUDIOBOOK = "hardcover" else . end'
 }
 
+# The default search-language filter, derived from DEFAULT_LANGUAGE: Shelfmark
+# filters on two-letter codes (its data/book-languages.json) while
+# DEFAULT_LANGUAGE is a BCP 47 tag.
+#
+# Here rather than in shelfmark.env, where it used to be, because this is the
+# one search setting whose own field description promises "Users can override
+# this for their own account" - and an environment value wins over exactly that
+# (core/config.py get checks is_value_from_env before any per-account override),
+# so rendering it there silently froze the language for everyone.
+#
+# Seeded, never reconciled: only an unset value is filled, so changing
+# DEFAULT_LANGUAGE later does not reach back and overwrite a language somebody
+# chose. SEARCH_MODE, DESTINATION and DESTINATION_AUDIOBOOK stay environment
+# values on purpose - the first is a deployment mode, the other two are
+# container paths tied to the mounts in compose.yaml, and a per-account
+# override of those would write outside them.
+seed_book_language() {
+    local lang=""
+
+    lang="$(get_env_value DEFAULT_LANGUAGE)"
+    lang="${lang%%-*}"
+    [ -n "$lang" ] || lang="en"
+    lang="$(printf '%s' "$lang" | tr '[:upper:]' '[:lower:]')"
+
+    apply search_mode --arg lang "$lang" \
+        'if (.BOOK_LANGUAGE // []) == [] then .BOOK_LANGUAGE = [$lang] else . end'
+}
+
 # Seeded, not reconciled: mirror availability moves on its own schedule and the
 # list is the user's to curate in Settings -> Mirrors. Only an empty list is
 # filled, so an edited one is left alone.
@@ -243,6 +271,7 @@ main() {
     configure_oidc
     configure_proxy
     configure_hardcover
+    seed_book_language
     seed_mirrors
 
     if [ "$CHANGED" = "0" ]; then
