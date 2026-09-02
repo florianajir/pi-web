@@ -162,19 +162,44 @@ root and a software torrent's installer tree becomes series named after its inte
 | Path | Written by | Read by Kavita |
 |------|-----------|----------------|
 | `download/manga/`, `download/books/` | the matching qBittorrent category | yes |
-| `download/audiobooks/` | Shelfmark (`DESTINATION_AUDIOBOOK`); read by **Audiobookshelf**, not Kavita | no |
-| `download/shelfmark/` | qBittorrent's `shelfmark` category, where Shelfmark's own grabs land before import | no |
+| `download/audiobooks/` | the `audiobooks` qBittorrent category, and Shelfmark (`DESTINATION_AUDIOBOOK`); read by **Audiobookshelf**, not Kavita | no |
+| `download/shelfmark/` | qBittorrent's `shelfmark` and `shelfmark-audiobooks` categories, where Shelfmark's own grabs land before import | no |
 | `download/prowlarr/` | qBittorrent's `prowlarr` category (Prowlarr's default) | no |
 | `download/incomplete/` | qBittorrent's temp path | no |
-| `download/` (root) | torrents added by hand, and Kapowarr's seeding copies (`kapowarr` category) | no |
+| `download/` (root) | torrents added by hand with no category — nothing indexes it | no |
+
+### qBittorrent categories
+
+The category is the whole routing decision: its save path is the destination, so it is
+also what to pick when adding a torrent by hand. `scripts/qbittorrent-bootstrap.sh` owns
+the list, `scripts/prowlarr-bootstrap.sh` the newznab ids Prowlarr maps onto it.
+
+| Category | Save path | Destination | Prowlarr ids |
+|----------|-----------|-------------|--------------|
+| `books` | `download/books/` | Kavita, **Books** | 7010, 7020, 7040, 7050, 7060 |
+| `manga` | `download/manga/` | Kavita, **Manga** | 7030 |
+| `audiobooks` | `download/audiobooks/` | **Audiobookshelf** | 3030 |
+| `shelfmark` | `download/shelfmark/` | staging — Shelfmark imports it | — |
+| `shelfmark-audiobooks` | `download/shelfmark/` | staging, same folder; a label so the list distinguishes the two | — |
+| `prowlarr` | `download/prowlarr/` | nothing; Prowlarr's fallback for unmapped ids | — |
+
+Two asymmetries are deliberate. **Comics has no category**: Kapowarr owns `comics/` and
+moves files inside it with copy-then-delete, which races a torrent seeding from that
+tree. And the **staging categories are not destinations** — Shelfmark post-processes only
+torrents belonging to one of its own tasks, so a torrent added there by hand downloads
+and then sits forever. Shelfmark itself routes by the task's content type, not by
+category, which is why the two staging categories can share one folder.
 
 Prowlarr routes the split automatically: its qBittorrent download client carries a
 category map, and Prowlarr resolves the client category as
 `GetCategoryForRelease(release) ?? Settings.Category`. **newznab has no manga
 category** — manga ships as 7030 `Books/Comics`, the same id as comics — so 7030 goes
 to `manga` and the remaining Books subcategories (7010 Mags, 7020 EBook, 7040
-Technical, 7050 Other, 7060 Foreign) go to `books`. Comics do not come through
-Prowlarr at all: Kapowarr fetches them and imports into its own root folder.
+Technical, 7050 Other, 7060 Foreign) go to `books`. Audiobooks are 3030
+`Audio/Audiobook`, a sibling of the music ids under 3000 rather than a Books
+subcategory, so they are mapped on their own and 3010 MP3 and 3040 Lossless keep
+falling through to the default. Comics do not come through Prowlarr at all: Kapowarr
+fetches them and imports into its own root folder.
 
 Seven places must agree on these paths, and all seven are provisioned: the `kavita`
 volumes in `compose.yaml`, `DESIRED_LIBRARIES` in

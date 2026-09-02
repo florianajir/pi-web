@@ -214,6 +214,38 @@ before `scripts/audiobookshelf-pre-start.sh` existed the Docker daemon created i
 the ownership, but only when it runs as root — `sudo sh scripts/audiobookshelf-pre-start.sh`
 if `make update` ran unprivileged and the start log warned about it.
 
+**One audiobook shows up as dozens of one-track books.** Audiobookshelf calls a book
+either a *subfolder* of the library or a *single loose file* at its root. It never
+groups root-level files with each other — not even ones sharing an `album` tag — so a
+multi-file release dropped flat into `download/audiobooks/` becomes one book per track.
+Shelfmark's `FILE_ORGANIZATION_AUDIOBOOK` is now `organize` in `compose.yaml`, which
+applies `{Author}/{Title}/{Title}` and produces the folder Audiobookshelf expects; its
+default, `rename`, renames single-file grabs and leaves multi-file ones flat, which is
+what caused this. To repair an existing one, move the tracks into a subfolder on the
+host — `mv` within `download/` preserves the hardlinks, so the torrent keeps seeding —
+then rescan and clear the stale entries, which the scan marks missing rather than
+deleting:
+
+```sh
+KEY=$(cat "$DATA_LOCATION/audiobookshelf/config/pi-web-api-key")
+LIB=$(docker run --rm --network frontend curlimages/curl -s -H "Authorization: Bearer $KEY" \
+  http://pi-audiobookshelf/audiobookshelf/api/libraries | jq -r '.libraries[0].id')
+docker run --rm --network frontend curlimages/curl -s -X POST -H "Authorization: Bearer $KEY" \
+  "http://pi-audiobookshelf/audiobookshelf/api/libraries/$LIB/scan?force=1"
+docker run --rm --network frontend curlimages/curl -s -X DELETE -H "Authorization: Bearer $KEY" \
+  "http://pi-audiobookshelf/audiobookshelf/api/libraries/$LIB/issues"
+```
+
+**A torrent added by hand never reaches any reader.** An uncategorised torrent saves to
+the `download/` root, which nothing indexes. Pick the category for the destination
+instead — `books`, `manga` or `audiobooks`; `scripts/qbittorrent-bootstrap.sh` owns the
+list and its save paths. The `shelfmark` and `shelfmark-audiobooks` categories are *not*
+destinations: they are Shelfmark's staging area, and Shelfmark only post-processes
+torrents belonging to one of its own tasks, so a manual add left there downloads and
+then sits forever. There is no `comics` category on purpose — Kapowarr owns `comics/`
+and moves files inside it with copy-then-delete, which races a torrent seeding from
+that tree.
+
 **Nothing downloads and the log mentions the torrent client.** Shelfmark reaches
 qBittorrent through gluetun (`http://gluetun:8080`) with `ADMIN_USER`/`PASSWORD`. If
 `ADMIN_USER` is under 3 characters, qBittorrent rejected it and kept its own generated

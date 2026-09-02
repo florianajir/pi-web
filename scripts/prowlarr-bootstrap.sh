@@ -22,9 +22,14 @@ QB_PORT="8080"
 # newznab has no manga category - manga ships as 7030 Books/Comics, the same id as
 # comics - so 7030 goes to manga here and comics come from Kapowarr instead, which
 # imports into its own root folder and never touches these categories.
+# Audiobooks are 3030 Audio/Audiobook, a sibling of the music ids under 3000 rather
+# than a Books subcategory; mapped on its own so 3010 MP3 and 3040 Lossless keep
+# falling through to the client default. Shelfmark's own grabs bypass this map - it
+# adds them to qBittorrent itself, under QBITTORRENT_CATEGORY_AUDIOBOOK.
 QB_CATEGORY_MAP='[
   {"clientCategory":"manga","categories":[7030]},
-  {"clientCategory":"books","categories":[7010,7020,7040,7050,7060]}
+  {"clientCategory":"books","categories":[7010,7020,7040,7050,7060]},
+  {"clientCategory":"audiobooks","categories":[3030]}
 ]'
 FLARESOLVERR_NAME="FlareSolverr"
 FLARESOLVERR_TAG="flaresolverr"

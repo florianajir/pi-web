@@ -1614,10 +1614,30 @@ services:
       - SUPPORTED_FORMATS=epub,pdf,mobi,azw3,fb2,djvu
       - INGEST_DIR=/downloads/books
       - DESTINATION_AUDIOBOOK=/downloads/audiobooks
+      # Audiobookshelf calls a book either a subfolder of the library or a single
+      # loose file at its root - it never groups root-level files, not even ones
+      # sharing an `album` tag. The default here is "rename", which renames
+      # single-file grabs and leaves multi-file ones with their original names, so
+      # a 59-track Odyssee landed as 59 flat mp3s and Audiobookshelf made 59
+      # one-track books out of them. "organize" applies
+      # TEMPLATE_AUDIOBOOK_ORGANIZE ({Author}/{Title}/{Title}), which is the
+      # layout Audiobookshelf expects; upstream labels it "Recommended for
+      # Audiobookshelf". Safe here because DESTINATION_AUDIOBOOK is a library
+      # Audiobookshelf reads, not an ingest folder that consumes what it finds.
+      - FILE_ORGANIZATION_AUDIOBOOK=organize
       # qBittorrent saves Shelfmark's grabs outside /downloads/books so a raw
       # torrent tree never reaches Kavita; only the processed file is filed there.
+      # The same reasoning keeps audiobooks out of /downloads/audiobooks while they
+      # download: Audiobookshelf reads that folder, so a raw release tree there
+      # would be indexed alongside the organised copy Shelfmark then writes.
       - QBITTORRENT_DOWNLOAD_DIR=/downloads/shelfmark
       - QBITTORRENT_CATEGORY=shelfmark
+      # Same staging folder as QBITTORRENT_CATEGORY (both categories pin savePath
+      # to /downloads/shelfmark in scripts/qbittorrent-bootstrap.sh) - the split is
+      # for legibility only. Shelfmark routes by the task's content type, not by
+      # category, so mixing them was harmless but left no way to tell an ebook
+      # grab from an audiobook one in qBittorrent's list.
+      - QBITTORRENT_CATEGORY_AUDIOBOOK=shelfmark-audiobooks
       - CALIBRE_WEB_URL=https://kavita.${HOST_NAME:-pi.lan}
     env_file:
       - path: ./config/shelfmark/shelfmark.env
