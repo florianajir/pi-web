@@ -146,6 +146,12 @@ configure_oidc() {
     # unguarded, so leaving it undefined builds "undefined/auth/openid/callback"
     # and every login fails on a redirect_uri mismatch.
     #
+    # Empty rather than the router base path (/audiobookshelf), which is what
+    # upstream's own settings page would default it to. The callback then lands
+    # on the prefix-less path and the server's rewrite carries it onto the
+    # prefixed route, so this is the URI Authelia has registered - keep the two
+    # in step if you ever change it.
+    #
     # authOpenIDGroupClaim stays empty for the reason spelled out beside the
     # Authelia client: the claim is read as a role, and a user in none of
     # admin/user/guest is denied outright. Only `admin` exists in this stack.

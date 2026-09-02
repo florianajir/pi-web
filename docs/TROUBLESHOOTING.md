@@ -141,13 +141,26 @@ Kavita then reads it. Repair a *copy* if the file is being seeded — changing t
 bytes invalidates the torrent — and keep `mimetype` as the first, uncompressed
 zip entry or the result is no longer a valid EPUB.
 
-**Audiobookshelf's "Sign in with SSO" answers 400 `Invalid callback URL`.** The image
-leaves `ROUTER_BASE_PATH` unset, and the server reads an unset value as
-`/audiobookshelf` — every URL still works, because one without the prefix is rewritten
-to carry it, so nothing looks wrong until a login. The callback check demands the URL
-start with that base path, and `/login` does not. `compose.yaml` sets the variable to
-the empty string, which is what actually turns the subfolder off; check it survived a
-hand edit with `docker logs pi-audiobookshelf | head -2`.
+**Audiobookshelf's page never finishes loading — the spinner turns forever.** Its
+assets are 404ing. The image leaves `ROUTER_BASE_PATH` unset, and *unset does not
+mean no subfolder*: both the server and the Nuxt client read it as
+`?? '/audiobookshelf'`, and the published image has that default **baked into every
+asset URL** at build time. Setting the variable to the empty string makes the server
+stop serving that prefix while the client keeps asking for it, so every
+`/audiobookshelf/_nuxt/*.js` returns 404 and the app never boots. Leave it unset.
+Confirm with `docker logs pi-audiobookshelf | head -2`, which prints the effective
+value, and compare what the page asks for against what answers:
+
+```bash
+curl -sk https://audiobooks.<domain>/ | grep -oE 'src="[^"]*"'
+curl -sko /dev/null -w '%{http_code}\n' https://audiobooks.<domain>/audiobookshelf/_nuxt/<file>.js
+```
+
+The app is *meant* to live under `/audiobookshelf`; the server rewriting prefix-less
+URLs onto it is a convenience on top, which is why the root URL, the healthcheck and
+the Homepage widget all work without the prefix. A hand-built
+`?callback=…/login` test therefore proves nothing about SSO — the real login page
+sends `/audiobookshelf/login`, which passes the check the bare path fails.
 
 **Signing in to Audiobookshelf through SSO lands on a second, non-admin account.** The
 root account is created by `scripts/audiobookshelf-bootstrap.sh` and is matched to your
