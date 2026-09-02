@@ -35,15 +35,31 @@ QB_PORT="8080"
 # now arrives in Kavita's Book library - visible under the wrong parser, and moved by
 # hand into download/manga/. Accepted deliberately: wrong library beats invisible.
 #
-# ORDER MATTERS, and manga must stay first. Prowlarr resolves the client category with
+# The 1071xx ids are YggReborn's own tracker categories, which Prowlarr passes through in
+# release.Categories alongside the newznab ones, and the map intersects raw ints - so they
+# work as mappings. Ygg is the only enabled indexer that separates these at all: it reports
+# Bandes dessinees (107102), Mangas (107103), Comics (107104) and Livres audio (107105)
+# distinctly while collapsing all of them to 7000 for newznab. Everyone else lumps comics
+# and manga into one tracker category - 1337x 100039, C411 107030 "BDs & Comics & Manga",
+# Knaben 9102000, TPB 100602, TR4KER 107030 - each of which comes back identically for
+# Batman and for Naruto, so there is nothing to route on and 7030 stays the shared
+# fallback. 107105 is the one that matters most: it is how a French audiobook on Ygg gets
+# to Audiobookshelf, and Ygg has plenty that Shelfmark cannot see at all.
+#
+# ORDER MATTERS. Prowlarr resolves the client category with
 # `categories.FirstOrDefault(x => x.Categories.Intersect(release.Categories).Any())`
-# (DownloadClientBase.cs) - first match in list order, not most specific. Indexers that
-# report a leaf *and* its parent (Knaben sends [7030,7000]) therefore still reach manga;
-# swap these two lines and every one of them becomes a book instead.
+# (DownloadClientBase.cs) - first match in list order, not most specific. Two consequences:
+#
+#   - books must stay LAST, because 7000 is a catch-all that says nothing about the kind
+#     of book. Ygg reports an audiobook as [7000,107105] and a comic as [7000,107104]; with
+#     books above them, 7000 would win and both would land in the Book library.
+#   - manga must stay above books, so the indexers that report a leaf *and* its parent
+#     (Knaben sends [7030,7000]) still reach manga rather than becoming books.
 QB_CATEGORY_MAP='[
-  {"clientCategory":"manga","categories":[7030]},
-  {"clientCategory":"books","categories":[7000,7010,7020,7040,7050,7060]},
-  {"clientCategory":"audiobooks","categories":[3030]}
+  {"clientCategory":"comics","categories":[107102,107104]},
+  {"clientCategory":"manga","categories":[7030,107103]},
+  {"clientCategory":"audiobooks","categories":[3030,107105]},
+  {"clientCategory":"books","categories":[7000,7010,7020,7040,7050,7060]}
 ]'
 FLARESOLVERR_NAME="FlareSolverr"
 FLARESOLVERR_TAG="flaresolverr"

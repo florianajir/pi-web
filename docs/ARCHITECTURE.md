@@ -183,9 +183,9 @@ the list, `scripts/prowlarr-bootstrap.sh` the newznab ids Prowlarr maps onto it.
 | Category | Save path | Destination | Prowlarr ids |
 |----------|-----------|-------------|--------------|
 | `books` | `download/books/` | Kavita, **Books** | 7000, 7010, 7020, 7040, 7050, 7060 |
-| `manga` | `download/manga/` | Kavita, **Manga** | 7030 |
-| `comics` | `download/comics/` | Kavita, **Comics** | — (hand-pick) |
-| `audiobooks` | `download/audiobooks/` | **Audiobookshelf** | 3030 |
+| `manga` | `download/manga/` | Kavita, **Manga** | 7030, 107103 |
+| `comics` | `download/comics/` | Kavita, **Comics** | 107102, 107104 |
+| `audiobooks` | `download/audiobooks/` | **Audiobookshelf** | 3030, 107105 |
 | `shelfmark` | `download/shelfmark/` | staging — Shelfmark imports it | — |
 | `shelfmark-audiobooks` | `download/shelfmark/` | staging, same folder; a label so the list distinguishes the two | — |
 | `prowlarr` | `download/prowlarr/` | nothing; Prowlarr's fallback for unmapped ids | — |
@@ -223,13 +223,36 @@ that nothing indexes. The cost is Nyaa.si, whose 7000 is manga rather than ebook
 now arrives in Kavita's Book library: visible under the wrong parser, and moved by hand
 into `download/manga/`. Wrong library beats invisible.
 
-**The order of the mappings is load-bearing, and `manga` must stay first.** Prowlarr
+**The order of the mappings is load-bearing, and `books` must stay last.** Prowlarr
 resolves the client category with `FirstOrDefault(x => x.Categories.Intersect(release
 .Categories).Any())` (`DownloadClientBase.cs`) — first match in list order, not most
-specific. Indexers that report a leaf *and* its parent, as Knaben does with
-`[7030, 7000]`, therefore still reach `manga`; swap the two lines and every one of them
-becomes a book. Verified by grabbing a `[7030, 7000]` release and watching it land in
-`manga` with 7000 mapped to `books`.
+specific. Since `books` claims the catch-all 7000, anything above it in the list wins on
+its own more specific id and anything below it is unreachable. `manga` likewise stays
+above `books` so the indexers that report a leaf *and* its parent, as Knaben does with
+`[7030, 7000]`, still reach it. All three verified by grabbing real releases and watching
+where they landed.
+
+### The 1071xx ids
+
+Those are **YggReborn's own tracker categories**, which Prowlarr passes through in
+`release.Categories` next to the newznab ones — and the map intersects raw ints, so they
+can be mapped directly. Ygg is the only enabled indexer that separates these at all:
+
+| Ygg id | Ygg name | mapped to |
+|--------|----------|-----------|
+| 107100, 107101 | Livres, Presse | `books` (via 7000) |
+| 107102 | Bandes dessinées | `comics` |
+| 107103 | Mangas | `manga` |
+| 107104 | Comics | `comics` |
+| 107105 | **Livres audio** | `audiobooks` |
+
+Every other indexer lumps comics and manga into a single tracker category — 1337x
+`100039`, C411 `107030` *"BDs & Comics & Manga"*, Knaben `9102000`, The Pirate Bay
+`100602`, TR4KER `107030` — and each of those comes back **identically for Batman and for
+Naruto**, so there is nothing to route on and the shared 7030 stays the fallback. That is
+why an ambiguous comic still lands in `manga`: not a preference, just the only id
+available. `107105` is the most valuable of the five, since Ygg carries French audiobooks
+that Shelfmark cannot see at all (it asks Prowlarr for 3030, which Ygg never emits).
 
 Seven places must agree on these paths, and all seven are provisioned: the `kavita`
 volumes in `compose.yaml`, `DESIRED_LIBRARIES` in
