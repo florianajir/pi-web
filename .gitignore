@@ -30,3 +30,5 @@ __pycache__/
 
 ._.DS_Store
 .DS_Store
+/config/cloudflared/config.yml
+/config/cloudflared/credentials.json

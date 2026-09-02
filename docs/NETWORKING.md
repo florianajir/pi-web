@@ -150,6 +150,36 @@ Everything else — Postgres `5432`, Redis `6379`, LDAP `3890`, every app port �
 
 **On your router,** only `443/tcp` has to be forwarded: certificates use the Cloudflare DNS challenge, so port 80 need not be reachable from outside. Forward `41641/udp` and `3478/udp` as well for direct VPN connections; without them, traffic still works but rides the relay.
 
+## Cloudflare Tunnel (optional)
+
+Add `cloudflared` to `COMPOSE_PROFILES` and the stack gains a second way in, for
+the four hostnames that are meant to be public — `auth`, `immich`, `nextcloud`
+and `headscale`. It exists so `443/tcp` need not be forwarded and your home IP
+need not sit in public DNS; it is off by default and nothing depends on it.
+
+Setup, once:
+
+```sh
+cloudflared tunnel login          # authorise your zone in a browser
+cloudflared tunnel create pi-pcloud
+```
+
+Put the tunnel's UUID in `CLOUDFLARE_TUNNEL_ID` and the credentials JSON it
+wrote at `config/cloudflared/credentials.json`. Creating a tunnel needs an API
+token scoped `Account → Cloudflare Tunnel → Edit`; `CLOUDFLARE_DNS_API_TOKEN`
+stops at `Zone → DNS → Edit` and cannot do it.
+
+Ingress rules live in `config/cloudflared/config.yml.template`, rendered to
+`config.yml` at start by `scripts/cloudflared-pre-start.sh`. Everything not
+named there gets a `404` from the tunnel itself.
+
+**Two rules that are not stylistic.** cloudflared runs on its own `tunnel`
+network in `172.31.0.0/24`, deliberately outside `ALLOW_IP_RANGES`, so every
+tunnelled request reaches Traefik from an address `lan@docker` refuses — only
+the `-public` routers can answer it. And **never point a wildcard hostname at
+the tunnel**: that would hand the same path to every LAN-only service, and
+nothing would log an error.
+
 ## Cloudflare records
 
 ddns-updater maintains exactly two records against your zone, pointed at your current public IP.
