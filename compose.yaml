@@ -924,7 +924,18 @@ services:
       - "traefik.http.routers.immich.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.routers.immich.tls=true"
       - "traefik.http.routers.immich.priority=10"
-      - "traefik.http.routers.immich-public.rule=Host(`immich.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/share`) || PathPrefix(`/s/`) || PathPrefix(`/_app`) || PathPrefix(`/api`))"
+      # This router carries no lan@docker, so its rule *is* the public surface.
+      # A blanket PathPrefix(`/api`) put the whole authenticated API on the
+      # internet - /api/users/me, /api/albums, /api/faces, /api/sync/stream -
+      # none of which a share link touches. Worse, `immich@` then only ever saw
+      # the HTML shell: every API call from the logged-in app was routed here.
+      # Measured against a real share by splitting the access log per TCP
+      # connection, every anonymous request carries `key` or `slug`, without
+      # exception. So /api/assets - which a share and the app request at the
+      # same paths - is gated on that parameter rather than on the path.
+      # Fails closed: a missing path 403s from outside while still working from
+      # the LAN, so any change here must be validated off-tailnet.
+      - "traefik.http.routers.immich-public.rule=Host(`immich.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/share`) || PathPrefix(`/s/`) || PathPrefix(`/_app`) || Path(`/api/shared-links/me`) || Path(`/api/shared-links/login`) || Path(`/api/server/config`) || Path(`/api/server/features`) || Path(`/api/server/media-types`) || ((PathPrefix(`/api/assets`) || PathPrefix(`/api/download`) || PathPrefix(`/api/timeline`) || PathPrefix(`/api/albums`)) && (QueryRegexp(`key`, `.+`) || QueryRegexp(`slug`, `.+`))))"
       - "traefik.http.routers.immich-public.entrypoints=websecure"
       - "traefik.http.routers.immich-public.middlewares=frame-deny@docker"
       - "traefik.http.routers.immich-public.tls=true"
@@ -1017,7 +1028,16 @@ services:
       - "traefik.http.routers.nextcloud.entrypoints=websecure"
       - "traefik.http.routers.nextcloud.tls=true"
       - "traefik.http.routers.nextcloud.priority=10"
-      - "traefik.http.routers.nextcloud-public.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/s/`) || PathPrefix(`/public.php`) || PathPrefix(`/avatar/`) || PathPrefix(`/dist/`) || PathPrefix(`/apps/`) || PathPrefix(`/js/`) || PathPrefix(`/core/`) || PathPrefix(`/themes/`) || PathPrefix(`/remote.php/dav/calendars/`) || PathPrefix(`/remote.php/dav/public-calendars/`))"
+      # Same caveat as immich-public: no lan@docker, so this rule is the public
+      # surface. Two prefixes were wider than any share needs.
+      # `/avatar/` was an account-enumeration oracle - /avatar/<known-mail>/64/dark
+      # answers 200 where an unknown one answers 201, unauthenticated. Shares only
+      # ever request /avatar/guest/, so the prefix is narrowed to that.
+      # `/apps/` also exposed /apps/files/api/v1/*; the negation keeps the app
+      # assets (js, css, l10n, img, theming) that a share page genuinely loads
+      # while dropping every app's REST surface. /ocs/ and /remote.php/ were
+      # already absent from here, so the OCS API stays behind lan@docker.
+      - "traefik.http.routers.nextcloud-public.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/s/`) || PathPrefix(`/public.php`) || PathPrefix(`/avatar/guest/`) || PathPrefix(`/dist/`) || (PathPrefix(`/apps/`) && !PathRegexp(`^/apps/[^/]+/api/`)) || PathPrefix(`/js/`) || PathPrefix(`/core/`) || PathPrefix(`/themes/`) || PathPrefix(`/remote.php/dav/calendars/`) || PathPrefix(`/remote.php/dav/public-calendars/`))"
       - "traefik.http.routers.nextcloud-public.entrypoints=websecure"
       - "traefik.http.routers.nextcloud-public.middlewares=frame-deny@docker"
       - "traefik.http.routers.nextcloud-public.tls=true"
