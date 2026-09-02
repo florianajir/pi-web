@@ -131,7 +131,7 @@ jobs:
       COMPOSE_PROFILES: >-
         beszel,uptime-kuma,dockhand,n8n,n8n-runners,immich-machine-learning,
         immich-server,nextcloud,comet,prowlarr,flaresolverr,kavita,
-        shelfmark,vaultwarden,system-tools,open-webui
+        shelfmark,audiobookshelf,vaultwarden,system-tools,open-webui
       COMPOSE_ANSI: never
       COMPOSE_REMOVE_ORPHANS: "1"
       COMPOSE_PROGRESS: quiet
@@ -167,6 +167,9 @@ jobs:
           # Its Prowlarr/qBittorrent blocks no-op here (neither has run yet), which
           # is the degraded path worth exercising.
           sh ./scripts/shelfmark-pre-start.sh
+          # Creates audiobookshelf's /config and /metadata, and the audiobook
+          # folder it shares with shelfmark.
+          sh ./scripts/audiobookshelf-pre-start.sh
 
           # Make all generated files world-readable so docker compose (and the Docker
           # daemon) can open env_files regardless of the runner's umask or ownership.

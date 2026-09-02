@@ -66,6 +66,7 @@ prowlarr:prowlarr-pre-start.sh
 kapowarr:kapowarr-pre-start.sh
 kavita:kavita-pre-start.sh
 shelfmark:shelfmark-pre-start.sh
+audiobookshelf:audiobookshelf-pre-start.sh
 llama-cpp:llama-cpp-pre-start.sh
 stremio-lan:stremio-lan-pre-start.sh
 '
@@ -86,6 +87,7 @@ uptime-kuma:uptime-kuma-bootstrap.sh
 kavita:kavita-oidc-bootstrap.sh
 kavita:kavita-library-bootstrap.sh
 shelfmark:shelfmark-settings-bootstrap.sh
+audiobookshelf:audiobookshelf-bootstrap.sh
 open-webui:open-webui-bootstrap.sh
 homepage-widgets-bootstrap.sh
 '

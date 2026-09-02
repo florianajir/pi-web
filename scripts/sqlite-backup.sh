@@ -46,6 +46,7 @@ uptime-kuma:/userdata/uptime-kuma/kuma.db
 prowlarr:/userdata/prowlarr/prowlarr.db
 kapowarr:/userdata/kapowarr-db/Kapowarr.db
 shelfmark:/userdata/shelfmark/users.db
+audiobookshelf:/userdata/audiobookshelf/absdatabase.sqlite
 '
 
 mkdir -p "$DEST"

@@ -119,7 +119,30 @@ choices rather than fixes:
 scans as its **Books** library; its own in-progress grabs live in `download/shelfmark/`
 and are meant to be invisible to Kavita. Check the file actually landed, then trigger a
 library scan. Audiobooks go to `download/audiobooks/` and Kavita never reads them —
-browse those through Nextcloud.
+those are Audiobookshelf's library, and are also browsable through Nextcloud.
+
+**Audiobookshelf's "Sign in with SSO" answers 400 `Invalid callback URL`.** The image
+leaves `ROUTER_BASE_PATH` unset, and the server reads an unset value as
+`/audiobookshelf` — every URL still works, because one without the prefix is rewritten
+to carry it, so nothing looks wrong until a login. The callback check demands the URL
+start with that base path, and `/login` does not. `compose.yaml` sets the variable to
+the empty string, which is what actually turns the subfolder off; check it survived a
+hand edit with `docker logs pi-audiobookshelf | head -2`.
+
+**Signing in to Audiobookshelf through SSO lands on a second, non-admin account.** The
+root account is created by `scripts/audiobookshelf-bootstrap.sh` and is matched to your
+Authelia identity **by email** — so it only links if the LLDAP account you sign in with
+carries the same address as `EMAIL` in `.env`. Fix the address on either side and log in
+again, or promote the new account from the root one (Settings → Users). Group claims are
+deliberately not used: Audiobookshelf reads them as a role and denies anyone whose groups
+contain none of `admin`/`user`/`guest`, which in this stack is every regular user.
+
+**Shelfmark downloads an audiobook and nothing appears.** `download/audiobooks/` is the
+one download folder with no writer inside a container to create it, so on stacks built
+before `scripts/audiobookshelf-pre-start.sh` existed the Docker daemon created it as
+`root:root` and Shelfmark (uid 1000) could not file anything there. That hook repairs
+the ownership, but only when it runs as root — `sudo sh scripts/audiobookshelf-pre-start.sh`
+if `make update` ran unprivileged and the start log warned about it.
 
 **Nothing downloads and the log mentions the torrent client.** Shelfmark reaches
 qBittorrent through gluetun (`http://gluetun:8080`) with `ADMIN_USER`/`PASSWORD`. If

@@ -13,6 +13,7 @@ place to look.
 | `headscale_api_key` | Headscale | same script, creates a dedicated `headscale apikeys create` token |
 | `headscale_node_id` | Headscale | same script, looks up the `tailscale` client's node ID |
 | `kavita_api_key`    | Kavita    | same script, reads an admin key from `kavita.db` - Kavita refuses password logins while OIDC is enforced, so a key is the only way in |
+| `audiobookshelf_api_key` | Audiobookshelf | same script, logs in as the root account and mints a `homepage` API key - Audiobookshelf shows a key's value once, at creation, so this file is the only copy |
 | `immich_api_key`    | Immich    | **you paste it**: Immich > Account Settings > API Keys, permission `server.statistics` |
 
 Everything except Immich regenerates on every stack boot - idempotent, only

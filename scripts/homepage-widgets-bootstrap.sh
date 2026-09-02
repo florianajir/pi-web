@@ -116,6 +116,71 @@ sync_kavita_key() {
     log "Kavita API key ready for Homepage widget"
 }
 
+# --- Audiobookshelf: mint a dedicated API key ---
+# Audiobookshelf returns a new key's value once, at creation, and stores only the
+# record afterwards - so the secret file is the only copy and the key on the
+# server is the only way to tell whether that copy is still valid. Both have to
+# agree: a key with no file cannot be recovered, and a file with no key is dead.
+ABS_KEY_NAME="homepage"
+
+sync_audiobookshelf_key() {
+    abs_url="http://pi-audiobookshelf"
+    file="$SECRETS_DIR/audiobookshelf_api_key"
+
+    if ! container_is_running "pi-audiobookshelf"; then
+        log "WARNING: pi-audiobookshelf not running; skipping Audiobookshelf widget key"
+        return 0
+    fi
+
+    token="$(audiobookshelf_token "$abs_url" || true)"
+    if [ -z "$token" ]; then
+        # Expected until scripts/audiobookshelf-bootstrap.sh has created the root account.
+        log "WARNING: could not log in to Audiobookshelf; skipping its widget key"
+        return 0
+    fi
+
+    keys="$(docker_curl -H "Authorization: Bearer $token" "$abs_url/api/api-keys" 2>/dev/null)" || {
+        log "WARNING: could not list Audiobookshelf API keys; skipping"
+        return 0
+    }
+    existing_id="$(printf '%s' "$keys" | jq -r --arg n "$ABS_KEY_NAME" \
+        'first(.apiKeys[]? | select(.name == $n) | .id) // empty')"
+
+    if [ -n "$existing_id" ] && [ -s "$file" ]; then
+        log "Audiobookshelf API key already present for the Homepage widget"
+        return 0
+    fi
+
+    # Either half is missing, so the pair is unusable: drop the orphan record and
+    # mint a matching one. Deleting is what makes this safe to repeat - without
+    # it every run would add another "homepage" key nobody holds.
+    if [ -n "$existing_id" ]; then
+        docker_curl -X DELETE -H "Authorization: Bearer $token" \
+            "$abs_url/api/api-keys/$existing_id" >/dev/null 2>&1 \
+            || log "WARNING: could not remove the stale Audiobookshelf API key"
+    fi
+
+    user_id="$(docker_curl -H "Authorization: Bearer $token" "$abs_url/api/me" 2>/dev/null \
+        | jq -r '.id // empty')"
+    [ -n "$user_id" ] || { log "WARNING: could not read the Audiobookshelf user id; skipping"; return 0; }
+
+    # isActive must be sent explicitly: the API stores !!req.body.isActive, so an
+    # omitted field creates a key that authenticates nothing.
+    key="$(jq -cn --arg n "$ABS_KEY_NAME" --arg u "$user_id" \
+            '{name: $n, userId: $u, isActive: true}' \
+        | docker_curl_stdin -X POST -H "Authorization: Bearer $token" \
+            -H 'Content-Type: application/json' "$abs_url/api/api-keys" 2>/dev/null \
+        | jq -r '.apiKey.apiKey // empty')"
+
+    if [ -z "$key" ]; then
+        log "WARNING: could not create an Audiobookshelf API key"
+        return 0
+    fi
+
+    write_secret "$file" "$key"
+    log "Audiobookshelf API key ready for Homepage widget"
+}
+
 # --- Immich: the only key that cannot be minted ---
 # Its admin password is chosen at signup and is not in .env, and api_key.key is
 # stored hashed, so neither the API nor the database can hand one back. All this can
@@ -141,6 +206,7 @@ main() {
     sync_prowlarr_key || true
     sync_headscale || true
     sync_kavita_key || true
+    sync_audiobookshelf_key || true
     ensure_immich_key_placeholder || true
 
     fix_ownership "$SECRETS_DIR"
