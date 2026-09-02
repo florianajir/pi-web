@@ -2220,7 +2220,7 @@ services:
     # alone: 18 cannot read a 16 data directory.
     # pgvecto.rs is gone from the 18 images; nothing here used it (the immich
     # database only ever created vchord and earthdistance).
-    image: ghcr.io/immich-app/postgres:18-vectorchord1.1.1-pgvector0.8.5@sha256:4303394b926b7b7af5d4d15a6372c3cfff4ee994a4cf32c5479aa5ef73972077
+    image: ghcr.io/immich-app/postgres:18-vectorchord1.1.1-pgvector0.8.5@sha256:6e384bf4aa03866473395961786f40006555e4cd008b98f92bf4a44e5ab7b012
     environment:
       POSTGRES_PASSWORD: ${PASSWORD}
       POSTGRES_INITDB_ARGS: "--data-checksums"
