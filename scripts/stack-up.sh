@@ -60,6 +60,7 @@ authelia-pre-start.sh
 headscale-pre-start.sh
 backrest-pre-start.sh
 ntfy-pre-start.sh
+cloudflared:cloudflared-pre-start.sh
 vaultwarden:vaultwarden-pre-start.sh
 qbittorrent:qbittorrent-pre-start.sh
 prowlarr:prowlarr-pre-start.sh
