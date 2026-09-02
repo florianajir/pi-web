@@ -134,6 +134,12 @@ Two release sources are wired up:
 - **AudiobookBay and IRC** are the other audiobook sources; both need a hostname or a
   network only you can choose.
 
+For audiobook *metadata*, set `HARDCOVER_API_KEY` in `.env` (free, from
+[hardcover.app/account/api](https://hardcover.app/account/api)). Without it audiobook
+searches fall back to Open Library, which is a book catalogue and carries almost no
+audio edition data — see
+[Configuration](CONFIGURATION.md#audiobook-metadata-hardcover).
+
 A donator key (**Settings → Direct Download → `AA_DONATOR_KEY`**) removes the wait on
 the slow download hosts. Without one, Anna's Archive queues you for a minute or two per
 file, which is why `RELEASE_SEARCH_TIMEOUT` defaults to 300 s.

@@ -148,6 +148,28 @@ The file is optional: without it Gluetun starts with no tunnel and traffic takes
 
 qBittorrent's credentials (`ADMIN_USER` / `PASSWORD`) are applied on first start by `scripts/qbittorrent-bootstrap.sh`. The config template pre-authorises localhost and `ALLOW_IP_RANGES` so the bootstrap can call the API unauthenticated; it is idempotent on later restarts.
 
+### Audiobook metadata (Hardcover)
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `HARDCOVER_API_KEY` | Hardcover personal access token, from [hardcover.app/account/api](https://hardcover.app/account/api) | `hc_pat_…` |
+
+Optional, and only Shelfmark reads it. Without it, audiobook searches fall back to the
+book metadata provider — Open Library, a *book* catalogue with essentially no audio
+edition data, so audiobook results come back with paper metadata or nothing. Hardcover
+is the one provider wired here that carries audiobook editions.
+
+Set it and `scripts/shelfmark-settings-bootstrap.sh` enables Hardcover and makes it the
+**default** audiobook provider on the next `make update`. Removing it from `.env` is how
+you turn it back off.
+
+Two deliberate details. The key is written into Shelfmark's `plugins/hardcover.json`
+rather than its environment, so `docker inspect` never prints it — the same rule as the
+OIDC client secrets. And the provider choice is written as a config-file default rather
+than an environment variable, because Shelfmark's environment values *always* win over
+per-account settings (`core/config.py`): putting it there would freeze every user's
+audiobook provider instead of moving the default they can still change.
+
 ## Auto-generated secrets
 
 These need no configuration and must not be edited by hand. `scripts/authelia-pre-start.sh` generates most of them on first start with mode `600` under `${DATA_LOCATION}/authelia-config/secrets/`, joined there by `scripts/vaultwarden-pre-start.sh` for the Vaultwarden `/admin` token; `scripts/headscale-init.sh` generates `config/headplane/headscale_api_key`. Full inventory: [Security → Secrets](SECURITY.md#secrets).
