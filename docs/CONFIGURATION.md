@@ -160,8 +160,12 @@ edition data, so audiobook results come back with paper metadata or nothing. Har
 is the one provider wired here that carries audiobook editions.
 
 Set it and `scripts/shelfmark-settings-bootstrap.sh` enables Hardcover and makes it the
-**default** audiobook provider on the next `make update`. Removing it from `.env` is how
-you turn it back off.
+**default** audiobook provider on the next `make update`. Remove it and the next run
+releases that selection back to the book provider — leaving Hardcover selected with a key
+nobody supplies any more would point every audiobook search at a provider that can only
+fail. The key already stored in Shelfmark is deliberately left in place, since one pasted
+into **Settings → Hardcover** by hand is indistinguishable from one the bootstrap wrote;
+clear it there if you want it gone.
 
 Two deliberate details. The key is written into Shelfmark's `plugins/hardcover.json`
 rather than its environment, so `docker inspect` never prints it — the same rule as the

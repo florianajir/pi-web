@@ -204,13 +204,25 @@ configure_proxy() {
 #
 # Reconciled rather than seeded, so rotating the key in .env is picked up: the
 # key being present in .env is what asks for Hardcover in the first place, and
-# removing it there is how you turn it back off.
+# removing it there releases the audiobook provider again.
 configure_hardcover() {
     local key=""
 
     key="$(get_env_value HARDCOVER_API_KEY)"
     if [ -z "$key" ]; then
-        log "HARDCOVER_API_KEY is not set in .env; leaving the audiobook metadata provider on its default"
+        # Unwind, rather than just stop reconciling: leaving Hardcover selected
+        # with a key that is no longer supplied points every audiobook search at
+        # a provider that can only fail. Releasing the selection falls back to
+        # the book provider, which at least answers.
+        #
+        # Only the selection, and only when it is still ours. The stored key is
+        # left alone on purpose: unlike the proxy above there is no constant to
+        # compare against, so a key pasted into Settings -> Hardcover by hand is
+        # indistinguishable from one this function wrote, and clearing it would
+        # destroy someone's credential. Clear it in the UI to be rid of it.
+        log "HARDCOVER_API_KEY is not set in .env; releasing the audiobook metadata provider"
+        apply search_mode \
+            'if .METADATA_PROVIDER_AUDIOBOOK == "hardcover" then .METADATA_PROVIDER_AUDIOBOOK = "" else . end'
         return 0
     fi
 
