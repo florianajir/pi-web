@@ -428,6 +428,51 @@ rotate_shelfmark() {
     recreate shelfmark
 }
 
+# --- Audiobookshelf: the root account's password lives in its own database ---
+# scripts/audiobookshelf-bootstrap.sh creates that account once from
+# ADMIN_USER/PASSWORD and never re-derives it, so without this step a rotation
+# leaves it on the old value: audiobookshelf_token() would 401 forever, and with
+# it both the OIDC reconcile and the Homepage widget key quietly stop being
+# maintained while .env claims the new password works.
+#
+# Authenticated with the OLD password on purpose - by the time this runs .env
+# already holds the new one, which Audiobookshelf has never seen. API keys are
+# unaffected: a password change destroys session rows only, so the Homepage
+# widget key keeps working.
+rotate_audiobookshelf() {
+    local url response token user_id
+
+    if ! container_is_running "pi-audiobookshelf"; then
+        note "✘ SKIPPED Audiobookshelf (pi-audiobookshelf not running)"
+        return 0
+    fi
+    url="http://pi-audiobookshelf"
+
+    # Password from the environment and body on stdin, so neither the old nor
+    # the new one lands in the host's process table.
+    response="$(RP_OLD_PASSWORD="$OLD_PASSWORD" jq -nc --arg u "$ADMIN_USER" \
+            '{username:$u, password:$ENV.RP_OLD_PASSWORD}' \
+        | docker run --rm -i --network frontend "${CURL_IMAGE:-curlimages/curl:8.12.1}" \
+            -sS -X POST -H 'Content-Type: application/json' --data @- \
+            "$url/login" 2>/dev/null || true)"
+    token="$(printf '%s' "$response" | jq -r '.user.accessToken // empty')"
+    user_id="$(printf '%s' "$response" | jq -r '.user.id // empty')"
+    if [ -z "$token" ] || [ -z "$user_id" ]; then
+        note "✘ FAILED to rotate Audiobookshelf (could not authenticate '$ADMIN_USER' with the old password)"
+        return 0
+    fi
+
+    if RP_NEW_PASSWORD="$NEW_PASSWORD" jq -nc '{password:$ENV.RP_NEW_PASSWORD}' \
+        | docker run --rm -i --network frontend "${CURL_IMAGE:-curlimages/curl:8.12.1}" \
+            -fsS -X PATCH -H "Authorization: Bearer $token" \
+            -H 'Content-Type: application/json' --data @- \
+            "$url/api/users/$user_id" >/dev/null 2>&1; then
+        note "✔ Rotated Audiobookshelf root account password"
+    else
+        note "✘ FAILED to rotate Audiobookshelf password (PATCH /api/users/$user_id rejected)"
+    fi
+}
+
 # --- Prowlarr: update the stored qBittorrent download-client password ---
 
 rotate_prowlarr() {
@@ -692,6 +737,7 @@ main() {
         rotate_shelfmark
         rotate_prowlarr
         rotate_kapowarr
+        rotate_audiobookshelf
         rotate_dockhand
         rotate_beszel_superuser
     fi

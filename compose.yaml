@@ -1670,15 +1670,14 @@ services:
       - 80
     environment:
       - TZ=${TIMEZONE:-Europe/Paris}
-      # Empty on purpose, and not redundant: the image sets no ROUTER_BASE_PATH,
-      # and the server reads it as `?? '/audiobookshelf'` - so *unset* means the
-      # subfolder is on. Every request still works, because a URL without the
-      # prefix is rewritten to carry it, which is why this looks fine until SSO:
-      # the login page passes ?callback=<origin>/login, and the check that it is
-      # same-origin also demands it start with the base path. It does not, so
-      # every "Sign in with SSO" answers 400 "Invalid callback URL". Setting the
-      # variable to the empty string is what actually turns the subfolder off.
-      - ROUTER_BASE_PATH=
+      # ROUTER_BASE_PATH is deliberately NOT set. Unset does not mean "no
+      # subfolder": both the server and the client read it as
+      # `?? '/audiobookshelf'`, and the published image builds its Nuxt client
+      # with that default baked into every asset URL. Setting it to the empty
+      # string makes the server stop serving that prefix while the client keeps
+      # asking for it, so every /audiobookshelf/_nuxt/*.js 404s and the page
+      # hangs on its spinner. The app is meant to live under that path; the
+      # server's rewrite of prefix-less URLs is a convenience on top.
     volumes:
       # Root-owned, like every other container here: the image has no PUID/PGID
       # and pinning `user:` would only move the problem, since a bind source the
@@ -1700,7 +1699,10 @@ services:
       - "homepage.name=Audiobookshelf"
       - "homepage.icon=audiobookshelf.png"
       - "homepage.href=https://audiobooks.${HOST_NAME:-pi.lan}"
-      - "homepage.description=Audiobook and podcast player"
+      # Not "and podcast player": Audiobookshelf downloads podcast episodes into
+      # the library folder, and the only media mount here is :ro, so a podcast
+      # library would fail with EROFS. Adding one means adding a writable mount.
+      - "homepage.description=Audiobook player with progress sync"
       - "homepage.widget.type=audiobookshelf"
       - "homepage.widget.url=http://pi-audiobookshelf"
       # An API key minted by scripts/homepage-widgets-bootstrap.sh. Audiobookshelf

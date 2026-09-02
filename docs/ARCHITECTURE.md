@@ -74,7 +74,7 @@ Every routed service follows the same path: TLS at Traefik, then the `lan` IP al
 | **Prowlarr** | Indexer manager, with FlareSolverr for protected indexers | users |
 | **Kapowarr** | Comics and manga manager; feeds the Kavita libraries | users |
 | **Shelfmark** | Book and audiobook search; files what it downloads into the Kavita Books library | users |
-| **Audiobookshelf** | Audiobook and podcast player for `download/audiobooks/`, with Audible metadata matching | users |
+| **Audiobookshelf** | Audiobook player for `download/audiobooks/`, with Audible metadata matching and progress sync | users |
 | **Stremio + Comet** | Streaming server and its debrid addon | users |
 | **Open WebUI** | Local AI chat frontend — see [Local AI](AI.md) | users |
 | **llama.cpp / Piper / Parakeet / system-tools** | Inference, TTS, STT and the host-status tool | Open WebUI |
@@ -233,6 +233,14 @@ lands on it rather than on a second, plain-user account. And the client asks for
 `groups` scope: Audiobookshelf reads the group claim as a *role* and denies any login
 whose groups contain none of `admin`/`user`/`guest`, so requesting it would lock out
 every regular user in a stack where only `admin` exists.
+
+Podcasts are deliberately not offered. Audiobookshelf can serve them, but it
+downloads episodes *into* the library folder, and **its own** mount of that
+folder is `:ro` — a podcast library would fail with `EROFS` on its first fetch.
+(Nextcloud's separate mount of the same path is read-write, for organising it;
+that does not help a process writing through a different, read-only one.) It
+would need a writable mount of its own, which nothing in the download chain
+feeds.
 
 Kapowarr's `volume_folder_naming` is deliberately flat (`{series_name} ({year})`, no
 volume subfolder): Kavita's ComicVine parser takes the series name from the folder and

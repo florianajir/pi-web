@@ -121,13 +121,46 @@ and are meant to be invisible to Kavita. Check the file actually landed, then tr
 library scan. Audiobooks go to `download/audiobooks/` and Kavita never reads them —
 those are Audiobookshelf's library, and are also browsable through Nextcloud.
 
-**Audiobookshelf's "Sign in with SSO" answers 400 `Invalid callback URL`.** The image
-leaves `ROUTER_BASE_PATH` unset, and the server reads an unset value as
-`/audiobookshelf` — every URL still works, because one without the prefix is rewritten
-to carry it, so nothing looks wrong until a login. The callback check demands the URL
-start with that base path, and `/login` does not. `compose.yaml` sets the variable to
-the empty string, which is what actually turns the subfolder off; check it survived a
-hand edit with `docker logs pi-audiobookshelf | head -2`.
+**A book sits in `download/books/` and Kavita never shows it.** Two causes, both
+silent.
+
+*It is a loose file at the library root.* Kavita takes the series name from the
+containing folder and `GetFoldersTillRoot` stops below the scan root, so a file
+placed directly in `download/books/` has no folder to name a series after and is
+skipped without an error. Give each book its own subfolder. If the file belongs
+to a torrent, move it with qBittorrent's `renameFile` API rather than `mv`, so
+the torrent follows it instead of breaking.
+
+*The EPUB declares version 3.0 but ships no nav document.* The log says
+`Epub3NavException: NAV item not found in EPUB manifest`, followed by `Unable to
+parse any meaningful information out of file`. Kavita's parser requires the
+EPUB 3 nav document once the package claims 3.0, and some releases only carry the
+legacy `toc.ncx` (`<spine toc="ncx">`). Rewriting the OPF's `version="3.0"` to
+`version="2.0"` makes the declaration match the TOC the file actually has, and
+Kavita then reads it. Repair a *copy* if the file is being seeded — changing the
+bytes invalidates the torrent — and keep `mimetype` as the first, uncompressed
+zip entry or the result is no longer a valid EPUB.
+
+**Audiobookshelf's page never finishes loading — the spinner turns forever.** Its
+assets are 404ing. The image leaves `ROUTER_BASE_PATH` unset, and *unset does not
+mean no subfolder*: both the server and the Nuxt client read it as
+`?? '/audiobookshelf'`, and the published image has that default **baked into every
+asset URL** at build time. Setting the variable to the empty string makes the server
+stop serving that prefix while the client keeps asking for it, so every
+`/audiobookshelf/_nuxt/*.js` returns 404 and the app never boots. Leave it unset.
+Confirm with `docker logs pi-audiobookshelf | head -2`, which prints the effective
+value, and compare what the page asks for against what answers:
+
+```bash
+curl -sk https://audiobooks.<domain>/ | grep -oE 'src="[^"]*"'
+curl -sko /dev/null -w '%{http_code}\n' https://audiobooks.<domain>/audiobookshelf/_nuxt/<file>.js
+```
+
+The app is *meant* to live under `/audiobookshelf`; the server rewriting prefix-less
+URLs onto it is a convenience on top, which is why the root URL, the healthcheck and
+the Homepage widget all work without the prefix. A hand-built
+`?callback=…/login` test therefore proves nothing about SSO — the real login page
+sends `/audiobookshelf/login`, which passes the check the bare path fails.
 
 **Signing in to Audiobookshelf through SSO lands on a second, non-admin account.** The
 root account is created by `scripts/audiobookshelf-bootstrap.sh` and is matched to your
