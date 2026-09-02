@@ -3,6 +3,7 @@
 /.env.bak.*
 /.rotate-password.*
 /compose.override.yaml
+/.venv-lint
 /data
 /config/headscale/policy.hujson
 /config/headscale/config.yaml

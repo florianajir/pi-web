@@ -11,8 +11,11 @@ rules:
   line-length:
     max: 120
     level: warning
-  document-start:
-    present: false
+  # Tracked files are split on a leading `---`: homepage's configs and the
+  # Cardigann indexer definition carry one because upstream's examples do,
+  # compose.yaml and the workflows do not. Enforcing either side would churn
+  # files for no gain.
+  document-start: disable
   truthy: disable
   brackets:
     min-spaces-inside: 0

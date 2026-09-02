@@ -18,10 +18,27 @@ updates:
     directories:
       - "/config/backrest"
       - "/config/beszel-agent"
+      - "/config/parakeet"
+      - "/config/piper"
+      - "/config/system-tools"
     schedule:
       interval: "daily"
       time: "04:00"
     open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # Pinned linters (ruff, yamllint) shared by `make lint` and the CI lint job
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+      time: "04:00"
+    open-pull-requests-limit: 5
     labels:
       - "dependencies"
     commit-message:

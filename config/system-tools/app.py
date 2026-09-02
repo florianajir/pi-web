@@ -21,7 +21,7 @@ import re
 import socket
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
@@ -224,7 +224,8 @@ def topic_memory() -> str:
     total, available = info.get("MemTotal", 0), info.get("MemAvailable", 0)
     if not total:
         return "memory unreadable"
-    lines = [f"RAM: {human_bytes(available)} available of {human_bytes(total)} ({(total - available) * 100 // total}% used)"]
+    used_percent = (total - available) * 100 // total
+    lines = [f"RAM: {human_bytes(available)} available of {human_bytes(total)} ({used_percent}% used)"]
     swap_total, swap_free = info.get("SwapTotal", 0), info.get("SwapFree", 0)
     if swap_total:
         lines.append(f"swap: {human_bytes(swap_total - swap_free)} used of {human_bytes(swap_total)}")
@@ -295,7 +296,7 @@ def rfc3339(value: str) -> float | None:
         stamp = datetime.strptime(head.group(1), "%Y-%m-%dT%H:%M:%S")
     except ValueError:
         return None
-    return stamp.replace(tzinfo=timezone.utc).timestamp()
+    return stamp.replace(tzinfo=UTC).timestamp()
 
 
 def topic_services() -> str:

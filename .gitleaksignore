@@ -1,0 +1,11 @@
+# Fingerprints gitleaks must not report again, one per line, in the form
+#   <commit>:<file>:<rule-id>:<line>
+# exactly as `make lint` prints it (the finding line ends with "Fingerprint:").
+#
+# This file exists empty on purpose. The gate scans all of history, so a single
+# false positive - a test vector, a hex string that looks like a token - would
+# otherwise fail every future pull request with no way to move on short of
+# rewriting history or deleting the gate. Add the fingerprint here with a
+# comment saying why it is not a secret.
+#
+# A *real* leak is not an entry here: rotate the credential first, then decide.

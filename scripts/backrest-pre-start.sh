@@ -6,7 +6,6 @@ set -eu
 CONFIG_DIR="${BACKREST_CONFIG_DIR:-$PROJECT_DIR/config/backrest}"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 TEMPLATE_FILE="${BACKREST_TEMPLATE:-$PROJECT_DIR/config/backrest/config.json.template}"
-ENV_FILE="${BACKREST_ENV_FILE:-$PROJECT_DIR/.env}"
 
 # For manual runs (e.g. `sh scripts/backrest-pre-start.sh`), fall back to .env for
 # any value the environment does not already provide — key by key via

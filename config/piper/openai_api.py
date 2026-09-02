@@ -80,7 +80,7 @@ def resolve_default_voice() -> str:
         return same_language[0]
 
     log.warning("no voice for %s in %s, using %s - rebuild with the VOICES build "
-                "arg to add one", DEFAULT_LANGUAGE, [v for v in voices], voices[0])
+                "arg to add one", DEFAULT_LANGUAGE, voices, voices[0])
     return voices[0]
 
 
@@ -156,8 +156,7 @@ def speech(req: SpeechRequest) -> Response:
         config.length_scale = 1.0 / req.speed
 
     buffer = io.BytesIO()
-    with _synth_lock:
-        with wave.open(buffer, "wb") as wav_file:
-            voice.synthesize_wav(text, wav_file, syn_config=config)
+    with _synth_lock, wave.open(buffer, "wb") as wav_file:
+        voice.synthesize_wav(text, wav_file, syn_config=config)
 
     return Response(content=buffer.getvalue(), media_type="audio/wav")

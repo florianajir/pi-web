@@ -107,11 +107,14 @@ def decode_audio(raw: bytes) -> np.ndarray:
             input=raw, capture_output=True, timeout=300,
         )
     except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=400, detail="Audio decoding timed out")
+        raise HTTPException(status_code=400, detail="Audio decoding timed out") from None
 
     if proc.returncode != 0:
         detail = proc.stderr.decode("utf-8", "replace").strip().splitlines()
-        raise HTTPException(status_code=400, detail=f"Could not decode audio: {detail[-1] if detail else 'ffmpeg failed'}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not decode audio: {detail[-1] if detail else 'ffmpeg failed'}",
+        )
 
     samples = np.frombuffer(proc.stdout, dtype=np.int16)
     if samples.size == 0:

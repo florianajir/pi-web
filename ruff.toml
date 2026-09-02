@@ -1,0 +1,24 @@
+# Static analysis for the Python helpers: the FastAPI shims baked into the
+# piper/parakeet/system-tools images, and the two host-side scripts that
+# scripts/*.sh drive (services-picker, uptime-kuma-bootstrap).
+#
+# py311 is the floor, not a preference: the containers are python:3.12-slim,
+# but services-picker.py and uptime-kuma-bootstrap.py run on the host's
+# interpreter, which is 3.11 on Raspberry Pi OS bookworm.
+target-version = "py311"
+
+# Matches the yamllint ceiling, so one number governs the whole repo.
+line-length = 120
+
+[lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF"]
+
+[lint.flake8-bugbear]
+# FastAPI's whole parameter API is call-in-default (File(...), Form(None),
+# Depends(...)); B008 flags the framework's documented usage, not a bug.
+extend-immutable-calls = [
+  "fastapi.Depends",
+  "fastapi.File",
+  "fastapi.Form",
+  "fastapi.Query",
+]

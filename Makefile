@@ -1,4 +1,4 @@
-.PHONY: help install install-system uninstall start stop restart update update-images status logs doctor preflight check-env print-required-vars test services enable disable config headscale-register headscale-reset rotate-password rotate-password-full recovery-kit
+.PHONY: help install install-system uninstall start stop restart update update-images status logs doctor preflight check-env print-required-vars test lint services enable disable config headscale-register headscale-reset rotate-password rotate-password-full recovery-kit
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -77,6 +77,7 @@ help:
 	@echo "  headscale-reset  Reset all Headscale nodes, preauth keys, and IP allocations"
 	@echo "  check-env        Validate required .env variables"
 	@echo "  test             Run the installer, check-env, CLI, service and start-sequence suites (no host changes)"
+	@echo "  lint             Run every static check CI runs (shell, YAML, Python, Dockerfiles, workflows, secrets)"
 	@echo "  pg-upgrade to=<image> Migrate Postgres to a new major (dump/restore, old data kept)"
 	@echo "  rotate-password       Rotate PASSWORD after a leak (LLDAP admin + Authelia only, no Postgres)"
 	@echo "  rotate-password-full  Same, plus every Postgres role and every other service using PASSWORD"
@@ -115,6 +116,12 @@ test:
 	@sh tests/cli-test.sh
 	@sh tests/services-test.sh
 	@sh tests/stack-up-test.sh
+
+# The same script CI runs, so a green local run means a green CI run. Gates
+# whose tool is missing are reported as skipped; CI adds LINT_STRICT=1 to make
+# a skip fail.
+lint:
+	@sh scripts/lint.sh
 
 preflight: check-env
 	@echo "🔍 Preflight...";

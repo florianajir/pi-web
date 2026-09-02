@@ -16,13 +16,52 @@ permissions:
   packages: read
 
 jobs:
-  validate:
-    name: Validate Compose and YAML
+  # Every static check lives in scripts/lint.sh, which `make lint` also runs:
+  # a contributor's green run and a green CI run mean the same thing, and a
+  # tightened rule cannot land in one without the other.
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        # fetch-depth 0: the gitleaks gate scans history, and the default
+        # shallow clone would hand it a single commit and report "no leaks".
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          fetch-depth: 0
+
+      # hadolint, actionlint and gitleaks are not installed: scripts/lint.sh
+      # runs those from pinned images, so their versions are declared once and
+      # apply to a local run too.
+      #
+      # ruff and yamllint come from requirements-lint.txt for the same reason:
+      # unpinned, a linter release would redden pull requests that changed
+      # nothing, and CI would stop agreeing with a contributor's `make lint`.
+      # shellcheck is the runner image's apt version, which moves only when
+      # GitHub bumps ubuntu-latest.
+      - name: Install linters
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends shellcheck
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements-lint.txt
+
+      - name: Run every static check
+        env:
+          # A gate whose tool is missing is a silent hole in CI, so make it a
+          # failure here even though a local run only reports it.
+          LINT_STRICT: "1"
+        run: make lint
+
+  validate:
+    name: Validate Compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
 
       - name: Validate Docker Compose config
         env:
@@ -40,65 +79,13 @@ jobs:
           COMPOSE_PROFILES=stremio-lan docker compose -f compose.yaml config >/dev/null
           docker compose -f compose.yaml -f compose.test.yaml config >/dev/null
 
-      - name: Lint workflow and Compose YAML
-        run: |
-          set -euo pipefail
-          python3 -m pip install --upgrade pip
-          python3 -m pip install yamllint
-          yamllint -c .yamllint .
-
-  installer:
-    name: Lint and Test Installer
+  tests:
+    name: Test Installer and CLI
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Install shellcheck
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends shellcheck
-
-      # Every shell file, since a syntax error has no false positives. Listed
-      # from git rather than globbed, so config/**/*.sh (the postgres init and
-      # the nextcloud hooks) and the extensionless scripts/pi-pcloud are
-      # covered too. The checker follows the shebang: sh -n would reject
-      # bash-only syntax.
-      - name: Check shell syntax
-        run: |
-          set -euo pipefail
-          files=$(git ls-files '*.sh' 'scripts/pi-pcloud')
-          # A floor, not just a non-empty check: a pathspec that half-breaks (a
-          # renamed directory, a glob that stops matching config/**) still
-          # returns *something*, and the step would pass having checked three
-          # files. There are 51 today; raise the floor when that count grows
-          # well past it, and never lower it to make a failure go away.
-          # `|| true`: grep -c exits 1 on no match, and under `set -e` that
-          # would abort the step with no message rather than the one below.
-          count=$(printf '%s\n' "$files" | grep -c . || true)
-          if [ "$count" -lt 45 ]; then
-            echo "git ls-files matched only $count shell files, expected at least 45 - broken pathspec?"
-            printf '%s\n' "$files"
-            exit 1
-          fi
-          for file in $files; do
-            case "$(head -n1 "$file")" in
-              *bash*) bash -n "$file" ;;
-              *)      sh -n "$file" ;;
-            esac
-          done
-          echo "checked $count shell files"
-
-      # Only the installer surface: the older bootstrap scripts under scripts/
-      # carry a backlog of findings, so linting them here would report noise
-      # instead of regressions. Widen the list as they are cleaned up.
-      - name: Lint the installer surface
-        run: |
-          set -euo pipefail
-          shellcheck -s dash --severity=warning \
-            install.sh scripts/lib.sh tests/*.sh
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
 
       # Runs install.sh's own functions against stubbed network detection and
       # a temporary .env, so the paths that decide what lands in .env are
@@ -137,7 +124,7 @@ jobs:
       COMPOSE_PROGRESS: quiet
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
 
       - name: Create CI .env
         run: |
@@ -184,7 +171,7 @@ jobs:
           test -f ./config/headscale/policy.hujson
 
       - name: Log in to ghcr.io
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
