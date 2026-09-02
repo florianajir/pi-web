@@ -81,7 +81,7 @@ Two consequences specific to this stack: **group membership travels in the `grou
 |---------|:---:|:---:|:---:|----------|
 | Authelia portal | — | — | — | Public login entry point. No IP restriction so OIDC clients can reach it server-side; Authelia's own `regulation` handles brute force |
 | Headscale | — | — | ✓ | Public by necessity — VPN clients register from anywhere. `/admin` (Headplane) is separately LAN-only + SSO + 2FA |
-| Nextcloud | ✓ | — | ✓ | LAN-only + OIDC; a second router leaves the public share paths (`/s/`, `/public.php`, …) open |
+| Nextcloud | ✓ | — | ✓ | LAN-only + OIDC; a second router leaves the public share paths (`/s/`, `/public.php`, …) open. Its `files_external` mounts are **read-write**, so an account in the `admin` group can delete or move anything in the download and library tree — see [Architecture](ARCHITECTURE.md#the-reading-libraries) |
 | Immich | ✓ | — | ✓ | LAN-only + OIDC; second router leaves share paths (`/share`, `/s/`, `/api`) open |
 | Vaultwarden | ✓ | — | ✓ | LAN-only + OIDC + master password — see [below](#vaultwarden) |
 | Beszel | ✓ | — | ✓ | LAN-only + OIDC, password login disabled |

@@ -239,13 +239,39 @@ volume subfolder): Kavita's ComicVine parser takes the series name from the fold
 `GetFoldersTillRoot` stops below the scan root, so any intermediate folder makes every
 series come out named `Volume 01`.
 
-The same libraries are also mounted read-only into Nextcloud as `files_external`
-mounts (`Comics`, `Manga`, `Books` and `Audiobooks`, alongside the existing
-`Downloads`), so any file can get a public share link the way Immich does for photos.
-Audiobooks are in both places on purpose: Nextcloud shares the file, Audiobookshelf
-plays it and keeps your position. The mounts
-are created by `config/nextcloud/hooks/post-installation/20-external-storage.sh`, which
-is idempotent and can be re-run by hand on an existing install.
+The same libraries are also mounted into Nextcloud as `files_external` mounts
+(`Comics`, `Manga`, `Books` and `Audiobooks`, alongside the existing `Downloads`),
+so any file can get a public share link the way Immich does for photos — and so
+Nextcloud is where the tree gets **organised**: renamed, moved between libraries,
+deleted. Audiobooks are in both places on purpose: Nextcloud shares the file,
+Audiobookshelf plays it and keeps your position. The mounts are created by
+`config/nextcloud/hooks/post-installation/20-external-storage.sh`, which is
+idempotent and can be re-run by hand on an existing install — worth knowing,
+because it is a *post-installation* hook and so does not fire again on an
+existing Nextcloud when a mount is added to its list.
+
+Write access took two pieces, and only one of them is obvious. The bind mounts
+are read-write, but Nextcloud's PHP runs as uid 33 while the tree belongs to
+uid/gid 1000 in mode 0755, so it would still only get `r-x`.
+`scripts/nextcloud-pre-start.sh` grants uid 33 write access with a POSIX ACL.
+
+Two traps are worth recording, because both look like the right answer:
+
+- **`group_add: "1000"` does not work.** Apache calls `initgroups()` when it
+  drops to `www-data`, which rebuilds the group list from the container's
+  `/etc/group` and discards the supplementary gid compose added. The group *does*
+  survive in a `docker exec`, so the mistake passes a hand test and then fails
+  every real request.
+- **`chmod -R g+w` does not last.** qBittorrent, Kapowarr and Shelfmark all run
+  with umask 022, so every directory they create afterwards comes back `0755`
+  and Nextcloud silently loses access to exactly the new downloads it is most
+  likely to be asked to tidy up. A *default* ACL is inherited by whatever is
+  created later, umask notwithstanding.
+
+The trade-off is real and deliberate: `Downloads` is writable too, and
+qBittorrent seeds from there, so deleting a file in Nextcloud can break the
+torrent still serving it. Kapowarr's moves are copy-then-delete, so avoid
+reorganising `Comics`/`Manga` while it has a task running.
 
 **Recommended layout:** clone onto the SSD and symlink it into place, so systemd and the docs agree on one path.
 

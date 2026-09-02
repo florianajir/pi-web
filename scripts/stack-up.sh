@@ -67,6 +67,7 @@ kapowarr:kapowarr-pre-start.sh
 kavita:kavita-pre-start.sh
 shelfmark:shelfmark-pre-start.sh
 audiobookshelf:audiobookshelf-pre-start.sh
+nextcloud:nextcloud-pre-start.sh
 llama-cpp:llama-cpp-pre-start.sh
 stremio-lan:stremio-lan-pre-start.sh
 '

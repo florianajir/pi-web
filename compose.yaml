@@ -973,14 +973,25 @@ services:
       - ${DATA_LOCATION:-./data}/nextcloud:/var/www/html/data
       - ${DATA_LOCATION:-./data}/nextcloud-config:/var/www/html/config
       - ${DATA_LOCATION:-./data}/nextcloud-themes:/var/www/html/themes
-      - ${DATA_LOCATION:-./data}/download:/mnt/qbittorrent-downloads:ro
-      # The reading libraries, read-only, so any file can get a public share link.
-      # config/nextcloud/hooks/post-installation/20-external-storage.sh turns these
-      # into files_external mounts; keep the two lists in step.
-      - ${DATA_LOCATION:-./data}/comics:/mnt/library-comics:ro
-      - ${DATA_LOCATION:-./data}/manga:/mnt/library-manga:ro
-      - ${DATA_LOCATION:-./data}/download/books:/mnt/library-books:ro
-      - ${DATA_LOCATION:-./data}/download/audiobooks:/mnt/library-audiobooks:ro
+      # The download tree and the reading libraries, read-write, so Nextcloud is
+      # also where they get organised - renamed, moved, deleted - and not only
+      # where a file gets a public share link.
+      #
+      # Read-write here is necessary but not sufficient: Nextcloud's PHP runs as
+      # uid 33 and everything below belongs to uid/gid 1000 in mode 0755, so it
+      # would still only get r-x. scripts/nextcloud-pre-start.sh grants uid 33
+      # write access with an ACL. Note `group_add: 1000` does NOT work here,
+      # tempting as it looks: Apache calls initgroups() when it drops to
+      # www-data, which rebuilds the group list from the container's /etc/group
+      # and discards the supplementary gid compose added.
+      #
+      # config/nextcloud/hooks/post-installation/20-external-storage.sh turns
+      # these into files_external mounts; keep the two lists in step.
+      - ${DATA_LOCATION:-./data}/download:/mnt/qbittorrent-downloads
+      - ${DATA_LOCATION:-./data}/comics:/mnt/library-comics
+      - ${DATA_LOCATION:-./data}/manga:/mnt/library-manga
+      - ${DATA_LOCATION:-./data}/download/books:/mnt/library-books
+      - ${DATA_LOCATION:-./data}/download/audiobooks:/mnt/library-audiobooks
       - ./config/nextcloud/custom.config.php:/var/www/html/config/custom.config.php:ro
       - ./config/nextcloud/security-headers.conf:/etc/apache2/conf-enabled/security-headers.conf:ro
       - ./config/nextcloud/hooks/post-installation:/docker-entrypoint-hooks.d/post-installation:ro
