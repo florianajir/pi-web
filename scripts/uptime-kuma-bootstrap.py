@@ -36,13 +36,14 @@ or resumed, so a plumbing failure can never silence real alerting.
 Uses direct Socket.IO calls for Uptime Kuma 2.x compatibility.
 """
 
+import contextlib
 import json
 import os
 import re
 import socket as pysocket
 import sys
-import time
 import threading
+import time
 
 import socketio
 
@@ -439,10 +440,8 @@ class UptimeKumaBootstrap:
         log(f"No autoLogin or setup within {LOGIN_MODE_WAIT_SECONDS}s; assuming auth is enabled")
 
     def disconnect(self):
-        try:
+        with contextlib.suppress(Exception):
             self.sio.disconnect()
-        except Exception:
-            pass
 
     def wait_ready(self):
         """Wait for monitorList event (signals all data has been sent)."""
@@ -966,8 +965,8 @@ class UptimeKumaBootstrap:
 
     def status_page_exists(self, slug):
         """Check via the public (auth-free) HTTP API whether a status page slug exists."""
-        import urllib.request
         import urllib.error
+        import urllib.request
 
         try:
             urllib.request.urlopen(f"{self.url}/api/status-page/{slug}", timeout=10)

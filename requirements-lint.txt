@@ -1,0 +1,10 @@
+# Pinned so a linter release cannot turn an unrelated pull request red, and so
+# a local `make lint` and the CI job judge the code by the same rules. Bump
+# deliberately, like an image tag in compose.yaml.
+#
+# PEP 668 (Raspberry Pi OS bookworm) refuses `pip install` into the system
+# interpreter, so install these in a virtualenv:
+#   python3 -m venv .venv-lint && .venv-lint/bin/pip install -r requirements-lint.txt
+#   PATH="$PWD/.venv-lint/bin:$PATH" make lint
+ruff==0.16.5
+yamllint==1.38.0

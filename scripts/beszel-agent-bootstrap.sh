@@ -156,21 +156,6 @@ print(quote(sys.argv[1], safe=""))
 PY
 }
 
-extract_settings_record_id() {
-    if ! command -v python3 >/dev/null 2>&1; then
-        return 1
-    fi
-
-    python3 -c 'import json,sys
-s = sys.stdin.read() or "{}"
-try:
-    data = json.loads(s)
-except json.JSONDecodeError:
-    sys.exit(1)
-items = data.get("items") or []
-print(items[0].get("id", "") if items else "")'
-}
-
 # Outputs one "record_id<TAB>payload" line per user_settings record that needs
 # the webhook applied, so callers can PATCH each record individually.
 build_all_user_settings_patches() {
@@ -975,7 +960,7 @@ print(json.dumps(payload, separators=(",", ":")))
 }
 
 configure_pocketbase_settings() {
-    local auth_token payload current_settings
+    local auth_token payload
 
     if ! command -v python3 >/dev/null 2>&1; then
         log "WARNING: python3 not found; skipping PocketBase settings bootstrap"
@@ -1010,7 +995,7 @@ configure_ntfy_webhook_and_temperature_alerts() {
     local auth_token="$1"
     local beszel_password beszel_topic
     local password_encoded topic_encoded webhook_url
-    local settings_response settings_record_id settings_payload
+    local settings_response settings_patches
     local systems_response systems_count alert_value alert_min alert_overwrite alerts_payload
 
     if ! command -v python3 >/dev/null 2>&1; then

@@ -1,0 +1,8 @@
+failure-threshold: warning
+
+ignored:
+  # DL3008 wants apt packages pinned to a version. Debian drops superseded
+  # versions from the archive, so a pin there turns a working image into an
+  # unbuildable one within weeks. Reproducibility comes from the base image
+  # tag/digest instead, which is pinned for every image in compose.yaml.
+  - DL3008

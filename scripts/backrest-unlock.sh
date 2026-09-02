@@ -40,7 +40,7 @@ fi
 # Export repo-specific env vars (e.g. AWS credentials)
 for kv in $(printf '%s' "${repo_json}" | jq -r '.env[]? // empty'); do
   case "${kv}" in
-    *=*) export "${kv}" ;;
+    *=*) export "${kv?}" ;;
   esac
 done
 

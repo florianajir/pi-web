@@ -162,7 +162,7 @@ def toggle(rows, index):
     removed = []
     if on:
         turn_on(rows, index, added)
-        drop_conflicts(rows, [rows[index]["service"]] + added, removed)
+        drop_conflicts(rows, [rows[index]["service"], *added], removed)
         # Whatever the conflict took back down was not really added.
         added = [service for service in added if rows[index_of(rows, service)]["on"]]
     else:

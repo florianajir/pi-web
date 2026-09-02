@@ -584,7 +584,7 @@ PY
 # --- Dockhand: authenticate with the OLD password, then update it ---
 
 rotate_dockhand() {
-    local url usernames candidate cookie users_json user_id payload response status
+    local url usernames candidate cookie users_json user_id response status
 
     if ! container_is_running "pi-dockhand"; then
         note "✘ SKIPPED Dockhand (pi-dockhand not running)"
