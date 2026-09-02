@@ -183,7 +183,7 @@ the list, `scripts/prowlarr-bootstrap.sh` the newznab ids Prowlarr maps onto it.
 | Category | Save path | Destination | Prowlarr ids |
 |----------|-----------|-------------|--------------|
 | `books` | `download/books/` | Kavita, **Books** | 7000, 7010, 7020, 7040, 7050, 7060 |
-| `manga` | `download/manga/` | Kavita, **Manga** | 7030, 107103 |
+| `manga` | `download/manga/` | Kavita, **Manga** | 7030, 107103, 117084, 156719, 111160 |
 | `comics` | `download/comics/` | Kavita, **Comics** | 107102, 107104 |
 | `audiobooks` | `download/audiobooks/` | **Audiobookshelf** | 3030, 107105 |
 | `shelfmark` | `download/shelfmark/` | staging — Shelfmark imports it | — |
@@ -218,10 +218,9 @@ fetches them and imports into its own root folder.
 `books` also claims **7000**, the bare Books parent, which says nothing about *which*
 kind of book. It has to: 6 of the enabled indexers — YggReborn, Torrent9, Nyaa.si,
 World-torrent, Internet Archive, Torrent[CORE] — declare no Books subcategory at all, so
-every book grab from them was unroutable and landed in the default `prowlarr` folder
-that nothing indexes. The cost is Nyaa.si, whose 7000 is manga rather than ebooks and
-now arrives in Kavita's Book library: visible under the wrong parser, and moved by hand
-into `download/manga/`. Wrong library beats invisible.
+every book grab from them was unroutable and landed in the default `prowlarr` folder that
+nothing indexes. Two of those six are rescued from `books` by their own tracker ids
+below; the rest genuinely are ebooks. Wrong library beats invisible.
 
 **The order of the mappings is load-bearing, and `books` must stay last.** Prowlarr
 resolves the client category with `FirstOrDefault(x => x.Categories.Intersect(release
@@ -246,13 +245,37 @@ can be mapped directly. Ygg is the only enabled indexer that separates these at 
 | 107104 | Comics | `comics` |
 | 107105 | **Livres audio** | `audiobooks` |
 
-Every other indexer lumps comics and manga into a single tracker category — 1337x
-`100039`, C411 `107030` *"BDs & Comics & Manga"*, Knaben `9102000`, The Pirate Bay
-`100602`, TR4KER `107030` — and each of those comes back **identically for Batman and for
-Naruto**, so there is nothing to route on and the shared 7030 stays the fallback. That is
-why an ambiguous comic still lands in `manga`: not a preference, just the only id
-available. `107105` is the most valuable of the five, since Ygg carries French audiobooks
-that Shelfmark cannot see at all (it asks Prowlarr for 3030, which Ygg never emits).
+`107105` is the most valuable of them, since Ygg carries French audiobooks Shelfmark
+cannot see at all — it asks Prowlarr for 3030, which Ygg never emits.
+
+**Nyaa.si** is the other indexer worth mapping this way, and it cancels the cost of
+claiming 7000: Nyaa reports every book-shaped release as bare 7000, so they were all
+becoming ebooks, when Literature on Nyaa is manga.
+
+| Nyaa id | Nyaa name | mapped to |
+|---------|-----------|-----------|
+| 117084 | Literature — Raw | `manga` |
+| 156719 | Literature — English-translated | `manga` |
+| 111160 | Literature — Non-English-translated | `manga` |
+
+Sampled 158 of them: Raw is Japanese manga (コミック EPUB), English-translated is manga
+and light novels, Non-English-translated is manga scans — including its Batman entries,
+which are Otomo's and Teshirogi's manga adaptations rather than western comics. Hence
+`manga`, not `comics`.
+
+**Every other indexer's tracker ids are a rigid 1:1 rename of the newznab leaf** and
+carry no extra information, so mapping them would only add lines that can drift out of
+sync. C411 is the clearest case: over ~500 sampled results every release is exactly one
+pair — `[3030,103030]`, `[7010,107010]`, `[7020,107020]`, `[7030,107030]` — and `107030`
+is itself named *"BDs & Comics & Manga"*, which is the proof C411 cannot separate the two
+either. Its `107000 Ebook` never appears at all, being the parent node of a tracker that
+always sends a leaf. Knaben looked promising (`9101000 EBooks`, `9102000 Comics`,
+`1103000 Audiobook`) but not one sampled release carried any of those without the
+matching newznab id alongside.
+
+That is also why an ambiguous comic still lands in `manga` — 1337x `100039`, C411
+`107030`, Knaben `9102000`, The Pirate Bay `100602`, TR4KER `107030` each come back
+**identically for Batman and for Naruto**. Not a preference, just the only id available.
 
 Seven places must agree on these paths, and all seven are provisioned: the `kavita`
 volumes in `compose.yaml`, `DESIRED_LIBRARIES` in

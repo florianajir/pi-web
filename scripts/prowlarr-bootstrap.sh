@@ -46,6 +46,23 @@ QB_PORT="8080"
 # fallback. 107105 is the one that matters most: it is how a French audiobook on Ygg gets
 # to Audiobookshelf, and Ygg has plenty that Shelfmark cannot see at all.
 #
+# Nyaa.si's three Literature ids are the other case worth mapping, and they cancel the one
+# cost of claiming 7000 below: Nyaa reports every book-shaped release as bare 7000, so they
+# were all becoming ebooks, when Literature on Nyaa is manga. Sampled 158 of them - 117084
+# Raw is Japanese manga (コミック EPUB), 156719 English-translated is manga and light
+# novels, 111160 Non-English-translated is manga scans, including the Batman entries, which
+# are Otomo's and Teshirogi's manga adaptations rather than western comics. Hence manga
+# rather than comics.
+#
+# The other indexers' tracker ids are a rigid 1:1 rename of the newznab leaf and carry no
+# extra information, so mapping them would only add lines that can drift. C411 is the clear
+# case: over ~500 sampled results every release is exactly one pair - [3030,103030],
+# [7010,107010], [7020,107020], [7030,107030] - and 107030 is even named
+# "BDs & Comics & Manga", which is the proof C411 cannot separate the two either. Its
+# 107000 "Ebook" never appears at all, being the parent node of a tracker that always sends
+# a leaf. Knaben looked promising (9101000 EBooks, 9102000 Comics, 1103000 Audiobook) but
+# not one sampled release carried one of those without the matching newznab id alongside.
+#
 # ORDER MATTERS. Prowlarr resolves the client category with
 # `categories.FirstOrDefault(x => x.Categories.Intersect(release.Categories).Any())`
 # (DownloadClientBase.cs) - first match in list order, not most specific. Two consequences:
@@ -57,7 +74,7 @@ QB_PORT="8080"
 #     (Knaben sends [7030,7000]) still reach manga rather than becoming books.
 QB_CATEGORY_MAP='[
   {"clientCategory":"comics","categories":[107102,107104]},
-  {"clientCategory":"manga","categories":[7030,107103]},
+  {"clientCategory":"manga","categories":[7030,107103,117084,156719,111160]},
   {"clientCategory":"audiobooks","categories":[3030,107105]},
   {"clientCategory":"books","categories":[7000,7010,7020,7040,7050,7060]}
 ]'
