@@ -27,8 +27,12 @@ API="http://localhost:5000/api"
 # FileTypeGroup: Archive=1, Epub=2, Pdf=3, Images=4.
 # Comics uses ComicVine because Kapowarr lays its folders out as "Series (Year)",
 # which that parser reads; the provider must be one of /api/Library/metadata-providers.
+# It gets a second folder for the same reason Manga does: /comics is Kapowarr's root
+# folder and /comics-downloads is the qBittorrent category, for issues grabbed by hand
+# when Kapowarr cannot find them. Both feed one library, so the parser and the metadata
+# provider are shared and no new library id has to be added to the OIDC default set.
 DESIRED_LIBRARIES='[
-  {"name":"Comics","type":5,"folders":["/comics"],"fileGroupTypes":[1,2,3,4],"metadataProvider":4},
+  {"name":"Comics","type":5,"folders":["/comics","/comics-downloads"],"fileGroupTypes":[1,2,3,4],"metadataProvider":4},
   {"name":"Manga","type":0,"folders":["/manga","/manga-downloads"],"fileGroupTypes":[1,2,3,4],"metadataProvider":3},
   {"name":"Books","type":2,"folders":["/books"],"fileGroupTypes":[1,2,3],"metadataProvider":3}
 ]'

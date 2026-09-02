@@ -1523,6 +1523,11 @@ services:
       - ${DATA_LOCATION:-./data}/comics:/comics:ro
       - ${DATA_LOCATION:-./data}/manga:/manga:ro
       - ${DATA_LOCATION:-./data}/download/manga:/manga-downloads:ro
+      # Second folder of the Comics library, for issues grabbed by hand when
+      # Kapowarr cannot find them. Kept out of comics/ deliberately: Kapowarr owns
+      # that tree and moves files inside it with copy-then-delete, which races a
+      # torrent seeding from there. Same split as manga/ + download/manga/.
+      - ${DATA_LOCATION:-./data}/download/comics:/comics-downloads:ro
       - ${DATA_LOCATION:-./data}/download/books:/books:ro
     labels:
       - "homepage.group=Books"

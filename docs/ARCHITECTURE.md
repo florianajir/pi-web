@@ -150,9 +150,15 @@ a text reader for epub/pdf. Each library therefore needs its own folder.
 
 | Kavita library | Type | Reads | Filled by |
 |----------------|------|-------|-----------|
-| Comics | ComicVine | `comics/` | Kapowarr (root folder) |
+| Comics | ComicVine | `comics/` + `download/comics/` | Kapowarr (root folder) and the `comics` qBittorrent category |
 | Manga | Manga | `manga/` + `download/manga/` | Kapowarr (second root folder) and the `manga` qBittorrent category |
 | Books | Book | `download/books/` | the `books` qBittorrent category, and Shelfmark's imports |
+
+Comics and Manga each pair a Kapowarr root folder with a `download/` one because
+Kapowarr *owns* its roots: it moves files inside them with copy-then-delete, which
+races a torrent seeding from the same tree. A hand-grabbed issue therefore goes to
+`download/comics/`, which Kapowarr never touches, and Kavita reads both folders as one
+library — so the parser, the metadata provider and the OIDC library grant are shared.
 
 Everything else under `download/` stays invisible to Kavita, which matters because
 Kavita indexes *every* subfolder of a folder it is given — point it at the download
@@ -161,7 +167,7 @@ root and a software torrent's installer tree becomes series named after its inte
 
 | Path | Written by | Read by Kavita |
 |------|-----------|----------------|
-| `download/manga/`, `download/books/` | the matching qBittorrent category | yes |
+| `download/manga/`, `download/comics/`, `download/books/` | the matching qBittorrent category | yes |
 | `download/audiobooks/` | the `audiobooks` qBittorrent category, and Shelfmark (`DESTINATION_AUDIOBOOK`); read by **Audiobookshelf**, not Kavita | no |
 | `download/shelfmark/` | qBittorrent's `shelfmark` and `shelfmark-audiobooks` categories, where Shelfmark's own grabs land before import | no |
 | `download/prowlarr/` | qBittorrent's `prowlarr` category (Prowlarr's default) | no |
@@ -178,17 +184,19 @@ the list, `scripts/prowlarr-bootstrap.sh` the newznab ids Prowlarr maps onto it.
 |----------|-----------|-------------|--------------|
 | `books` | `download/books/` | Kavita, **Books** | 7010, 7020, 7040, 7050, 7060 |
 | `manga` | `download/manga/` | Kavita, **Manga** | 7030 |
+| `comics` | `download/comics/` | Kavita, **Comics** | — (hand-pick) |
 | `audiobooks` | `download/audiobooks/` | **Audiobookshelf** | 3030 |
 | `shelfmark` | `download/shelfmark/` | staging — Shelfmark imports it | — |
 | `shelfmark-audiobooks` | `download/shelfmark/` | staging, same folder; a label so the list distinguishes the two | — |
 | `prowlarr` | `download/prowlarr/` | nothing; Prowlarr's fallback for unmapped ids | — |
 
-Two asymmetries are deliberate. **Comics has no category**: Kapowarr owns `comics/` and
-moves files inside it with copy-then-delete, which races a torrent seeding from that
-tree. And the **staging categories are not destinations** — Shelfmark post-processes only
-torrents belonging to one of its own tasks, so a torrent added there by hand downloads
-and then sits forever. Shelfmark itself routes by the task's content type, not by
-category, which is why the two staging categories can share one folder.
+Two asymmetries are deliberate. **`comics` has no Prowlarr mapping**: comics and manga
+share newznab id 7030, which goes to `manga`, so Prowlarr cannot tell them apart and the
+category is hand-pick only — which is its whole purpose, as the fallback for issues
+Kapowarr cannot find. And the **staging categories are not destinations** — Shelfmark
+post-processes only torrents belonging to one of its own tasks, so a torrent added there
+by hand downloads and then sits forever. Shelfmark itself routes by the task's content
+type, not by category, which is why the two staging categories can share one folder.
 
 Prowlarr routes the split automatically: its qBittorrent download client carries a
 category map, and Prowlarr resolves the client category as

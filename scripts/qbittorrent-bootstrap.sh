@@ -21,17 +21,22 @@ NTFY_COMPLETE_URL="http://ntfy/downloads"
 # The categories that route a release to a library, "<name>:<save path>". Each save
 # path is a folder compose mounts into a reader, so this list must stay in step with
 # the kavita and audiobookshelf volumes in compose.yaml, with scripts/kavita-pre-start.sh
-# and with scripts/audiobookshelf-pre-start.sh. Prowlarr maps its grabs onto the first
-# three (scripts/prowlarr-bootstrap.sh); they double as the categories to pick by hand
-# when adding a torrent, which is the only way a manual add reaches a library at all -
-# an uncategorised torrent lands in the download root, which nothing indexes.
+# and with scripts/audiobookshelf-pre-start.sh. Prowlarr maps its grabs onto books,
+# manga and audiobooks (scripts/prowlarr-bootstrap.sh); all four double as the
+# categories to pick by hand when adding a torrent, which is the only way a manual add
+# reaches a library at all - an uncategorised torrent lands in the download root, which
+# nothing indexes.
 #
 #   books       -> Kavita's Book library
 #   manga       -> Kavita's Manga library
+#   comics      -> Kavita's Comics library, second folder
 #   audiobooks  -> Audiobookshelf
 #
-# Comics deliberately has no category: Kapowarr owns comics/ and moves files inside it
-# with copy-then-delete, so a torrent seeding from that tree races its renames.
+# comics saves to download/comics/, not to Kapowarr's comics/ root folder: Kapowarr
+# moves files inside that tree with copy-then-delete, which races a torrent seeding
+# from it. Kavita reads both as one library. Prowlarr cannot route to this one - comics
+# and manga share newznab id 7030, which is mapped to manga - so it is hand-pick only,
+# which is the point: it is the fallback for issues Kapowarr cannot find.
 #
 # shelfmark-audiobooks is staging, not a library: it shares /downloads/shelfmark with
 # the plain shelfmark category so a raw release tree never reaches a reader, and exists
@@ -43,7 +48,7 @@ NTFY_COMPLETE_URL="http://ntfy/downloads"
 # relocate torrents that are seeding.
 #
 # Everything else keeps the client default ("prowlarr"), which no reader looks at.
-LIBRARY_CATEGORIES="manga:/downloads/manga books:/downloads/books audiobooks:/downloads/audiobooks shelfmark-audiobooks:/downloads/shelfmark"
+LIBRARY_CATEGORIES="manga:/downloads/manga comics:/downloads/comics books:/downloads/books audiobooks:/downloads/audiobooks shelfmark-audiobooks:/downloads/shelfmark"
 
 qb_curl() {
     docker exec "$QB_CONTAINER" curl -sS "$@"

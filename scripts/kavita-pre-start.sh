@@ -3,8 +3,8 @@
 # Kavita mounts them read-only, and Docker creates a missing bind source as
 # root:root - which Kavita could still read, but qBittorrent (PUID 1000) could no
 # longer write the matching category into. Create them up front and hand them to the
-# project owner. Idempotent. comics/ and manga/ are Kapowarr root folders and belong
-# to kapowarr-pre-start.sh.
+# project owner. Idempotent. comics/ and manga/ - the top-level ones, not the
+# download/ ones below - are Kapowarr root folders and belong to kapowarr-pre-start.sh.
 # A pre-start hook (scripts/stack-up.sh), so it runs before docker compose up.
 
 set -eu
@@ -26,6 +26,7 @@ main() {
     # to walk on every boot. A directory we just made is empty, so it is free.
     for dir in "$data_location/download" \
                "$data_location/download/manga" \
+               "$data_location/download/comics" \
                "$data_location/download/books"; do
         [ -d "$dir" ] && continue
         mkdir -p "$dir"

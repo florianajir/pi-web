@@ -238,13 +238,31 @@ docker run --rm --network frontend curlimages/curl -s -X DELETE -H "Authorizatio
 
 **A torrent added by hand never reaches any reader.** An uncategorised torrent saves to
 the `download/` root, which nothing indexes. Pick the category for the destination
-instead — `books`, `manga` or `audiobooks`; `scripts/qbittorrent-bootstrap.sh` owns the
-list and its save paths. The `shelfmark` and `shelfmark-audiobooks` categories are *not*
-destinations: they are Shelfmark's staging area, and Shelfmark only post-processes
-torrents belonging to one of its own tasks, so a manual add left there downloads and
-then sits forever. There is no `comics` category on purpose — Kapowarr owns `comics/`
-and moves files inside it with copy-then-delete, which races a torrent seeding from
-that tree.
+instead — `books`, `manga`, `comics` or `audiobooks`; `scripts/qbittorrent-bootstrap.sh`
+owns the list and its save paths. The `shelfmark` and `shelfmark-audiobooks` categories
+are *not* destinations: they are Shelfmark's staging area, and Shelfmark only
+post-processes torrents belonging to one of its own tasks, so a manual add left there
+downloads and then sits forever.
+
+**A hand-grabbed comic lands in Kavita under a scene-release name.** Expected, and
+fixable before the scan. The Comics library is the ComicVine type, whose parser takes
+the series from the *containing folder* and never from the filename — and
+`GetFoldersTillRoot` stops below the scan root, so the deepest folder above the issues
+wins. A release tree like `Batman.2016.COMPLETE-SCENE/` becomes a series of that name,
+and any extra `Volume 01/` level makes *that* the series instead. Rename the torrent's
+folder to `Series (Year)` and the parser reads it correctly; do it through qBittorrent
+rather than with `mv`, so the torrent follows the rename and keeps seeding:
+
+```sh
+docker exec pi-qbittorrent curl -sS -H "Referer: http://127.0.0.1:8080" \
+  --data-urlencode "hash=<hash>" \
+  --data-urlencode "oldPath=Batman.2016.COMPLETE-SCENE" \
+  --data-urlencode "newPath=Batman (2016)" \
+  http://127.0.0.1:8080/api/v2/torrents/renameFolder
+```
+
+`newPath` may contain `/` to create nesting, which is also how an audiobook release
+folder gets reshaped into the `Author/Title` layout Audiobookshelf wants.
 
 **Nothing downloads and the log mentions the torrent client.** Shelfmark reaches
 qBittorrent through gluetun (`http://gluetun:8080`) with `ADMIN_USER`/`PASSWORD`. If
