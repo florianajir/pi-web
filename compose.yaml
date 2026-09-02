@@ -1700,7 +1700,10 @@ services:
       - "homepage.name=Audiobookshelf"
       - "homepage.icon=audiobookshelf.png"
       - "homepage.href=https://audiobooks.${HOST_NAME:-pi.lan}"
-      - "homepage.description=Audiobook and podcast player"
+      # Not "and podcast player": Audiobookshelf downloads podcast episodes into
+      # the library folder, and the only media mount here is :ro, so a podcast
+      # library would fail with EROFS. Adding one means adding a writable mount.
+      - "homepage.description=Audiobook player with progress sync"
       - "homepage.widget.type=audiobookshelf"
       - "homepage.widget.url=http://pi-audiobookshelf"
       # An API key minted by scripts/homepage-widgets-bootstrap.sh. Audiobookshelf

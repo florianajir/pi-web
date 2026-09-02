@@ -22,27 +22,39 @@ ensure_dir() {
     fix_ownership "$1"
 }
 
+# The uid/gid the services writing here actually run as: every PUID/PGID in
+# compose.yaml is 1000. Deliberately not fix_ownership's "whoever owns the
+# project directory" - that exists so generated files stay readable to the
+# person running the stack, which is a different question from who must be able
+# to *write* into a handoff folder. On the usual install both are 1000; where
+# they are not, chowning to the project owner logs success while Shelfmark
+# still cannot write.
+WRITER_UID="${WRITER_UID:-1000}"
+WRITER_GID="${WRITER_GID:-1000}"
+
 # download/audiobooks is a handoff, not a private directory: Shelfmark writes
 # into it (DESTINATION_AUDIOBOOK) and Audiobookshelf reads it. Where the other
 # download folders are created by qBittorrent from inside its own container,
 # this one has no writer until a download completes - so on a stack that ran
 # Shelfmark before this hook existed, the Docker daemon created it as root:root
-# and Shelfmark (uid 1000) has silently been unable to file anything there.
-# Repair that, but only the directory itself: its contents are audio files
-# whose ownership is not ours to rewrite.
+# and Shelfmark has silently been unable to file anything there. Repair that,
+# but only the directory itself: its contents are audio files whose ownership
+# is not ours to rewrite.
 repair_handoff_ownership() {
-    local dir="$1" owner=""
+    local dir="$1" current=""
 
     [ -d "$dir" ] || return 0
-    [ "$(stat -c '%u:%g' "$dir" 2>/dev/null || echo unknown)" = "0:0" ] || return 0
 
-    owner="$(stat -c '%u:%g' "$PROJECT_DIR" 2>/dev/null || true)"
-    [ -n "$owner" ] && [ "$owner" != "0:0" ] || return 0
+    current="$(stat -c '%u:%g' "$dir" 2>/dev/null || echo unknown)"
+    [ "$current" = "${WRITER_UID}:${WRITER_GID}" ] && return 0
+    # Only ever take a directory away from root. One deliberately handed to
+    # another account is not ours to reassign.
+    [ "$current" = "0:0" ] || return 0
 
-    if chown "$owner" "$dir" 2>/dev/null; then
-        log "Handed $dir back to $owner (it was root-owned, so Shelfmark could not write into it)"
+    if chown "${WRITER_UID}:${WRITER_GID}" "$dir" 2>/dev/null; then
+        log "Handed $dir to ${WRITER_UID}:${WRITER_GID} (it was root-owned, so Shelfmark could not write into it)"
     else
-        log "WARNING: $dir is root-owned and could not be chowned; Shelfmark cannot file audiobooks there"
+        log "WARNING: $dir is root-owned and could not be chowned (needs root); Shelfmark cannot file audiobooks there"
     fi
 }
 
