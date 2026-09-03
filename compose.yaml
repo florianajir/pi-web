@@ -5,35 +5,37 @@ x-service-defaults: &service-defaults
       tag: "{{.Name}}"
   restart: unless-stopped
 
-x-cpu-request-tiny: &cpu-request-tiny
-  resources:
-    reservations:
-      cpus: "0.05"
-
-x-cpu-request-small: &cpu-request-small
-  resources:
-    reservations:
-      cpus: "0.10"
-
-x-cpu-request-medium: &cpu-request-medium
-  resources:
-    reservations:
-      cpus: "0.20"
-
-x-cpu-request-large: &cpu-request-large
-  resources:
-    reservations:
-      cpus: "0.35"
-
-x-cpu-request-xlarge: &cpu-request-xlarge
-  resources:
-    reservations:
-      cpus: "0.60"
+# CPU priority, not capacity. cpu_shares lands on cgroup v2 cpu.weight and is
+# only arbitrated when the cores are actually contended, so a tier costs
+# nothing on an idle box - 1024 is the kernel default, mapping to weight 100.
+# It replaces `deploy: resources: reservations: cpus:`, which compose silently
+# drops outside swarm: every container ran at the default weight regardless of
+# the tier it named. The order is by *who waits on whom*, not by appetite - the
+# model services want the most CPU and get the least, because a DNS answer or a
+# healthcheck blocked behind an inference is what actually breaks the stack.
+x-cpu-prio-critical: &cpu-prio-critical 4096
+x-cpu-prio-normal: &cpu-prio-normal 1024
+x-cpu-prio-batch: &cpu-prio-batch 256
+x-cpu-prio-idle: &cpu-prio-idle 128
 
 # Lower = less likely to be OOM-killed. Range -1000 (never) to +1000 (first).
 x-oom-score-critical: &oom-score-critical -1000
 x-oom-score-important: &oom-score-important -500
 x-oom-score-deprioritize: &oom-score-deprioritize 500
+
+# Three memory keys, none of which does the other's job, and only the first is
+# a plain ceiling. See docs/ARCHITECTURE.md#rationing-cpu-and-memory.
+#
+#   mem_limit       cgroup v2 memory.max. Counts page cache and shmem as well
+#                   as anonymous pages, so squeezing an I/O-heavy service buys
+#                   re-reads, not RAM.
+#   mem_reservation memory.low. The only key that means "do not page this
+#                   out". On the latency-critical set only: the protection is
+#                   proportional, so reserving everywhere protects nothing.
+#   memswap_limit   memory *plus* swap, so the swap ceiling is the difference.
+#                   Only on the services that measurably swap - unset, Docker
+#                   grants every container a swap allowance equal to its
+#                   mem_limit, and one idle model server took the whole file.
 
 x-healthcheck-default: &healthcheck-default
   interval: 60s
@@ -81,7 +83,7 @@ x-stremio-common: &stremio-common
     <<: *healthcheck-default
     test: ["CMD", "curl", "-f", "http://localhost:11470/"]
     start_period: 30s
-  deploy: *cpu-request-small
+  cpu_shares: *cpu-prio-normal
   mem_limit: 1024m
   oom_score_adj: *oom-score-deprioritize
 
@@ -95,7 +97,7 @@ services:
         {"settings":[ {"provider":"cloudflare","zone_identifier":"${CLOUDFLARE_ZONE_ID}","domain":"${HOST_NAME}","token":"${CLOUDFLARE_DNS_API_TOKEN}","ttl":1,"proxied":false}, {"provider":"cloudflare","zone_identifier":"${CLOUDFLARE_ZONE_ID}","domain":"*.${HOST_NAME}","token":"${CLOUDFLARE_DNS_API_TOKEN}","ttl":1,"proxied":false} ]}
     volumes:
       - ddns_data:/updater/data
-    deploy: *cpu-request-tiny
+    cpu_shares: *cpu-prio-normal
     mem_limit: 64m
     oom_score_adj: *oom-score-critical
 
@@ -127,8 +129,9 @@ services:
       traefik:
         condition: service_healthy
     cpuset: "0"
-    deploy: *cpu-request-tiny
+    cpu_shares: *cpu-prio-critical
     mem_limit: 128m
+    mem_reservation: 32m
     oom_score_adj: *oom-score-critical
 
   backrest:
@@ -299,8 +302,9 @@ services:
       <<: *healthcheck-default
       test: ["CMD", "curl", "-fsS", "http://localhost:9898/"]
       start_period: 45s
-    deploy: *cpu-request-medium
+    cpu_shares: *cpu-prio-batch
     mem_limit: 1536m
+    memswap_limit: 2g
     oom_score_adj: *oom-score-important
 
   traefik:
@@ -402,8 +406,9 @@ services:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       start_interval: 5s
     cpuset: "0"
-    deploy: *cpu-request-medium
+    cpu_shares: *cpu-prio-critical
     mem_limit: 192m
+    mem_reservation: 96m
     oom_score_adj: *oom-score-critical
 
   beszel:
@@ -449,7 +454,7 @@ services:
       - "traefik.http.routers.beszel-agentconnect.priority=100"
       - "traefik.http.routers.beszel-agentconnect.tls=true"
       - "traefik.http.services.beszel.loadbalancer.server.port=8090"
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-normal
     mem_limit: 64m
     oom_score_adj: *oom-score-important
 
@@ -490,7 +495,7 @@ services:
     healthcheck:
       <<: *healthcheck-light
       test: ["CMD", "/agent", "health"]
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-normal
     mem_limit: 64m
     oom_score_adj: *oom-score-important
 
@@ -530,7 +535,7 @@ services:
       - "traefik.http.routers.uptime-kuma.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.routers.uptime-kuma.tls=true"
       - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-normal
     mem_limit: 256m
     oom_score_adj: *oom-score-important
 
@@ -566,7 +571,7 @@ services:
     healthcheck:
       <<: *healthcheck-light
       test: ["CMD", "curl", "-fsSo", "/dev/null", "http://127.0.0.1:3000/api/auth/session"]
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-normal
     mem_limit: 192m
     oom_score_adj: *oom-score-deprioritize
 
@@ -587,8 +592,9 @@ services:
       test: ["CMD", "drill", "@127.0.0.1", "-p", "5335", "cloudflare.com"]
       start_period: 10s
       start_interval: 5s
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-critical
     mem_limit: 128m
+    mem_reservation: 32m
     oom_score_adj: *oom-score-critical
 
   pihole:
@@ -647,8 +653,9 @@ services:
       - "traefik.http.routers.pihole.middlewares=frame-deny@docker,lan@docker,authelia@docker"
       - "traefik.http.services.pihole.loadbalancer.server.port=8082"
     cpuset: "0-1"
-    deploy: *cpu-request-medium
+    cpu_shares: *cpu-prio-critical
     mem_limit: 192m
+    mem_reservation: 64m
     oom_score_adj: *oom-score-critical
 
   n8n:
@@ -705,7 +712,7 @@ services:
       <<: *healthcheck-default
       # Explicit IPv4 loopback: localhost resolves to ::1 here and the dial fails.
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5678/healthz"]
-    deploy: *cpu-request-large
+    cpu_shares: *cpu-prio-normal
     mem_limit: 768m
     oom_score_adj: *oom-score-deprioritize
 
@@ -729,7 +736,7 @@ services:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:5680/healthz && nc -z -w 2 n8n 5679"]
       start_period: 5s
       start_interval: 3s
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-normal
     mem_limit: 256m
     oom_score_adj: *oom-score-deprioritize
 
@@ -790,7 +797,7 @@ services:
     healthcheck:
       <<: *healthcheck-default
       test: ["CMD", "/nodejs/bin/node", "-e", "const net=require('node:net');const s=net.connect({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.setTimeout(5000,()=>{s.destroy();process.exit(1)});s.on('error',()=>process.exit(1));"]
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-normal
     mem_limit: 192m
     oom_score_adj: *oom-score-deprioritize
 
@@ -856,8 +863,9 @@ services:
       test: ["CMD", "headscale", "health"]
       start_period: 10s
     cpuset: "0"
-    deploy: *cpu-request-medium
+    cpu_shares: *cpu-prio-critical
     mem_limit: 128m
+    mem_reservation: 32m
     oom_score_adj: *oom-score-critical
 
   tailscale:
@@ -890,8 +898,9 @@ services:
       - "homepage.name=Tailscale"
       - "homepage.icon=tailscale.png"
       - "homepage.description=VPN mesh client"
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-critical
     mem_limit: 128m
+    mem_reservation: 96m
     oom_score_adj: *oom-score-critical
 
   immich-machine-learning:
@@ -918,8 +927,9 @@ services:
     volumes:
       - immich_model_cache:/cache
     cpuset: "2-3"
-    deploy: *cpu-request-medium
+    cpu_shares: *cpu-prio-idle
     mem_limit: 2g
+    memswap_limit: 2560m
     oom_score_adj: *oom-score-deprioritize
 
   immich-server:
@@ -990,8 +1000,9 @@ services:
       - "traefik.http.routers.immich-public.priority=20"
       - "traefik.http.services.immich.loadbalancer.server.port=2283"
     cpuset: "1-3"
-    deploy: *cpu-request-xlarge
+    cpu_shares: *cpu-prio-normal
     mem_limit: 3072m
+    memswap_limit: 3584m
     oom_score_adj: *oom-score-deprioritize
 
   nextcloud:
@@ -1108,7 +1119,7 @@ services:
       redis:
         condition: service_healthy
     cpuset: "1-3"
-    deploy: *cpu-request-large
+    cpu_shares: *cpu-prio-normal
     mem_limit: 768m
     oom_score_adj: *oom-score-deprioritize
 
@@ -1182,7 +1193,7 @@ services:
       - "traefik.http.services.homepage.loadbalancer.server.port=3000"
     depends_on:
       - traefik
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-normal
     mem_limit: 192m
     oom_score_adj: *oom-score-deprioritize
 
@@ -1272,8 +1283,9 @@ services:
       test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
       start_period: 30s
       start_interval: 5s
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-critical
     mem_limit: 256m
+    mem_reservation: 64m
     oom_score_adj: *oom-score-deprioritize
 
   qbittorrent:
@@ -1317,8 +1329,11 @@ services:
       <<: *healthcheck-default
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       start_period: 30s
-    deploy: *cpu-request-small
-    mem_limit: 256m
+    cpu_shares: *cpu-prio-batch
+    # 512m, not 256m: at 256m the cgroup hit memory.max 98842 times, which is
+    # the write cache of an active torrent being reclaimed over and over, not a
+    # process wanting more heap (24 MB anonymous, 135 MB page cache, 0 OOM kills).
+    mem_limit: 512m
     oom_score_adj: *oom-score-deprioritize
 
   stremio:
@@ -1446,7 +1461,7 @@ services:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
       # First boot blocks ~2-3 min downloading anime mappings before the API serves.
       start_period: 180s
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-normal
     mem_limit: 512m
     oom_score_adj: *oom-score-deprioritize
 
@@ -1489,7 +1504,7 @@ services:
       # linuxserver base ships curl; Prowlarr's /ping needs no auth.
       test: ["CMD", "curl", "-fsS", "http://localhost:9696/ping"]
       start_period: 45s
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-batch
     mem_limit: 512m
     oom_score_adj: *oom-score-deprioritize
 
@@ -1538,7 +1553,7 @@ services:
       # python-slim base — no curl/wget; probe the UI with the bundled interpreter.
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5656/').status==200 else 1)"]
       start_period: 45s
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-batch
     mem_limit: 512m
     oom_score_adj: *oom-score-deprioritize
 
@@ -1566,7 +1581,7 @@ services:
       <<: *healthcheck-default
       test: ["CMD", "curl", "-fsS", "http://localhost:8191/health"]
       start_period: 45s
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-batch
     mem_limit: 768m
     oom_score_adj: *oom-score-deprioritize
 
@@ -1633,7 +1648,7 @@ services:
       # linuxserver base ships curl; Kavita exposes /api/health.
       test: ["CMD", "curl", "-fsS", "http://localhost:5000/api/health"]
       start_period: 45s
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-normal
     # Idle RSS is ~210 MB; the headroom is for cover generation, where libvips
     # decodes a whole page and 512m was OOM-killed on files over 100 MB.
     mem_limit: 1g
@@ -1767,11 +1782,12 @@ services:
       # python-slim base with curl installed; /api/health needs no auth.
       test: ["CMD", "curl", "-fsS", "http://localhost:8084/api/health"]
       start_period: 90s
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-normal
     # Chromium crashes rendering a page with the default 64MB /dev/shm, and needs
     # the headroom - the same two settings flaresolverr carries.
     shm_size: "256m"
     mem_limit: 2g
+    memswap_limit: 2560m
     oom_score_adj: *oom-score-deprioritize
 
   audiobookshelf:
@@ -1842,7 +1858,7 @@ services:
       # unauthenticated and answers 200 as soon as the server is listening.
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/healthcheck"]
       start_period: 45s
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-normal
     # Idle RSS is ~150 MB; the headroom is for the scanner, which probes every
     # file with ffprobe, and for the ffmpeg transcode a non-m4b stream triggers.
     mem_limit: 1g
@@ -1899,8 +1915,9 @@ services:
     healthcheck:
       <<: *healthcheck-light
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/v1/health"]
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-critical
     mem_limit: 128m
+    mem_reservation: 32m
     oom_score_adj: *oom-score-important
 
   vaultwarden:
@@ -1992,8 +2009,9 @@ services:
       - "traefik.http.routers.vaultwarden-connector.tls=true"
       - "traefik.http.routers.vaultwarden-connector.service=vaultwarden"
       - "traefik.http.services.vaultwarden.loadbalancer.server.port=80"
-    deploy: *cpu-request-tiny
+    cpu_shares: *cpu-prio-normal
     mem_limit: 256m
+    mem_reservation: 32m
     oom_score_adj: *oom-score-important
 
   # Authentication & SSO
@@ -2048,8 +2066,9 @@ services:
       - "traefik.http.routers.lldap.middlewares=frame-deny@docker,lan@docker,rate-limit-auth@docker,authelia@docker"
       - "traefik.http.routers.lldap.tls=true"
       - "traefik.http.services.lldap.loadbalancer.server.port=17170"
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-critical
     mem_limit: 128m
+    mem_reservation: 16m
     oom_score_adj: *oom-score-critical
 
   authelia:
@@ -2105,8 +2124,9 @@ services:
       - "traefik.http.middlewares.authelia.forwardauth.authRequestHeaders=Accept,Cookie,Authorization"
       - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
       - "traefik.http.middlewares.authelia.forwardauth.maxResponseBodySize=4096"
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-critical
     mem_limit: 128m
+    mem_reservation: 48m
     oom_score_adj: *oom-score-critical
 
   # AI
@@ -2172,11 +2192,12 @@ services:
       - "homepage.name=llama.cpp"
       - "homepage.description=Gemma 4 E2B inference"
       - "homepage.icon=mdi-brain"
-    deploy: *cpu-request-xlarge
+    cpu_shares: *cpu-prio-idle
     cpuset: "1-3"
     # Weights are mmap'd, and the cgroup counts those pages: 3.4G of model plus
     # ~1G of vision projector, KV cache and compute buffers.
     mem_limit: 6g
+    memswap_limit: 8g
     oom_score_adj: *oom-score-deprioritize
 
   # Text-to-speech for open-webui's read-aloud button, with real French voices.
@@ -2213,7 +2234,7 @@ services:
       - "homepage.name=Piper"
       - "homepage.description=Text-to-speech, French by default"
       - "homepage.icon=mdi-text-to-speech"
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-idle
     # Same three cores as llama-cpp, leaving core 0 to traefik and DNS.
     cpuset: "1-3"
     mem_limit: 512m
@@ -2262,7 +2283,7 @@ services:
       - "homepage.name=Parakeet"
       - "homepage.description=Multilingual speech-to-text"
       - "homepage.icon=mdi-microphone-message"
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-idle
     # Same three cores as llama-cpp and piper, leaving core 0 to traefik and DNS.
     cpuset: "1-3"
     # ~1.2GB resident for the int8 weights and the onnxruntime arena, plus the
@@ -2270,6 +2291,7 @@ services:
     # what stops a long upload being an OOM: before openai_api.py windowed them,
     # a 120s pass went past 2GB.
     mem_limit: 2560m
+    memswap_limit: 3584m
     oom_score_adj: *oom-score-deprioritize
 
   # Serves the host's status to the local model as an OpenAPI tool; see
@@ -2334,7 +2356,7 @@ services:
       - "homepage.description=Server status for the local LLM"
       - "homepage.icon=mdi-tools"
     # No cpuset: a call only runs while llama-cpp waits for its result.
-    deploy: *cpu-request-tiny
+    cpu_shares: *cpu-prio-normal
     mem_limit: 192m
     oom_score_adj: *oom-score-deprioritize
 
@@ -2420,8 +2442,9 @@ services:
       - "traefik.http.routers.open-webui.middlewares=frame-deny@docker,lan@docker"
       - "traefik.http.routers.open-webui.tls=true"
       - "traefik.http.services.open-webui.loadbalancer.server.port=8080"
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-idle
     mem_limit: 1g
+    memswap_limit: 1536m
     oom_score_adj: *oom-score-deprioritize
 
   # Database & Cache
@@ -2459,8 +2482,17 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
       start_interval: 3s
     mem_limit: 1536m
-    cpuset: "1-3"
-    deploy: *cpu-request-xlarge
+    mem_reservation: 768m
+    # 256 MB of swap, not the 1536 MB Docker would grant by default: 535 MB of
+    # this limit is shared_buffers, and shmem is swappable but not reclaimable,
+    # so a paged-out buffer cache is a database that thinks it is reading RAM.
+    memswap_limit: 1792m
+    # No cpuset on purpose. "1-3" put the database on exactly the three cores
+    # llama-cpp and parakeet saturate, and left it the one core it could not
+    # use. Everything that queries it waits on it, so it floats over all four
+    # and wins on cpu_shares instead - which the AI services cannot do to it,
+    # being pinned away from core 0.
+    cpu_shares: *cpu-prio-critical
     shm_size: 256mb
     oom_score_adj: *oom-score-critical
 
@@ -2482,11 +2514,12 @@ services:
       - immich
       - nextcloud
       - auth
-    deploy: *cpu-request-small
+    cpu_shares: *cpu-prio-critical
     # Shared by Immich, Nextcloud and Authelia. Peak dataset has been seen at
     # ~44M; the limit must also cover the BGSAVE fork's copy-on-write pages, so
     # keep it well above config/redis/valkey.conf's maxmemory (192mb).
     mem_limit: 256m
+    mem_reservation: 64m
     oom_score_adj: *oom-score-critical
 
 volumes:
