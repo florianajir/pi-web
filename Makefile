@@ -76,7 +76,7 @@ help:
 	@echo "  headscale-register <key> Register a headscale node"
 	@echo "  headscale-reset  Reset all Headscale nodes, preauth keys, and IP allocations"
 	@echo "  check-env        Validate required .env variables"
-	@echo "  test             Run the installer, check-env, CLI, service and start-sequence suites (no host changes)"
+	@echo "  test             Run the installer, check-env, CLI, service, start-sequence and compose-invariant suites (no host changes)"
 	@echo "  lint             Run every static check CI runs (shell, YAML, Python, Dockerfiles, workflows, secrets)"
 	@echo "  pg-upgrade to=<image> Migrate Postgres to a new major (dump/restore, old data kept)"
 	@echo "  rotate-password       Rotate PASSWORD after a leak (LLDAP admin + Authelia only, no Postgres)"
@@ -108,7 +108,8 @@ check-env:
 print-required-vars:
 	@echo "$(REQUIRED_ENV_VARS)"
 
-# Same suites CI runs. Every test works on a temporary copy, so this touches
+# Same suites CI runs. Every test works on a temporary copy - and compose-test
+# renders with --no-interpolate, so not even .env is read - so this touches
 # neither .env nor the host.
 test:
 	@sh tests/install-test.sh
@@ -116,6 +117,7 @@ test:
 	@sh tests/cli-test.sh
 	@sh tests/services-test.sh
 	@sh tests/stack-up-test.sh
+	@sh tests/compose-test.sh
 
 # The same script CI runs, so a green local run means a green CI run. Gates
 # whose tool is missing are reported as skipped; CI adds LINT_STRICT=1 to make
