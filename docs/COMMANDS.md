@@ -38,7 +38,7 @@ The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pul
 | `make disable <service>` | Disable a service: update `COMPOSE_PROFILES` and stop it |
 | `make config` | Interactive checklist to choose which optional services run |
 | `make check-env` | Validate the required `.env` variables |
-| `make test` | Run the installer, CLI, `check-env` and start-sequence suites (temporary copies only, no host changes) |
+| `make test` | Run the installer, CLI, `check-env`, start-sequence and compose-invariant suites (temporary copies only, no host changes) |
 | `make lint` | Run every static check CI runs: shell syntax and `shellcheck -s dash` over every tracked shell file, `yamllint`, `ruff`, `hadolint`, `actionlint` and a `gitleaks` history scan. A gate whose tool is missing is reported as skipped; `LINT_STRICT=1` makes a skip fail |
 
 ### VPN and credentials
