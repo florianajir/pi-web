@@ -89,6 +89,11 @@ none "every publicly routed router carries middlewares" ROUTER
 # none and the password rotation misses it.
 none "every Postgres-backed service owns a role" POSTGRES
 
+# The failure that lasted longest: five `deploy: resources: reservations: cpus:`
+# tiers across 40 services, all of which compose drops outside swarm. It read as
+# policy for months while every container sat at the default cpu.weight.
+none "every resource key is one the kernel actually reads" RESOURCE
+
 # A rendering that half-breaks still returns something, and every check above
 # would pass having inspected four services.
 none "the rendered stack is the expected size" FLOOR
@@ -137,6 +142,21 @@ catches "a Postgres-backed service with no role" POSTGRES '{"services":{
 }}'
 
 catches "a rendering that came back nearly empty" FLOOR '{"services": {"lonely": {"image": "x:1"}}}'
+
+catches "a deploy: block compose drops outside swarm" RESOURCE '{"services": {"decorative": {
+  "image": "x:1", "mem_limit": 1000000,
+  "deploy": {"resources": {"reservations": {"cpus": "0.20"}}}
+}}}'
+
+catches "a service with no memory ceiling" RESOURCE '{"services": {"boundless": {"image": "x:1"}}}'
+
+catches "a reservation as large as the limit it sits under" RESOURCE '{"services": {"pointless": {
+  "image": "x:1", "mem_limit": "512m", "mem_reservation": "512m"
+}}}'
+
+catches "a memswap_limit that silently disables swap" RESOURCE '{"services": {"swapless": {
+  "image": "x:1", "mem_limit": "512m", "memswap_limit": "512m"
+}}}'
 
 # --- and it must never echo a value it was handed ---------------------------
 #

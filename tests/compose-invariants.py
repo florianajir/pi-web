@@ -38,6 +38,13 @@ INTERNAL_ENTRYPOINTS = {"traefik"}
 # reads every database through the superuser.
 NO_PG_ROLE = {"backrest"}
 
+# Services allowed to run with swap disabled, i.e. memswap_limit equal to
+# mem_limit. Nothing needs it today: with no swap, every spike over the limit
+# has to be resolved by reclaim inside the cgroup, which is how qbittorrent
+# collected 98842 memory.max events. Named here rather than skipped by a rule,
+# because the key reads as a limit and behaves as an off switch.
+NO_SWAP = {}
+
 # Where the compose service name and the postgres role name differ.
 PG_ROLE_ALIAS = {"immich-server": "immich"}
 
@@ -48,6 +55,7 @@ PG_ROLE_ALIAS = {"immich-server": "immich"}
 MIN_SERVICES = 38
 MIN_ROUTERS = 28
 MIN_HEALTH_DEPS = 18
+MIN_MEM_RESERVATIONS = 12
 
 
 def labels_of(service):
@@ -57,15 +65,35 @@ def labels_of(service):
     return labels
 
 
+def bytes_of(value):
+    """A compose size - already an int, or a string like "1536m" or "6g"."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    match = re.fullmatch(r"\s*([0-9]*\.?[0-9]+)\s*([kmg]?b?)\s*", str(value).lower())
+    if not match:
+        return None
+    scale = {"": 1, "b": 1, "k": 1024, "kb": 1024,
+             "m": 1024 ** 2, "mb": 1024 ** 2, "g": 1024 ** 3, "gb": 1024 ** 3}
+    return int(float(match.group(1)) * scale[match.group(2)])
+
+
 def project(service):
     """Everything the invariants need, and deliberately nothing else.
 
     An allowlist rather than a blocklist: a compose release that adds another
     field carrying a credential is safe here by default. healthcheck collapses
     to a boolean because only its presence is ever asked about, and labels keep
-    the traefik keys only - homepage's carry widget API keys.
+    the traefik keys only - homepage's carry widget API keys. `deploy` keeps its
+    key names and not their values, so a finding can say which subsection is
+    there without echoing anything from it.
     """
     return {
+        "deploy_keys": sorted((service.get("deploy") or {}).keys()),
+        "mem_limit": bytes_of(service.get("mem_limit")),
+        "mem_reservation": bytes_of(service.get("mem_reservation")),
+        "memswap_limit": bytes_of(service.get("memswap_limit")),
         "image": service.get("image"),
         "has_build": bool(service.get("build")),
         "has_healthcheck": bool(service.get("healthcheck")),
@@ -126,6 +154,30 @@ def main():
 
     if health_deps < MIN_HEALTH_DEPS:
         report("FLOOR", f"found only {health_deps} service_healthy dependencies, expected at least {MIN_HEALTH_DEPS}")
+
+    reservations = 0
+    for name, service in sorted(services.items()):
+        if service["deploy_keys"]:
+            sections = "/".join(service["deploy_keys"])
+            report("RESOURCE", f"{name} declares deploy.{sections}, which compose drops outside swarm")
+
+        limit = service["mem_limit"]
+        if limit is None:
+            report("RESOURCE", f"{name} declares no mem_limit, so it can take the whole host")
+            continue
+
+        reservation = service["mem_reservation"]
+        if reservation is not None:
+            reservations += 1
+            if reservation >= limit:
+                report("RESOURCE", f"{name} reserves as much memory as it may use, which reserves nothing")
+
+        memswap = service["memswap_limit"]
+        if memswap is not None and memswap <= limit and name not in NO_SWAP:
+            report("RESOURCE", f"{name} sets memswap_limit at or below mem_limit, which disables its swap")
+
+    if reservations < MIN_MEM_RESERVATIONS:
+        report("FLOOR", f"only {reservations} services reserve memory, expected at least {MIN_MEM_RESERVATIONS}")
 
     for name, service in sorted(services.items()):
         image = service.get("image")
