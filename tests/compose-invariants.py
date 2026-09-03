@@ -1,9 +1,16 @@
 """Invariants compose.yaml must hold, checked against the rendered config.
 
 Reads `docker compose config --format json` on stdin and prints one line per
-finding, prefixed by category, for tests/compose-test.sh to assert on. Nothing
-here reads .env: the caller renders with --no-interpolate, so a password stays
-the literal ${PASSWORD} and never enters this process.
+finding, prefixed by category, for tests/compose-test.sh to assert on.
+
+`docker compose config` inlines the contents of every `env_file:` - ntfy's
+passwords and API tokens among them - so its output is a secret. project()
+below reduces each service to the handful of fields the invariants need,
+before anything else looks at it: what is not kept cannot be printed by a
+failure message, now or after someone adds a check here. The caller also
+passes --no-interpolate, which keeps ${PASSWORD} and the homepage widget keys
+literal, and pipes straight into this script so the raw render never lands in
+a shell variable.
 """
 
 import json
@@ -50,10 +57,34 @@ def labels_of(service):
     return labels
 
 
+def project(service):
+    """Everything the invariants need, and deliberately nothing else.
+
+    An allowlist rather than a blocklist: a compose release that adds another
+    field carrying a credential is safe here by default. healthcheck collapses
+    to a boolean because only its presence is ever asked about, and labels keep
+    the traefik keys only - homepage's carry widget API keys.
+    """
+    return {
+        "image": service.get("image"),
+        "has_build": bool(service.get("build")),
+        "has_healthcheck": bool(service.get("healthcheck")),
+        "depends_on": {
+            target: spec.get("condition")
+            for target, spec in (service.get("depends_on") or {}).items()
+        },
+        "labels": {
+            key: value
+            for key, value in labels_of(service).items()
+            if key.startswith("traefik.")
+        },
+    }
+
+
 def routers_of(services):
     routers = {}
     for name, service in services.items():
-        for key, value in labels_of(service).items():
+        for key, value in service["labels"].items():
             match = re.match(r"traefik\.http\.routers\.([^.]+)\.(.+)", key)
             if match:
                 router = routers.setdefault(match.group(1), {"_service": name})
@@ -73,7 +104,7 @@ def postgres_roles(repo_dir):
 def main():
     repo_dir = sys.argv[1]
     config = json.load(sys.stdin)
-    services = config["services"]
+    services = {name: project(s) for name, s in config["services"].items()}
     findings = []
 
     def report(category, message):
@@ -84,13 +115,13 @@ def main():
 
     health_deps = 0
     for name, service in sorted(services.items()):
-        for target, spec in sorted((service.get("depends_on") or {}).items()):
-            if spec.get("condition") != "service_healthy":
+        for target, condition in sorted(service["depends_on"].items()):
+            if condition != "service_healthy":
                 continue
             health_deps += 1
             if target not in services:
                 report("HEALTH", f"{name} waits on {target}, which this profile does not render")
-            elif not services[target].get("healthcheck") and target not in IMAGE_HEALTHCHECK:
+            elif not services[target]["has_healthcheck"] and target not in IMAGE_HEALTHCHECK:
                 report("HEALTH", f"{name} waits for {target} to be healthy, but {target} declares no healthcheck")
 
     if health_deps < MIN_HEALTH_DEPS:
@@ -99,7 +130,7 @@ def main():
     for name, service in sorted(services.items()):
         image = service.get("image")
         if not image:
-            if not service.get("build"):
+            if not service["has_build"]:
                 report("IMAGE", f"{name} has neither an image nor a build")
             continue
         tag = image.rsplit("/", 1)[-1]
@@ -128,7 +159,7 @@ def main():
     else:
         backed = {
             name for name, service in services.items()
-            if "postgres" in (service.get("depends_on") or {})
+            if "postgres" in service["depends_on"]
         }
         for name in sorted(backed - NO_PG_ROLE):
             if PG_ROLE_ALIAS.get(name, name) not in roles:
