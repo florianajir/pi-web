@@ -155,6 +155,10 @@ install-system:
 	@echo "🧰 Applying host sysctl settings..."
 	$(SUDO) cp config/sysctl.d/pi-pcloud.conf /etc/sysctl.d/99-pi-pcloud.conf
 	$(SUDO) $(SYSCTL) --system >/dev/null
+	@echo "💽 Sizing host swap..."
+	@# Best-effort: a host that cannot take a bigger swap file is not a failed
+	@# install. The script says why and leaves the size to the next reboot.
+	@./scripts/configure-swap.sh || echo "  ⚠ swap sizing skipped"
 	@echo "🌐 Adding local DNS overrides to /etc/hosts..."
 	@# Read through lib.sh, like check-env above: a third copy of the .env
 	@# reader here would drift from the one install.sh and the scripts use.
@@ -230,6 +234,13 @@ uninstall:
 	@echo "🧰 Removing host sysctl settings..."
 	-$(SUDO) rm -f /etc/sysctl.d/99-pi-pcloud.conf
 	-$(SUDO) $(SYSCTL) --system >/dev/null
+	@echo "💽 Restoring original swap config..."
+	@if [ -f /etc/dphys-swapfile.pi-pcloud.bak ]; then \
+		$(SUDO) mv /etc/dphys-swapfile.pi-pcloud.bak /etc/dphys-swapfile; \
+		echo "  ✔ /etc/dphys-swapfile restored (applies on next reboot)"; \
+	else \
+		echo "  ℹ no backup found, leaving /etc/dphys-swapfile as is"; \
+	fi
 	@echo "🌐 Removing local DNS overrides from /etc/hosts..."
 	-$(SUDO) sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts
 	@echo "🧹 Removing the pi-pcloud command..."
