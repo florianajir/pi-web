@@ -33,6 +33,9 @@ from fastapi.responses import PlainTextResponse
 HOSTFS = Path(os.environ.get("HOSTFS", "/hostfs"))
 PROC = HOSTFS / "proc"
 SYS = HOSTFS / "sys"
+# Per-container memory.pressure lives here. Docker names each scope after the
+# full container id, which project_containers() already returns.
+CGROUP = SYS / "fs/cgroup"
 DOCKER_SOCK = os.environ.get("DOCKER_SOCK", "/var/run/docker.sock")
 # The socket is the host's: unfiltered, the list covers containers that have
 # nothing to do with this stack, and a stray Exited one reads as a fault.
@@ -75,9 +78,25 @@ TEMP_C = 70
 # never faults them back, which is precisely what swap is for. Measured here at
 # 103 days of uptime - swap 100% full, 7G of RAM available, no OOM kill, and
 # 0.13 MB/min of paging - the fill level alone said "problem" where there was
-# none. So both have to hold: swap full *while* RAM is tight. RAM_PRESSURE_PCT
-# sits below MEMORY_PCT on purpose, because paging under pressure starts before
-# RAM is exhausted.
+# none.
+#
+# PSI answers that question directly instead of inferring it. `full avg300` is
+# the share of the last five minutes in which *every* task was stalled waiting
+# on memory - not a level that might mean trouble, but time the machine
+# provably lost to it. 5% is 15 seconds of dead wall clock out of 300 on a box
+# that is otherwise 95% idle.
+#
+# `some` is deliberately not used: it fires whenever any single process is in
+# reclaim, which is a container touching its own mem_limit doing exactly what
+# the limit is for.
+PSI_MEM_FULL_PCT = 5
+# The pre-PSI heuristic, kept for a kernel that has no /proc/pressure: psi=1 is
+# added to cmdline.txt by scripts/configure-kernel-params.sh and only takes
+# effect on the next reboot, so between install and reboot this is all there
+# is. Both conditions have to hold - swap full *while* RAM is tight - because
+# neither alone distinguishes the idle-model case above. RAM_PRESSURE_PCT sits
+# below MEMORY_PCT on purpose: paging under pressure starts before RAM is
+# exhausted.
 SWAP_PCT = 50
 RAM_PRESSURE_PCT = 80
 # `docker compose up` zeroes RestartCount, so this many within one run of the
@@ -219,6 +238,60 @@ def meminfo() -> dict[str, int]:
     return info
 
 
+def vmstat() -> dict[str, int]:
+    stat = {}
+    for entry in read(PROC / "vmstat").splitlines():
+        key, _, value = entry.partition(" ")
+        if value.strip().isdigit():
+            stat[key] = int(value)
+    return stat
+
+
+def pressure(path: Path) -> dict[str, float]:
+    """`{"some_avg300": 0.4, "full_avg300": 0.1, ...}`, or {} without usable PSI.
+
+    The file is two lines of `key avg10=N avg60=N avg300=N total=N`. Absent
+    means the kernel was built CONFIG_PSI_DEFAULT_DISABLED=y and never given
+    psi=1 - the same read as any other missing /proc file, so no probe is
+    needed to tell the two apart.
+    """
+    values = {}
+    for line in read(path).splitlines():
+        fields = line.split()
+        for field in fields[1:]:
+            key, _, value = field.partition("=")
+            if key.startswith("avg"):
+                try:
+                    values[f"{fields[0]}_{key}"] = float(value)
+                except ValueError:
+                    return {}
+    # All or nothing, keyed on the one field the caller actually judges on. A
+    # half-read file would otherwise be truthy, take the PSI branch, find no
+    # full_avg300, default it to 0 and quietly never fire - the same silence as
+    # a healthy box. Returning {} sends it to the swap heuristic instead.
+    return values if "full_avg300" in values else {}
+
+
+def container_cgroup(container: dict) -> Path:
+    return CGROUP / "system.slice" / f"docker-{container.get('Id', '')}.scope"
+
+
+def worst_pressured_containers(limit: int = 3) -> list[tuple[str, float]]:
+    """The containers stalling most on memory, worst first.
+
+    Only called once the host is already over PSI_MEM_FULL_PCT: it is one read
+    per container, which is cheap but pointless while nothing is wrong, and the
+    whole point of this topic is to stay under a tenth of a second.
+    """
+    stalled = []
+    for container in project_containers():
+        full = pressure(container_cgroup(container) / "memory.pressure").get("full_avg300")
+        if full:
+            stalled.append((short_name(container), full))
+    stalled.sort(key=lambda item: item[1], reverse=True)
+    return stalled[:limit]
+
+
 def topic_memory() -> str:
     info = meminfo()
     total, available = info.get("MemTotal", 0), info.get("MemAvailable", 0)
@@ -229,6 +302,22 @@ def topic_memory() -> str:
     swap_total, swap_free = info.get("SwapTotal", 0), info.get("SwapFree", 0)
     if swap_total:
         lines.append(f"swap: {human_bytes(swap_total - swap_free)} used of {human_bytes(swap_total)}")
+    # zswap compresses an evicted page and keeps it in RAM, reaching the disk
+    # only once its pool is full, so "swap used" on its own no longer says how
+    # much of that cost was actually paid in I/O. The ratio does.
+    stat = vmstat()
+    to_zswap, to_disk = stat.get("zswpout", 0), stat.get("pswpout", 0)
+    if to_zswap + to_disk:
+        lines.append(
+            f"swap writes: {to_zswap * 100 // (to_zswap + to_disk)}% absorbed by zswap "
+            f"in RAM ({to_zswap} pages compressed, {to_disk} to disk, since boot)"
+        )
+    psi = pressure(PROC / "pressure/memory")
+    if psi:
+        lines.append(
+            f"memory pressure: {psi.get('full_avg300', 0):.2f}% of the last 5 min fully "
+            f"stalled, {psi.get('some_avg300', 0):.2f}% partially"
+        )
     return "\n".join(lines)
 
 
@@ -549,15 +638,31 @@ def topic_anomalies() -> str:
     if total and ram_pct >= MEMORY_PCT:
         findings.append(f"memory: {ram_pct}% used (threshold {MEMORY_PCT}%)")
     swap_total = info.get("SwapTotal", 0)
-    if swap_total:
-        swap_pct = (swap_total - info.get("SwapFree", 0)) * 100 // swap_total
-        # Both, not either: see RAM_PRESSURE_PCT. `memory` reports swap
-        # unconditionally for anyone who wants the number on its own.
-        if swap_pct >= SWAP_PCT and ram_pct >= RAM_PRESSURE_PCT:
-            findings.append(
-                f"swap: {swap_pct}% used while RAM is at {ram_pct}% "
-                f"(thresholds {SWAP_PCT}% and {RAM_PRESSURE_PCT}%)"
-            )
+    swap_pct = (swap_total - info.get("SwapFree", 0)) * 100 // swap_total if swap_total else 0
+    psi = pressure(PROC / "pressure/memory")
+    if psi:
+        # The measurement, not a proxy for it: swap fill and RAM percentage are
+        # both levels that may or may not cost anything, and needing two of
+        # them at once was how that was worked around. `full avg300` is the
+        # time already lost. Swap comes along as context, never as the trigger.
+        full = psi.get("full_avg300", 0)
+        if full >= PSI_MEM_FULL_PCT:
+            detail = f"memory pressure: {full:.1f}% of the last 5 min fully stalled"
+            detail += f" (threshold {PSI_MEM_FULL_PCT}%); RAM {ram_pct}% used"
+            if swap_total:
+                detail += f", swap {swap_pct}%"
+            stalled = worst_pressured_containers()
+            if stalled:
+                detail += " - worst: " + ", ".join(
+                    f"{name} {value:.1f}%" for name, value in stalled
+                )
+            findings.append(detail)
+    elif swap_total and swap_pct >= SWAP_PCT and ram_pct >= RAM_PRESSURE_PCT:
+        # No PSI: the pre-reboot heuristic. Both, not either - see SWAP_PCT.
+        findings.append(
+            f"swap: {swap_pct}% used while RAM is at {ram_pct}% "
+            f"(thresholds {SWAP_PCT}% and {RAM_PRESSURE_PCT}%, no PSI on this kernel)"
+        )
 
     temp = read(SYS / "class/thermal/thermal_zone0/temp").strip()
     if temp.isdigit() and int(temp) / 1000 >= TEMP_C:
@@ -636,7 +741,8 @@ Topic = Literal[
     description=(
         "Returns current server measurements. Topics: overview (a summary of all of them), "
         "anomalies (only what is outside its threshold, or that nothing is), "
-        "disk (free space per filesystem), cpu (usage, load, temperature), memory (RAM and swap), "
+        "disk (free space per filesystem), cpu (usage, load, temperature), "
+        "memory (RAM, swap, zswap and memory pressure), "
         "uptime, services (are the containers up), "
         "restarts (what restarted and why), errors (log tail of whatever is failing), "
         "backups (last backup and whether it worked), "

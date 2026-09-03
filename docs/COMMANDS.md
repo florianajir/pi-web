@@ -23,7 +23,7 @@ The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pul
 | `make start` / `make stop` / `make restart` | Control the whole stack |
 | `make update` | Pull code and images, rebuild, re-apply host files, apply in place |
 | `make update-images` | Images only: pull, rebuild, recreate just the containers whose image moved |
-| `make install-system` | Re-apply only what lives outside the repo: sysctl, `/etc/hosts`, systemd units, the `pi-pcloud` command and its completions |
+| `make install-system` | Re-apply only what lives outside the repo: sysctl, swap size, kernel command line, `/etc/hosts`, systemd units, the `pi-pcloud` command and its completions |
 | `make uninstall` | Remove the stack, volumes and units — **destructive** |
 
 ### Day to day
@@ -63,7 +63,7 @@ Two cases still take the stack down, both because compose cannot apply them any 
 
 `make restart` is still there to force a full restart at any time.
 
-It also re-runs `install-system`, because a pull can change files this repository copies **outside** itself: the systemd units, the sysctl drop-in, the shell completions. Those copies would otherwise sit stale until the next `make install`. And it validates `.env` against the required-variable list *first*, so a variable added upstream is caught before anything is applied rather than after.
+It also re-runs `install-system`, because a pull can change files this repository copies **outside** itself: the systemd units, the sysctl drop-in, the swap size, the kernel command line, the shell completions. Those copies would otherwise sit stale until the next `make install`. And it validates `.env` against the required-variable list *first*, so a variable added upstream is caught before anything is applied rather than after.
 
 The `pi-pcloud` command needs no refresh — it is a symlink into the checkout.
 

@@ -49,6 +49,38 @@ A system that stops reporting entirely is covered by Uptime Kuma's `beszel-agent
 
 **Its own data** lives in the `beszel_data` volume — metrics are aggregated, so it grows slowly. It is protected twice: PocketBase writes SQLite snapshots on `BESZEL_BACKUP_CRON` (to S3 if configured, keeping `BESZEL_BACKUP_MAX_KEEP`), and the volume is mounted read-only into Backrest for the nightly full backup.
 
+### Memory pressure (PSI)
+
+`scripts/configure-kernel-params.sh` adds `psi=1` to the kernel command line at
+install, because the Raspberry Pi kernel is built `CONFIG_PSI=y` with
+`CONFIG_PSI_DEFAULT_DISABLED=y` — the code is there, the interface is not, and
+there is no sysctl or sysfs equivalent to turn it on later. It takes effect on the
+next reboot.
+
+What it buys is a *rate* where there was only a total. Without it, the sole
+evidence of memory pressure is `/proc/vmstat`, whose counters are cumulative since
+boot: 54.5 M `pswpin` pages over 117 days of uptime says 208 GB was read back out
+of swap and nothing whatsoever about whether any of it happened this week. With
+PSI:
+
+```bash
+cat /proc/pressure/memory                        # host, 10s/60s/300s averages
+cat /sys/fs/cgroup/system.slice/docker-$(docker inspect -f '{{.Id}}' pi-postgres).scope/memory.pressure
+```
+
+`some avg10` is the share of the last ten seconds in which at least one task was
+stalled waiting on memory; `full` is where every task was. A steady non-zero
+`full` is the signal that no fill level can give you — see [Local AI → Reporting
+versus judging](AI.md#reporting-versus-judging) for why swap being 100% full is
+not itself a fault on this box.
+
+`make doctor` and the `anomalies` chat topic use it as their memory verdict
+(`PSI_MEM_FULL_PCT`, 5% of `full avg300`), in place of the swap-full-*and*-RAM-tight
+pair they needed before. Because the same file exists per cgroup, the finding names
+the container doing the stalling — which no host-wide level ever could. Beszel has
+no PSI collector, so this is the one memory signal that lives in the terminal and
+the chat but not on your phone.
+
 ## Uptime Kuma — the services
 
 `https://uptime.<HOST_NAME>`, LAN-only + SSO.

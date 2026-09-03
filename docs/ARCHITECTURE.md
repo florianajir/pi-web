@@ -405,6 +405,105 @@ git clone https://github.com/florianajir/pi-pcloud.git /mnt/ssd/pi-pcloud
 ln -s /mnt/ssd/pi-pcloud /opt/pi-pcloud
 ```
 
+## Rationing CPU and memory
+
+Four cores and 16 GB, shared by ~40 containers including a local LLM. The sum of the
+`mem_limit`s is close to twice the RAM, which is deliberate — they are ceilings on a
+service that misbehaves, not an allocation. What matters is who gives way first when
+the machine is actually short, and that is expressed in three separate knobs, none of
+which substitutes for another.
+
+### CPU
+
+`cpuset` is the isolation, `cpu_shares` is the priority.
+
+| Cores | Who | Why |
+|---|---|---|
+| `0` | Traefik, Headscale, Cloudflared | Reverse proxy and the two tunnel daemons, kept off the cores the AI stack saturates |
+| `0-1` | Pi-hole | Also `FTLCONF_misc_check_load: "false"` — FTL reads the *host* loadavg and compares it to the cores it can see |
+| `1-3` | llama.cpp, Piper, Parakeet, Immich (server), Nextcloud | The compute set, pinned away from core 0 |
+| `2-3` | immich-machine-learning | Narrower still; `MACHINE_LEARNING_*_THREADS` are matched to it |
+| unpinned | everything else, Postgres and Unbound included | Free to land anywhere, arbitrated by shares |
+
+Postgres is deliberately unpinned. It was on `1-3`, which is exactly the three cores
+llama.cpp and Parakeet saturate, and left it the one core it could not use — for a
+service every other service waits on.
+
+`cpu_shares` (`x-cpu-prio-*` in `compose.yaml`) has four tiers — 4096 critical, 1024
+normal, 256 batch, 128 idle — and orders them by **who waits on whom**, not by
+appetite. The model services want the most CPU and get the least: a DNS answer or a
+healthcheck blocked behind an inference is what actually breaks the stack, and an
+inference that finishes a second later breaks nothing. It costs nothing when the box
+is idle, which it is 95% of the time — cgroup weights are only consulted under
+contention.
+
+**It replaces `deploy: resources: reservations: cpus:`, which did nothing.** Compose
+drops that key outside Swarm: `docker inspect` reported `CpuShares=0` and every
+container sat at the default `cpu.weight=100`, tier notwithstanding. Five tiers were
+declared across 40 services and not one of them reached the kernel.
+`tests/compose-invariants.py` now fails on any `deploy:` key, so it cannot come back.
+
+### Memory
+
+`mem_limit` is the ceiling and counts page cache and shared memory, not just anonymous
+pages — which is why a tight limit on an I/O-heavy service buys nothing and costs
+re-reads. `oom_score_adj` only speaks at kill time, and nothing here has ever been
+killed. Neither says *don't page this out*, so:
+
+- **`mem_reservation`** (cgroup v2 `memory.low`) on the latency-critical set only:
+  DNS, proxy, auth, Postgres, Redis, the VPN daemons. The kernel reclaims from
+  cgroups over their reservation before touching one under it. The total stays around
+  1.3 GB of 16 on purpose — the protection is proportional, so reserving everywhere
+  protects nothing. The model services have none: they are the pages this is meant to
+  evict first.
+- **`memswap_limit`** on the eight services that either measurably swap or carry a
+  limit big enough to take the whole file. Left unset, Docker
+  gives every container a swap allowance equal to its `mem_limit`, so the stack
+  claimed ~30 GB against a swap file a fraction of that size, and one idle llama.cpp
+  held 2.6 GB of it while resident at 21 MB. `memswap_limit` is memory *plus* swap,
+  so the ceiling is the difference: `mem_limit: 6g` with `memswap_limit: 8g` is a
+  2 GB swap ceiling. Sized against `SWAP_SIZE_MB`
+  ([Configuration](CONFIGURATION.md#host-swap)), not against RAM.
+
+`mem_swappiness` is not used and cannot be: cgroup v2 has no per-cgroup swappiness,
+and Docker answers `WARNING: Your kernel does not support memory swappiness
+capabilities. Memory swappiness discarded.` The global `vm.swappiness = 10` in
+`config/sysctl.d/pi-pcloud.conf` is the only lever.
+
+### Swap, and zswap in front of it
+
+`/var/swap` is a file on the NVMe, sized by `SWAP_SIZE_MB`
+([Configuration](CONFIGURATION.md#host-swap)). A full one is not a fault here — the
+model services evict their cold weights exactly once and that is what swap is for.
+What *was* a fault is having no room left for the next spike.
+
+`scripts/configure-kernel-params.sh` puts **zswap** in front of it: an evicted page
+is compressed and kept in RAM, and only reaches the NVMe once the pool (20% of RAM)
+is full. The kernel is built `CONFIG_ZSWAP=y` without `CONFIG_ZSWAP_DEFAULT_ON`, so
+it is compiled in and idle until `zswap.enabled=1` is on the boot line. Two details
+are not obvious:
+
+- **The compressor stays at the built-in `lzo`.** `CRYPTO_ZSTD` and `CRYPTO_LZ4` are
+  modules on this kernel while zswap is built in, so `zswap.compressor=zstd` on the
+  boot line is read before the module exists and silently falls back to lzo. Moving
+  to zstd means loading the module and writing
+  `/sys/module/zswap/parameters/compressor` after boot, not a boot parameter.
+- **`zswap.shrinker_enabled=1` is not the default and matters more than the pool
+  size.** Without the shrinker a full pool simply stops accepting new pages, and it
+  fills with whichever arrived first — on this box, the cold model weights nobody is
+  going to ask for. The shrinker writes those back to disk and keeps the pool for
+  pages with a future.
+
+zswap is also the one setting here that can be tried without a reboot, which is why
+it is worth trying before committing to the boot line:
+
+```bash
+cat /sys/module/zswap/parameters/enabled          # N until the next reboot
+echo Y | sudo tee /sys/module/zswap/parameters/enabled
+cat /sys/fs/cgroup/memory.zswap.current           # bytes held compressed
+echo N | sudo tee /sys/module/zswap/parameters/enabled   # back off, no reboot
+```
+
 ## Backups
 
 Two independent layers: Backrest takes the nightly full backup of application data plus database dumps, and Beszel snapshots its own metrics database. Schedules, retention and how failures are noticed: [Monitoring → Backup strategy](MONITORING.md#backup-strategy).

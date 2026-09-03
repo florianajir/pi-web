@@ -41,6 +41,36 @@ make restart
 | `NEXTCLOUD_MAINTENANCE_WINDOW_START` | `2` | UTC hour at which Nextcloud runs its heavy background jobs |
 | `COMPOSE_PROFILES` | `all` | Which optional services run — see [below](#choosing-which-services-run) |
 
+### Host swap
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SWAP_SIZE_MB` | `8192` | Size of `/var/swap`, applied by `make install` via `scripts/configure-swap.sh` |
+
+**Two settings are needed, and raising only the obvious one does nothing.**
+`/etc/dphys-swapfile` holds `CONF_SWAPSIZE`, but `/sbin/dphys-swapfile` carries
+its own `CONF_MAXSWAP=2048` and clamps the request down to it — "restricting to
+config limit" — so the script sets both.
+
+**Why 8192 and not the 2048 Raspberry Pi OS ships.** A full swap file is not a
+fault on this box; the model services load their weights, go idle, and have
+their cold pages evicted exactly once, which is what swap is *for*. But
+`parakeet`, `llama-cpp`, `open-webui` and `immich-machine-learning` filled a
+4096 MB file to 99.99% between them, and a swap file with 360 kB free has no
+room for the next spike. The `memswap_limit` ceilings in `compose.yaml` are
+sized against this number — see
+[Architecture](ARCHITECTURE.md#rationing-cpu-and-memory).
+
+Resizing means `swapoff`, which pages everything in swap back into RAM at once.
+The script only restarts `dphys-swapfile` when available RAM covers the
+swapped-out set with 20% headroom, and otherwise leaves the new size to take
+effect on the next reboot. It never fails the install.
+
+The file is not the whole story: `make install` also enables **zswap**, a
+compressed cache in RAM in front of it, so most of this size is only reached
+under real pressure — see
+[Architecture](ARCHITECTURE.md#swap-and-zswap-in-front-of-it).
+
 ### Network
 
 Defaults suit a `192.168.1.0/24` LAN. The installer auto-detects all of these.
