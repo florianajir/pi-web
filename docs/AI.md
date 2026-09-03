@@ -88,7 +88,7 @@ One operation, `get_system_status(topic)`:
 | `anomalies` | Only the readings outside their threshold — or that none are |
 | `disk` | Free space on `/`, `/mnt/usbdrive` and `/mnt/sdcard` |
 | `cpu` | Usage overall and per core, load average, temperature, clock |
-| `memory` | RAM and swap |
+| `memory` | RAM, swap, the zswap absorption ratio and memory pressure |
 | `uptime` | Uptime, boot time, host clock |
 | `services` | Container count, and which ones are not running or not healthy |
 | `restarts` | What restarted, how often, and with which exit code |
@@ -106,9 +106,15 @@ The thresholds are at the top of `config/system-tools/app.py`. `DISK_PCT`, `MEMO
 
 **Swap needs two conditions, and that is the interesting one.** It was written first as a plain `SWAP_PCT = 50` and fired on its first run against a box where nothing was wrong: 103 days of uptime, swap 100% full, **7 GB of RAM available, no OOM kill on record, and 0.13 MB/min of actual paging**. `/var/swap` (2 GB at the time, now `SWAP_SIZE_MB`) is on the NVMe, and what filled it was `parakeet` (578 MB), `llama-cpp` (351 MB) and `immich-machine-learning` (158 MB) — services that load a model, go idle, and have their cold pages evicted exactly once. That is what swap is *for*, and the fill level cannot tell it apart from a machine fighting for RAM.
 
-So the finding now needs `SWAP_PCT` **and** `RAM_PRESSURE_PCT` (80%) together. `RAM_PRESSURE_PCT` sits below `MEMORY_PCT` on purpose: paging under pressure starts before RAM is exhausted, so the swap finding can fire one step ahead of the memory one. The `memory` topic still reports swap unconditionally. The general lesson for any threshold added here: **a level is a state, and only some states are faults.**
+So the finding needed `SWAP_PCT` **and** `RAM_PRESSURE_PCT` (80%) together — two levels, because neither alone tells the idle-model case apart from a machine fighting for RAM. The general lesson stands and is the reason the topic exists at all: **a level is a state, and only some states are faults.**
 
-Nothing new is measured for `anomalies` — it reuses the collectors the other topics already call, so the whole pass is one `statvfs` per filesystem, two `/proc` reads, one inspect per container and one SQLite query: **60–80 ms** end to end, against the ~300 ms `cpu` alone spends sleeping between its two `/proc/stat` samples. That sample is the one thing `anomalies` skips: the 5-minute load average already says whether the machine is saturated, sustained.
+**`PSI_MEM_FULL_PCT` replaced the pair, because it is the fault rather than a proxy for it.** With `psi=1` on the kernel command line ([Monitoring → Memory pressure](MONITORING.md#memory-pressure-psi)), `/proc/pressure/memory` reports `full avg300`: the share of the last five minutes in which *every* task was stalled waiting on memory. Not a level that might cost something — time the machine provably lost. The threshold is 5%, which is 15 seconds of dead wall clock out of 300 on a box that is otherwise 95% idle. `some` is deliberately unused: it fires whenever any one process is in reclaim, which is a container touching its own `mem_limit` doing exactly what the limit is for.
+
+Swap fill and RAM percentage now come along as *context* in the same finding, never as the trigger. And because the same file exists per cgroup, the finding can name the container doing the stalling — `worst: llama-cpp 8.2%` — which no combination of host-wide levels could ever say. That walk is one read per container, so it only runs once the host is already over the threshold; the fast path stays a single extra `/proc` read.
+
+The two-level heuristic is kept as the fallback for a kernel with no `/proc/pressure`, which includes this one between `make install` and the next reboot. The `memory` topic still reports swap unconditionally, and now the zswap absorption ratio beside it: with a compressed cache in front of the swap file, "swap used" no longer says how much of that cost was paid in disk I/O.
+
+Nothing new is measured for `anomalies` — it reuses the collectors the other topics already call, so the whole pass is one `statvfs` per filesystem, three `/proc` reads, one inspect per container and one SQLite query: **60–80 ms** end to end, against the ~300 ms `cpu` alone spends sleeping between its two `/proc/stat` samples. That sample is the one thing `anomalies` skips: the 5-minute load average already says whether the machine is saturated, sustained.
 
 ### Why one operation and not ten
 

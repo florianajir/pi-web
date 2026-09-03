@@ -74,6 +74,13 @@ stalled waiting on memory; `full` is where every task was. A steady non-zero
 versus judging](AI.md#reporting-versus-judging) for why swap being 100% full is
 not itself a fault on this box.
 
+`make doctor` and the `anomalies` chat topic use it as their memory verdict
+(`PSI_MEM_FULL_PCT`, 5% of `full avg300`), in place of the swap-full-*and*-RAM-tight
+pair they needed before. Because the same file exists per cgroup, the finding names
+the container doing the stalling — which no host-wide level ever could. Beszel has
+no PSI collector, so this is the one memory signal that lives in the terminal and
+the chat but not on your phone.
+
 ## Uptime Kuma — the services
 
 `https://uptime.<HOST_NAME>`, LAN-only + SSO.
