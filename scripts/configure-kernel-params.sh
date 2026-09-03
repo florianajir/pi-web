@@ -24,7 +24,28 @@ set -eu
 
 # key=value, one per line. A key already present with a different value is
 # corrected; a key absent is appended. Nothing is ever deleted.
-KERNEL_PARAMS='psi=1'
+#
+# zswap is a compressed cache in RAM in front of /var/swap: a page evicted from
+# a cgroup is compressed and kept in memory, and only reaches the NVMe once the
+# pool is full. It is compiled in but off (CONFIG_ZSWAP=y without
+# CONFIG_ZSWAP_DEFAULT_ON), and this stack is exactly its case - the model
+# services evict multi-GB working sets that then get faulted straight back in
+# on the next request.
+#
+# The compressor is deliberately not set. CRYPTO_ZSTD and CRYPTO_LZ4 are
+# modules on this kernel while zswap is built in, so zswap.compressor=zstd on
+# the boot line is evaluated before the module exists and falls back to lzo
+# without saying so. lzo is the built-in default and what actually runs.
+#
+# shrinker_enabled is not the kernel default and is the point of the exercise
+# here: without it a full pool simply stops accepting, and it fills with the
+# first pages to arrive - which on this box are the cold model weights nobody
+# will ask for. The shrinker writes those back to disk and keeps the pool for
+# pages with a future.
+KERNEL_PARAMS='psi=1
+zswap.enabled=1
+zswap.max_pool_percent=20
+zswap.shrinker_enabled=1'
 
 find_cmdline() {
     for candidate in /boot/firmware/cmdline.txt /boot/cmdline.txt; do

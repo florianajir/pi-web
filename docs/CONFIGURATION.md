@@ -66,6 +66,11 @@ The script only restarts `dphys-swapfile` when available RAM covers the
 swapped-out set with 20% headroom, and otherwise leaves the new size to take
 effect on the next reboot. It never fails the install.
 
+The file is not the whole story: `make install` also enables **zswap**, a
+compressed cache in RAM in front of it, so most of this size is only reached
+under real pressure — see
+[Architecture](ARCHITECTURE.md#swap-and-zswap-in-front-of-it).
+
 ### Network
 
 Defaults suit a `192.168.1.0/24` LAN. The installer auto-detects all of these.
