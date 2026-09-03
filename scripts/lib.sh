@@ -19,6 +19,20 @@ die() {
     exit 1
 }
 
+# --- Privilege prefix ---
+
+# Empty when already root, `sudo` otherwise — the same rule install.sh and the
+# Makefile apply to their own root-only commands, and for the same reason: a
+# root-only image often ships no sudo binary at all, so a bare `sudo cp` there
+# fails with "not found" and any `|| true` around it reports success. Use as
+# `$SUDO cp ...`, unquoted, so the empty case expands to nothing.
+# shellcheck disable=SC2034 # used as $SUDO by the scripts that source this
+if [ "$(id -u)" = "0" ]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 # --- Environment helpers ---
 
 # Docker Compose's .env parser mangles more than `$VAR` interpolation: a

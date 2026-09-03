@@ -29,7 +29,7 @@ SAFETY_FACTOR_DEN="${SAFETY_FACTOR_DEN:-10}"
 
 resolve_swap_size_mb() {
     local size
-    size="$(get_env_value SWAP_SIZE_MB)"
+    size="$(get_env_value_clean SWAP_SIZE_MB)"
     [ -n "$size" ] || size=8192
 
     case "$size" in
@@ -55,15 +55,49 @@ set_conf_key() {
     local file="$3"
 
     if grep -qE "^[[:space:]]*#?[[:space:]]*${key}=" "$file"; then
-        sudo sed -i -E "s|^[[:space:]]*#?[[:space:]]*${key}=.*|${key}=${value}|" "$file"
+        $SUDO sed -i -E "s|^[[:space:]]*#?[[:space:]]*${key}=.*|${key}=${value}|" "$file"
     else
-        printf '%s=%s\n' "$key" "$value" | sudo tee -a "$file" >/dev/null
+        printf '%s=%s\n' "$key" "$value" | $SUDO tee -a "$file" >/dev/null
     fi
 }
 
 conf_value() {
     # Last uncommented assignment wins, matching `.`-sourcing semantics.
     grep -E "^[[:space:]]*$1=" "$2" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"'
+}
+
+# --- Disk ceiling -----------------------------------------------------------
+
+# dphys-swapfile carries a third clamp that neither CONF_SWAPSIZE nor
+# CONF_MAXSWAP expresses: CONF_MAXDISK_PCT=50 caps the size at half of (free
+# space + the swap file already there), and does it silently - "restricting to
+# 50% of remaining disk size". A request above that is not refused, it is
+# quietly shrunk, and then the idempotency check in main() never becomes true:
+# every `make install-system` would swapoff and rebuild a multi-GB file chasing
+# a size it can never reach, warning each time. So the same arithmetic runs
+# here and an impossible request is declined once, with the number.
+swapfile_path() {
+    local path=""
+    path="$(conf_value CONF_SWAPFILE "$DPHYS_CONF")"
+    printf '%s' "${path:-/var/swap}"
+}
+
+swapfile_ceiling_mb() {
+    local swapfile="$1"
+    local avail_kb=""
+    local current_kb=0
+
+    avail_kb="$(df --output=avail "$(dirname "$swapfile")/." 2>/dev/null | tail -n1 | tr -d ' ')"
+    case "$avail_kb" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+
+    if [ -e "$swapfile" ]; then
+        current_kb="$(stat --printf='%s' "$swapfile" 2>/dev/null || echo 0)"
+        current_kb=$(( current_kb / 1024 ))
+    fi
+
+    printf '%s' $(( (avail_kb + current_kb) / 2048 ))
 }
 
 # --- Live swap state --------------------------------------------------------
@@ -119,8 +153,18 @@ main() {
         return 0
     fi
 
+    local ceiling=""
+    if ceiling="$(swapfile_ceiling_mb "$(swapfile_path)")" && [ "$desired" -gt "$ceiling" ]; then
+        log "WARNING: SWAP_SIZE_MB=$desired is more than dphys-swapfile will allow here."
+        log "         CONF_MAXDISK_PCT=50 caps it at ${ceiling}MB (half of the free space"
+        log "         plus the current swap file). Leaving the swap file at ${active}MB:"
+        log "         lower SWAP_SIZE_MB or free disk space, or every run would rebuild"
+        log "         the file chasing a size it cannot reach."
+        return 0
+    fi
+
     if [ ! -f "$DPHYS_CONF.pi-pcloud.bak" ]; then
-        sudo cp "$DPHYS_CONF" "$DPHYS_CONF.pi-pcloud.bak"
+        $SUDO cp "$DPHYS_CONF" "$DPHYS_CONF.pi-pcloud.bak"
         log "Backed up original to $DPHYS_CONF.pi-pcloud.bak"
     fi
 
@@ -138,7 +182,7 @@ main() {
     fi
 
     log "Resizing swap ${active}MB -> ${desired}MB (swapoff/swapon)..."
-    if ! sudo systemctl restart dphys-swapfile; then
+    if ! $SUDO systemctl restart dphys-swapfile; then
         log "WARNING: dphys-swapfile restart failed; new size applies on reboot"
         return 0
     fi

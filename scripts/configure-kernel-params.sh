@@ -57,19 +57,26 @@ find_cmdline() {
     return 1
 }
 
-# The tokens a Raspberry Pi will not boot without. Cheap insurance against a
-# rewrite that lost the line rather than edited it.
-line_is_bootable() {
-    local line="$1"
-    case "$line" in
-        *root=*) ;;
-        *) return 1 ;;
-    esac
-    case "$line" in
-        *rootfstype=*) ;;
-        *) return 1 ;;
-    esac
-    [ "$(printf '%s' "$line" | wc -l)" -eq 0 ]
+# Whether $2 still carries everything $1 did, minus the keys this script owns.
+# The invariant that matters is not "the line looks like a Pi boot line" - that
+# would hardcode a layout, and a cmdline with no rootfstype= (Ubuntu Server on
+# a Pi) would be refused for a shape it never had - but "the rewrite lost
+# nothing". A dropped root= is then caught for the same reason a dropped
+# console= is, without either being named here.
+nothing_was_lost() {
+    local before="$1"
+    local after="$2"
+    local token=""
+    local param=""
+
+    for token in $before; do
+        for param in $KERNEL_PARAMS; do
+            [ "${token%%=*}" != "${param%%=*}" ] || continue 2
+        done
+        param_is_set "$after" "$token" || return 1
+    done
+
+    [ -n "$after" ] && [ "$(printf '%s' "$after" | wc -l)" -eq 0 ]
 }
 
 # Echo $line with $key set to $value, in place if the key is already there.
@@ -168,21 +175,21 @@ main() {
         fi
     fi
 
-    line_is_bootable "$updated" ||
-        die "the rewritten kernel command line does not look bootable - leaving $cmdline alone"
+    nothing_was_lost "$original" "$updated" ||
+        die "the rewritten kernel command line dropped a parameter it should have kept - leaving $cmdline alone"
 
     if [ ! -f "$cmdline.pi-pcloud.bak" ]; then
-        sudo cp "$cmdline" "$cmdline.pi-pcloud.bak"
+        $SUDO cp "$cmdline" "$cmdline.pi-pcloud.bak"
         log "Backed up original to $cmdline.pi-pcloud.bak"
     fi
 
     # Written into the same directory and synced before the rename, so a power
     # cut during this leaves either the old line or the new one, never half.
     local staged="$cmdline.pi-pcloud.new"
-    printf '%s\n' "$updated" | sudo tee "$staged" >/dev/null
-    sudo sync "$staged"
-    sudo mv "$staged" "$cmdline"
-    sudo sync "$(dirname "$cmdline")"
+    printf '%s\n' "$updated" | $SUDO tee "$staged" >/dev/null
+    $SUDO sync "$staged"
+    $SUDO mv "$staged" "$cmdline"
+    $SUDO sync "$(dirname "$cmdline")"
 
     log "Updated $cmdline:$pending"
     log "These take effect on the next reboot."

@@ -43,7 +43,7 @@ NO_PG_ROLE = {"backrest"}
 # has to be resolved by reclaim inside the cgroup, which is how qbittorrent
 # collected 98842 memory.max events. Named here rather than skipped by a rule,
 # because the key reads as a limit and behaves as an off switch.
-NO_SWAP = {}
+NO_SWAP = set()
 
 # Where the compose service name and the postgres role name differ.
 PG_ROLE_ALIAS = {"immich-server": "immich"}

@@ -175,6 +175,12 @@ main() {
     mkdir -p "$(dirname "$OUTPUT_FILE")"
     write_file_atomic "$OUTPUT_FILE" render || die "Failed to render $OUTPUT_FILE"
     safe_chmod 600 "$OUTPUT_FILE"
+    # write_file_atomic renames a fresh mktemp into place, so the file takes the
+    # ownership of whoever ran the script - root, from the systemd unit. At 0600
+    # that leaves the repo owner unable to read their own generated env, and
+    # `docker compose config` (so `make test` and every invariant behind it)
+    # fails with "permission denied" until someone chowns it by hand.
+    fix_ownership "$OUTPUT_FILE"
     log "Rendered Shelfmark env to $OUTPUT_FILE"
 }
 

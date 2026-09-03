@@ -419,11 +419,11 @@ which substitutes for another.
 
 | Cores | Who | Why |
 |---|---|---|
-| `0` | Traefik, Unbound, Headscale, Cloudflared | Reverse proxy, DNS and tunnel, kept off the cores the AI stack saturates |
+| `0` | Traefik, Headscale, Cloudflared | Reverse proxy and the two tunnel daemons, kept off the cores the AI stack saturates |
 | `0-1` | Pi-hole | Also `FTLCONF_misc_check_load: "false"` — FTL reads the *host* loadavg and compares it to the cores it can see |
 | `1-3` | llama.cpp, Piper, Parakeet, Immich (server), Nextcloud | The compute set, pinned away from core 0 |
 | `2-3` | immich-machine-learning | Narrower still; `MACHINE_LEARNING_*_THREADS` are matched to it |
-| unpinned | everything else, Postgres included | Free to land anywhere, arbitrated by shares |
+| unpinned | everything else, Postgres and Unbound included | Free to land anywhere, arbitrated by shares |
 
 Postgres is deliberately unpinned. It was on `1-3`, which is exactly the three cores
 llama.cpp and Parakeet saturate, and left it the one core it could not use — for a
@@ -456,7 +456,8 @@ killed. Neither says *don't page this out*, so:
   1.3 GB of 16 on purpose — the protection is proportional, so reserving everywhere
   protects nothing. The model services have none: they are the pages this is meant to
   evict first.
-- **`memswap_limit`** on the five services that actually swap. Left unset, Docker
+- **`memswap_limit`** on the eight services that either measurably swap or carry a
+  limit big enough to take the whole file. Left unset, Docker
   gives every container a swap allowance equal to its `mem_limit`, so the stack
   claimed ~30 GB against a swap file a fraction of that size, and one idle llama.cpp
   held 2.6 GB of it while resident at 21 MB. `memswap_limit` is memory *plus* swap,
