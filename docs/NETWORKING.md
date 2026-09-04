@@ -157,6 +157,25 @@ the four hostnames that are meant to be public — `auth`, `immich`, `nextcloud`
 and `headscale`. It exists so `443/tcp` need not be forwarded and your home IP
 need not sit in public DNS; it is off by default and nothing depends on it.
 
+> **`HOST_NAME` must be a first-level subdomain, or this cannot work.** A tunnel
+> requires a proxied record, so Cloudflare terminates TLS at its edge and serves
+> *its* certificate — and the free Universal SSL certificate covers only the zone
+> apex and one label below it (`example.com`, `*.example.com`). A DNS wildcard
+> matches exactly one label, so `HOST_NAME=pi.example.com` puts every service at
+> `<svc>.pi.example.com`, which that certificate does not cover: the edge aborts
+> the handshake with `sslv3 alert handshake failure` before anything reaches the
+> tunnel. Traefik's own Let's Encrypt certificate cannot help — it protects the
+> `cloudflared → Traefik` leg, which the visitor never sees.
+>
+> Covering `*.pi.example.com` needs [Advanced Certificate
+> Manager](https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/)
+> (paid); custom edge certificates start at the Business plan, and subdomain
+> zones are Enterprise-only. The free route is a `HOST_NAME` one level up — a
+> domain dedicated to the stack, so services land at `<svc>.example.com`. Note
+> that pointing `HOST_NAME` at a domain you also use for a website or email is a
+> bad trade: Pi-hole's `address=/$HOST_NAME/<lan-ip>` would resolve that whole
+> domain to the Pi for every LAN client.
+
 Setup, once:
 
 ```sh
