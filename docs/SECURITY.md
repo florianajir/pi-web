@@ -116,7 +116,8 @@ flowchart LR
     R[Request] --> TLS["TLS termination"]
     TLS --> Compress["gzip"]
     Compress --> Headers["security-headers"]
-    Headers --> Frame["frame-deny\n(per router)"]
+    Headers --> Autodetect["autodetect\n(Content-Type)"]
+    Autodetect --> Frame["frame-deny\n(per router)"]
     Frame --> LAN{"lan\n(IP allowlist)"}
     LAN -->|denied| Block[403]
     LAN -->|allowed| Auth{"authelia\n(forward-auth)"}
@@ -131,6 +132,13 @@ flowchart LR
 | `Strict-Transport-Security` | `max-age=15552000; includeSubDomains` | Force HTTPS for 180 days |
 | `X-Content-Type-Options` | `nosniff` | MIME sniffing |
 | `Referrer-Policy` | `same-origin` | Referrer leakage |
+
+**`nosniff` needs something to sniff-proof.** Traefik v3 [stopped filling in a missing
+`Content-Type`](https://doc.traefik.io/traefik/migrate/v2-to-v3-details/), and the `lan` 403 sets
+none — so `nosniff` leaves a WebKit browser nothing to render and it downloads the denial as a
+file. `autodetect` restores the v2 behaviour; it is listed **last** on the entrypoint so it wraps
+the router middlewares that write such responses. It only fills a `Content-Type` that is absent,
+never overriding a backend's own.
 
 **`X-Frame-Options` is separate, and per router.** An entrypoint middleware wraps every router's own middlewares, so its response headers win and no router can opt out. Vaultwarden has to opt out — its `*-connector.html` pages must carry no frame header at all — so the policy lives in a standalone `frame-deny` middleware that each router lists instead. Every router gets `DENY` except Vaultwarden's, which uses `SAMEORIGIN` on the main router and nothing on the connector router (see [Vaultwarden](#vaultwarden)).
 

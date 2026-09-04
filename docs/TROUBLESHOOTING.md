@@ -26,6 +26,10 @@ make logs       # follow everything
 
 **A service returns 403.** The `lan` middleware refused your source IP. Either you are reaching it from outside your LAN and tailnet, or the request hairpinned through your router and arrived with the WAN address. Check `ALLOW_IP_RANGES` in `.env` against the network you are actually on.
 
+**The browser downloads a 9-byte `Forbidden` file instead of showing the 403.** Same refusal, and the
+`autodetect` middleware is not reaching it. Check it is still **last** on the `websecure` entrypoint
+chain ([Security](SECURITY.md#the-middleware-chain)) — anywhere else it stops wrapping `lan`.
+
 Traefik's access log records the address it actually saw, which is the one the allowlist judged — read it rather than guessing:
 
 ```bash
