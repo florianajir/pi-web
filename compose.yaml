@@ -325,7 +325,12 @@ services:
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
       - "--entrypoints.websecure.address=:443/tcp"
-      - "--entrypoints.websecure.http.middlewares=compress@docker,security-headers@docker"
+      # autodetect must stay last, so it sits innermost and wraps every router's
+      # middlewares: what needs it is the response a middleware writes itself.
+      # Traefik v3 no longer fills in a missing Content-Type, and the ipallowlist
+      # 403 writes a bare "Forbidden" with none - which nosniff then forbids the
+      # browser from guessing, so the denial downloads instead of rendering.
+      - "--entrypoints.websecure.http.middlewares=compress@docker,security-headers@docker,autodetect@docker"
       - "--entrypoints.websecure.http.tls.certresolver=cloudflare"
       - "--entrypoints.websecure.http3=true"
       # The tunnel subnet is appended, never merged into ALLOW_IP_RANGES: this
@@ -358,6 +363,7 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.middlewares.compress.compress=true"
+      - "traefik.http.middlewares.autodetect.contenttype=true"
       - "traefik.http.middlewares.security-headers.headers.stsSeconds=15552000"
       - "traefik.http.middlewares.security-headers.headers.stsIncludeSubdomains=true"
       - "traefik.http.middlewares.security-headers.headers.forceSTSHeader=true"

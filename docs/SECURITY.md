@@ -116,7 +116,8 @@ flowchart LR
     R[Request] --> TLS["TLS termination"]
     TLS --> Compress["gzip"]
     Compress --> Headers["security-headers"]
-    Headers --> Frame["frame-deny\n(per router)"]
+    Headers --> Autodetect["autodetect\n(Content-Type)"]
+    Autodetect --> Frame["frame-deny\n(per router)"]
     Frame --> LAN{"lan\n(IP allowlist)"}
     LAN -->|denied| Block[403]
     LAN -->|allowed| Auth{"authelia\n(forward-auth)"}
@@ -131,6 +132,16 @@ flowchart LR
 | `Strict-Transport-Security` | `max-age=15552000; includeSubDomains` | Force HTTPS for 180 days |
 | `X-Content-Type-Options` | `nosniff` | MIME sniffing |
 | `Referrer-Policy` | `same-origin` | Referrer leakage |
+
+**`nosniff` needs a `Content-Type` to sniff-proof.** Traefik v3 no longer fills in a missing
+`Content-Type` — v2 did, and the [migration guide](https://doc.traefik.io/traefik/migrate/v2-to-v3-details/)
+moved the behaviour into an opt-in `contentType` middleware. The responses that lose out are the
+ones a middleware writes itself rather than proxies: the `lan` 403 emits a bare `Forbidden` body
+with no type at all. Paired with `nosniff`, which forbids the browser from guessing, a WebKit
+browser has no renderable type left and downloads the denial as a file instead of showing it.
+The `autodetect` middleware is listed last on the entrypoint so it sits innermost and wraps every
+router's middlewares, catching those short-circuit responses. It only fills a `Content-Type` that
+is **absent** — a backend that sets its own is never overridden.
 
 **`X-Frame-Options` is separate, and per router.** An entrypoint middleware wraps every router's own middlewares, so its response headers win and no router can opt out. Vaultwarden has to opt out — its `*-connector.html` pages must carry no frame header at all — so the policy lives in a standalone `frame-deny` middleware that each router lists instead. Every router gets `DENY` except Vaultwarden's, which uses `SAMEORIGIN` on the main router and nothing on the connector router (see [Vaultwarden](#vaultwarden)).
 
