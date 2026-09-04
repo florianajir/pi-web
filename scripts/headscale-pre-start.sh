@@ -105,9 +105,10 @@ main() {
     # Authelia has this client as confidential (public: false, hashed secret), so
     # substituting an empty string does not produce a degraded config - it
     # produces one Authelia rejects every login against, while headscale starts
-    # happily because only_start_if_oidc_is_available is false. Worse, the
-    # "already up to date" check below then preserves it on every later run.
-    # Never write that file.
+    # happily: only_start_if_oidc_is_available gates on the *discovery* call,
+    # which reads the issuer alone and never the secret, so it cannot catch
+    # this. Worse, the "already up to date" check below then preserves it on
+    # every later run. Never write that file.
     if [ -z "$OIDC_HEADSCALE_SECRET" ]; then
         # The secrets directory is mode 700 root-owned, so a non-root run cannot
         # even stat the file: absent and forbidden look identical from here

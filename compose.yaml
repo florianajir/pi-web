@@ -813,6 +813,13 @@ services:
       - HEADSCALE_DNS_BASE_DOMAIN=tailnet.${HOST_NAME:-pi.lan}
     networks:
       - frontend
+    extra_hosts:
+      # Authelia's OIDC discovery endpoint, reached through Traefik internally.
+      # Headscale resolves the provider exactly once, at startup, and
+      # only_start_if_oidc_is_available now makes that call fatal - so it must
+      # not depend on public DNS answering and the router hairpinning its own
+      # WAN address back in.
+      - "auth.${HOST_NAME:-pi.lan}:172.30.11.250"
     expose:
       - 8080
       - 9090

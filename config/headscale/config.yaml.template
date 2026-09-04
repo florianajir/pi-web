@@ -66,7 +66,16 @@ oidc:
   issuer: https://auth.__HOST_NAME__
   client_id: headscale
   client_secret: __OIDC_HEADSCALE_SECRET__
-  only_start_if_oidc_is_available: false
+  # Headscale resolves the OIDC provider once, at startup, and picks its auth
+  # provider from the result. Left false, a discovery call that fails at that
+  # instant is a single WRN line and headscale keeps serving with the *CLI*
+  # provider: /register/<id> then renders the "run headscale nodes register"
+  # page instead of redirecting to Authelia, which is all a TV's QR code has to
+  # go on. Nothing else breaks, so the stack looks healthy for weeks.
+  # True turns that into a refusal to start, and restart: unless-stopped retries
+  # until Authelia answers. The compose service pins auth.<HOST_NAME> to Traefik
+  # so this only ever waits on Authelia, never on public DNS or NAT hairpinning.
+  only_start_if_oidc_is_available: true
 
 logtail:
   enabled: false
