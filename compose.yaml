@@ -718,7 +718,7 @@ services:
 
   n8n-runners:
     <<: *service-defaults
-    image: n8nio/runners:2.37.7
+    image: n8nio/runners:2.37.9
     container_name: pi-n8n-runners
     profiles: ["n8n-runners", "all"]
     labels:
