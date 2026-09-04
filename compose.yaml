@@ -101,39 +101,6 @@ services:
     mem_limit: 64m
     oom_score_adj: *oom-score-critical
 
-  # Optional: off unless `cloudflared` is in COMPOSE_PROFILES. The stack is fully
-  # functional without it - this only offers a second way in, for the handful of
-  # hostnames listed in config/cloudflared/config.yml, so that 443/tcp need not
-  # be forwarded and the home IP need not appear in public DNS.
-  #
-  # Deliberately on `tunnel` and nothing else. It must not reach any service
-  # directly, only Traefik, and its address must stay outside ALLOW_IP_RANGES so
-  # that lan@docker refuses it - see the `tunnel` network definition.
-  #
-  # No healthcheck: the image is distroless, with no shell and no HTTP client, so
-  # there is nothing to run one with. Nothing depends on this service, so no
-  # `service_healthy` condition goes unmet. Liveness is readable instead from the
-  # metrics endpoint the config binds on :2000.
-  cloudflared:
-    <<: *service-defaults
-    image: cloudflare/cloudflared:2026.8.3
-    container_name: pi-cloudflared
-    profiles: ["cloudflared", "all"]
-    command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "--no-autoupdate", "run"]
-    networks:
-      - tunnel
-    volumes:
-      - ./config/cloudflared/config.yml:/etc/cloudflared/config.yml:ro
-      - ./config/cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
-    depends_on:
-      traefik:
-        condition: service_healthy
-    cpuset: "0"
-    cpu_shares: *cpu-prio-critical
-    mem_limit: 128m
-    mem_reservation: 32m
-    oom_score_adj: *oom-score-critical
-
   backrest:
     <<: *service-defaults
     build:
@@ -332,14 +299,7 @@ services:
       - "--entrypoints.websecure.http.middlewares=compress@docker,security-headers@docker,autodetect@docker"
       - "--entrypoints.websecure.http.tls.certresolver=cloudflare"
       - "--entrypoints.websecure.http3=true"
-      # The tunnel subnet is appended, never merged into ALLOW_IP_RANGES: this
-      # decides which peers may *state* a client IP, and is a different question
-      # from who may reach a gated router. Verified both ways before wiring it -
-      # ipallowlist matches the real TCP peer, so a trusted peer forging
-      # X-Forwarded-For for an outside address still passes, and an untrusted one
-      # claiming a LAN address still gets 403. Without this, every tunnelled
-      # request would log and reach the apps as 172.31.0.x.
-      - "--entrypoints.websecure.forwardedHeaders.trustedIPs=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16},172.31.0.0/24"
+      - "--entrypoints.websecure.forwardedHeaders.trustedIPs=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}"
       - "--entrypoints.websecure.transport.respondingTimeouts.readTimeout=0"
       - "--entrypoints.websecure.transport.respondingTimeouts.writeTimeout=0"
       - "--entrypoints.websecure.transport.respondingTimeouts.idleTimeout=0"
@@ -401,11 +361,6 @@ services:
     networks:
       frontend:
         ipv4_address: 172.30.11.250
-      # Joined so cloudflared can reach this container by name. Traefik keeps
-      # discovering containers on `frontend` only (--providers.docker.network),
-      # so nothing about routing changes; this adds a second interface, not a
-      # second source of routers.
-      tunnel:
     healthcheck:
       <<: *healthcheck-fast
       test: ["CMD", "traefik", "healthcheck", "--ping"]
@@ -2579,22 +2534,6 @@ networks:
       config:
         - subnet: 172.30.11.0/24
           gateway: 172.30.11.1
-  # cloudflared's own network, and the subnet is the whole point of it. The
-  # `lan` middleware allows ALLOW_IP_RANGES, which contains 172.30.0.0/16 and
-  # cannot be narrowed - Uptime Kuma probes every gated router from 172.30.11.6,
-  # and tailnet traffic arrives SNATed as 172.30.11.1. Put cloudflared on
-  # `frontend` and it would satisfy that allowlist, turning every LAN-only
-  # service public with no error anywhere. 172.31.0.0/24 sits outside it, so
-  # tunnelled requests are refused by lan@docker by construction rather than by
-  # a rule someone has to remember.
-  tunnel:
-    driver: bridge
-    name: tunnel
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.31.0.0/24
-          gateway: 172.31.0.1
   lan:
     driver: macvlan
     name: lan

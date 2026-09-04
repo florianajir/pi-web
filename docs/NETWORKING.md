@@ -150,54 +150,43 @@ Everything else — Postgres `5432`, Redis `6379`, LDAP `3890`, every app port �
 
 **On your router,** only `443/tcp` has to be forwarded: certificates use the Cloudflare DNS challenge, so port 80 need not be reachable from outside. Forward `41641/udp` and `3478/udp` as well for direct VPN connections; without them, traffic still works but rides the relay.
 
-## Cloudflare Tunnel (optional)
+## Why there is no Cloudflare Tunnel
 
-Add `cloudflared` to `COMPOSE_PROFILES` and the stack gains a second way in, for
-the four hostnames that are meant to be public — `auth`, `immich`, `nextcloud`
-and `headscale`. It exists so `443/tcp` need not be forwarded and your home IP
-need not sit in public DNS; it is off by default and nothing depends on it.
+A tunnel is the obvious way to stop forwarding `443/tcp` and keep your public IP
+out of DNS. It was built, measured against this stack, and removed. The blocker
+is not the tunnel — it is where TLS gets terminated.
 
-> **`HOST_NAME` must be a first-level subdomain, or this cannot work.** A tunnel
-> requires a proxied record, so Cloudflare terminates TLS at its edge and serves
-> *its* certificate — and the free Universal SSL certificate covers only the zone
-> apex and one label below it (`example.com`, `*.example.com`). A DNS wildcard
-> matches exactly one label, so `HOST_NAME=pi.example.com` puts every service at
-> `<svc>.pi.example.com`, which that certificate does not cover: the edge aborts
-> the handshake with `sslv3 alert handshake failure` before anything reaches the
-> tunnel. Traefik's own Let's Encrypt certificate cannot help — it protects the
-> `cloudflared → Traefik` leg, which the visitor never sees.
->
-> Covering `*.pi.example.com` needs [Advanced Certificate
-> Manager](https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/)
-> (paid); custom edge certificates start at the Business plan, and subdomain
-> zones are Enterprise-only. The free route is a `HOST_NAME` one level up — a
-> domain dedicated to the stack, so services land at `<svc>.example.com`. Note
-> that pointing `HOST_NAME` at a domain you also use for a website or email is a
-> bad trade: Pi-hole's `address=/$HOST_NAME/<lan-ip>` would resolve that whole
-> domain to the Pi for every LAN client.
+A tunnel only works on a **proxied** record, so Cloudflare terminates TLS at its
+edge and serves *its own* certificate. The free Universal SSL certificate covers
+the zone apex and exactly one label below it (`example.com`, `*.example.com`),
+because a DNS wildcard matches one label and no more. With the layout this
+project suggests — `HOST_NAME=pi.example.com`, services at
+`<svc>.pi.example.com` — every hostname is one level too deep. Measured on a
+live zone: the edge answered `sslv3 alert handshake failure` in 0.09 s, before
+the tunnel was reached at all. Traefik's own Let's Encrypt wildcard cannot
+substitute for it: that certificate protects the `cloudflared → Traefik` leg,
+which no visitor ever sees.
 
-Setup, once:
+There is no free way around it. Covering `*.pi.example.com` needs [Advanced
+Certificate Manager](https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/),
+[custom edge certificates](https://developers.cloudflare.com/ssl/edge-certificates/custom-certificates/)
+start at the Business plan, and [subdomain
+zones](https://developers.cloudflare.com/dns/zone-setups/subdomain-setup/) are
+Enterprise-only.
 
-```sh
-cloudflared tunnel login          # authorise your zone in a browser
-cloudflared tunnel create pi-pcloud
-```
+**If you want a tunnel, set `HOST_NAME` one level up** so services land at
+`<svc>.example.com`, which the free certificate does cover. Use a domain
+dedicated to the stack: pointing `HOST_NAME` at one that also serves a website
+or mail backfires, because Pi-hole's `address=/$HOST_NAME/<lan-ip>` would
+resolve that entire domain to the Pi for every LAN client, `www` and MX lookups
+included.
 
-Put the tunnel's UUID in `CLOUDFLARE_TUNNEL_ID` and the credentials JSON it
-wrote at `config/cloudflared/credentials.json`. Creating a tunnel needs an API
-token scoped `Account → Cloudflare Tunnel → Edit`; `CLOUDFLARE_DNS_API_TOKEN`
-stops at `Zone → DNS → Edit` and cannot do it.
-
-Ingress rules live in `config/cloudflared/config.yml.template`, rendered to
-`config.yml` at start by `scripts/cloudflared-pre-start.sh`. Everything not
-named there gets a `404` from the tunnel itself.
-
-**Two rules that are not stylistic.** cloudflared runs on its own `tunnel`
-network in `172.31.0.0/24`, deliberately outside `ALLOW_IP_RANGES`, so every
-tunnelled request reaches Traefik from an address `lan@docker` refuses — only
-the `-public` routers can answer it. And **never point a wildcard hostname at
-the tunnel**: that would hand the same path to every LAN-only service, and
-nothing would log an error.
+Two things worth knowing before rebuilding it. `cloudflared` must sit on its own
+Docker network *outside* `ALLOW_IP_RANGES` — on `frontend` its address satisfies
+`lan@docker`, which would quietly publish every LAN-only service. And a wildcard
+hostname must never point at the tunnel, for the same reason. `ALLOW_IP_RANGES`
+itself cannot be narrowed instead: Uptime Kuma probes the gated routers from
+`172.30.11.6`, and tailnet traffic arrives SNATed as `172.30.11.1`.
 
 ## Cloudflare records
 
