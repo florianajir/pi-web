@@ -325,11 +325,10 @@ services:
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
       - "--entrypoints.websecure.address=:443/tcp"
-      # autodetect must stay last, so it sits innermost and wraps every router's
-      # middlewares: what needs it is the response a middleware writes itself.
-      # Traefik v3 no longer fills in a missing Content-Type, and the ipallowlist
-      # 403 writes a bare "Forbidden" with none - which nosniff then forbids the
-      # browser from guessing, so the denial downloads instead of rendering.
+      # autodetect must stay last, so it wraps the router middlewares whose own
+      # responses need it: Traefik v3 no longer fills a missing Content-Type, and
+      # the ipallowlist 403 sets none - nosniff then leaves the browser nothing to
+      # render, so the denial downloads as a file.
       - "--entrypoints.websecure.http.middlewares=compress@docker,security-headers@docker,autodetect@docker"
       - "--entrypoints.websecure.http.tls.certresolver=cloudflare"
       - "--entrypoints.websecure.http3=true"
