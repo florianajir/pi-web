@@ -90,7 +90,7 @@ x-stremio-common: &stremio-common
 services:
   ddns-updater:
     <<: *service-defaults
-    image: ghcr.io/qdm12/ddns-updater:v2.10
+    image: ghcr.io/qdm12/ddns-updater:v2.10.0
     container_name: pi-ddns-updater
     environment:
       CONFIG: >-
@@ -291,7 +291,7 @@ services:
 
   traefik:
     <<: *service-defaults
-    image: traefik:v3.7
+    image: traefik:v3.7.13
     container_name: pi-traefik
     environment:
       - CLOUDFLARE_DNS_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN:-}
@@ -468,7 +468,21 @@ services:
       traefik:
         condition: service_healthy
     network_mode: host
-    privileged: true
+    # Not privileged: the only thing that needed it is smartctl. SYS_RAWIO covers
+    # the SG_IO passthrough for the USB/SAT disk, SYS_ADMIN the NVMe admin ioctl
+    # (verified: drop either and that disk alone reports "Operation not
+    # permitted"). The cgroup rules stay wildcard because the NVMe major is
+    # allocated dynamically by the kernel, so a fixed number would break on a
+    # kernel upgrade. This still drops the rest of privileged: the full
+    # capability set, seccomp/AppArmor confinement and a writable /proc, /sys.
+    cap_add:
+      - SYS_RAWIO
+      - SYS_ADMIN
+    device_cgroup_rules:
+      - 'b *:* rmw'
+      - 'c *:* rmw'
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /dev:/dev
@@ -808,7 +822,7 @@ services:
   # Network Stack
   headscale:
     <<: *service-defaults
-    image: headscale/headscale:v0.29
+    image: headscale/headscale:v0.29.3
     container_name: pi-headscale
     command: serve
     environment:
@@ -857,17 +871,24 @@ services:
       - "traefik.http.routers.headscale.tls.certresolver=cloudflare"
       - "traefik.http.routers.headscale.tls.domains[0].main=${HOST_NAME:-pi.lan}"
       - "traefik.http.routers.headscale.tls.domains[0].sans=*.${HOST_NAME:-pi.lan}"
-      - "traefik.http.routers.headscale.middlewares=frame-deny@docker,cors"
-      - "traefik.http.routers.rewrite.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && Path(`/`)"
-      - "traefik.http.routers.rewrite.service=headscale"
-      - "traefik.http.routers.rewrite.middlewares=frame-deny@docker,rewrite"
+      - "traefik.http.routers.headscale.middlewares=frame-deny@docker,headscale-cors"
+      # Bare https://headscale.<host>/ is a person looking for the admin UI, which
+      # Headplane serves at /admin. addprefix sent it to the *headscale* service
+      # instead, which has no /admin and answered 404; a redirect hands the browser
+      # to Headplane's own router, so its lan+authelia gate still applies.
+      - "traefik.http.routers.headscale-root.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && Path(`/`)"
+      - "traefik.http.routers.headscale-root.entrypoints=websecure"
+      - "traefik.http.routers.headscale-root.tls=true"
+      - "traefik.http.routers.headscale-root.service=headscale"
+      - "traefik.http.routers.headscale-root.middlewares=frame-deny@docker,headscale-root-redirect"
       - "traefik.http.services.headscale.loadbalancer.server.port=8080"
-      - "traefik.http.middlewares.rewrite.addprefix.prefix=/admin"
-      - "traefik.http.middlewares.cors.headers.accesscontrolallowheaders=*"
-      - "traefik.http.middlewares.cors.headers.accesscontrolallowmethods=GET,POST,PUT"
-      - "traefik.http.middlewares.cors.headers.accesscontrolalloworiginlist=https://headscale.${HOST_NAME:-pi.lan}"
-      - "traefik.http.middlewares.cors.headers.accesscontrolmaxage=100"
-      - "traefik.http.middlewares.cors.headers.addvaryheader=true"
+      - "traefik.http.middlewares.headscale-root-redirect.redirectregex.regex=^https?://([^/]+)/$$"
+      - "traefik.http.middlewares.headscale-root-redirect.redirectregex.replacement=https://$${1}/admin"
+      - "traefik.http.middlewares.headscale-cors.headers.accesscontrolallowheaders=*"
+      - "traefik.http.middlewares.headscale-cors.headers.accesscontrolallowmethods=GET,POST,PUT"
+      - "traefik.http.middlewares.headscale-cors.headers.accesscontrolalloworiginlist=https://headscale.${HOST_NAME:-pi.lan}"
+      - "traefik.http.middlewares.headscale-cors.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.headscale-cors.headers.addvaryheader=true"
     healthcheck:
       <<: *healthcheck-default
       test: ["CMD", "headscale", "health"]
@@ -2107,7 +2128,8 @@ services:
     volumes:
       - ${DATA_LOCATION:-./data}/lldap:/data
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     healthcheck:
       <<: *healthcheck-default
       # A responding HTTP API confirms the LDAP port is up too, which is what
@@ -2677,3 +2699,10 @@ networks:
   backup:
     driver: bridge
     name: backup
+    # Traefik publishes :80/:443 from whichever of its networks Docker picks, so
+    # this segment needs an address the `lan` allowlist covers. Left to Docker it
+    # got 172.31.0.0/16, outside 172.30.0.0/16, and every request originating on
+    # the Pi itself was then rejected by lan@docker with a bare 403.
+    ipam:
+      config:
+        - subnet: 172.30.12.0/24
