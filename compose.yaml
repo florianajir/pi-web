@@ -336,7 +336,10 @@ services:
       - "homepage.href=https://traefik.${HOST_NAME:-pi.lan}"
       - "homepage.description=Reverse proxy"
       - "homepage.widget.type=traefik"
-      - "homepage.widget.url=http://pi-traefik:8080"
+      # The address, not the name: traefik sits on both frontend and backup, and
+      # Docker's DNS answers pi-traefik with the backup address, so the request
+      # left homepage from its backup IP and missed internalapi-allow below.
+      - "homepage.widget.url=http://172.30.11.250:8080"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
       - "traefik.http.middlewares.compress.compress=true"
@@ -368,9 +371,18 @@ services:
       - "traefik.http.routers.internalapi.rule=PathPrefix(`/api`)"
       - "traefik.http.routers.internalapi.entrypoints=traefik"
       - "traefik.http.routers.internalapi.service=api@internal"
+      # Unauthenticated, and :8080 is reachable by every container on frontend -
+      # /api/rawdata is the full router map, including the public-bypass rules.
+      # Homepage's widget is the only consumer.
+      - "traefik.http.middlewares.internalapi-allow.ipallowlist.sourcerange=172.30.11.240/32"
+      - "traefik.http.routers.internalapi.middlewares=internalapi-allow@docker"
     ports:
       - "80:80"
       - "443:443"
+      # websecure advertises HTTP/3 via Alt-Svc, which browsers cache for 30 days.
+      # Without the UDP listener they retry QUIC, time out and fall back on every
+      # connection. Internet clients also need UDP 443 forwarded on the router.
+      - "443:443/udp"
     expose:
       - 8080
     volumes:
@@ -593,12 +605,21 @@ services:
       - "53:53/udp"
     environment:
       TZ: ${TIMEZONE:-Europe/Paris}
-      FTLCONF_webserver_api_password: ${PASSWORD:-admin}
+      FTLCONF_webserver_api_password: ${PASSWORD}
       FTLCONF_dns_listeningMode: "all"
       # Unbound is primary; public resolvers are only used as failover if Unbound stops answering.
       FTLCONF_dns_upstreams: ${PIHOLE_DNS_UPSTREAMS:-172.30.53.53#5335;1.1.1.1;9.9.9.9}
       FTLCONF_misc_dnsmasq_lines: "address=/${HOST_NAME:-pi.lan}/${HOST_LAN_IP:-192.168.1.30}"
-      FTLCONF_webserver_port: 8082
+      # Bound to loopback + this container's frontend address, never 0.0.0.0.
+      # pihole also sits on the `lan` macvlan, where publishing rules do not
+      # apply: every listening port is reachable directly at PIHOLE_IP, so
+      # 0.0.0.0:8082 handed the admin UI to the whole LAN and, through the
+      # advertised subnet route, the whole tailnet - with only PASSWORD in front
+      # of it, bypassing lan@docker + Authelia + 2FA entirely.
+      # Loopback stays for scripts/pihole-bootstrap.sh, which curls the API from
+      # inside the container; the frontend address is what Traefik dials. It must
+      # match the ipv4_address below.
+      FTLCONF_webserver_port: "127.0.0.1:8082,172.30.11.241:8082"
       FTLCONF_dns_domain_name: ${HOST_NAME:-pi.lan}
       # FTL compares the *host-wide* 15min loadavg (/proc/loadavg is not
       # namespaced) against the core count it can see, which `cpuset: "0-1"`
@@ -610,7 +631,9 @@ services:
       - ./config/pihole/dnsmasq.d:/etc/dnsmasq.d
     networks:
       dns_internal: {}
-      frontend: {}
+      frontend:
+        # Static so FTLCONF_webserver_port above can bind to it by address.
+        ipv4_address: 172.30.11.241
       lan:
         ipv4_address: ${PIHOLE_IP:-192.168.1.250}
     depends_on:
@@ -810,7 +833,6 @@ services:
     volumes:
       - ./config/headscale:/etc/headscale:ro
       - headscale_data:/var/lib/headscale
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       authelia:
         condition: service_healthy
@@ -1116,9 +1138,12 @@ services:
     image: ghcr.io/gethomepage/homepage:v2.2.0@sha256:753eeb0cc22ab7baad39ed47cbd1aae14e193dd1b264e965f193a9ea1d1e1bdd
     container_name: pi-homepage
     networks:
-      - frontend
+      frontend:
+        # Static so internalapi-allow can name it. High in the range: Docker
+        # hands out dynamic addresses from .2 upwards.
+        ipv4_address: 172.30.11.240
       # For the Backrest widget only: pi-backrest:9898 is no longer on frontend.
-      - backup
+      backup: {}
     expose:
       - 3000
     environment:
