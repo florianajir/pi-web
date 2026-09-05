@@ -21,6 +21,16 @@ set -eu
 # database directly, and so never sees the variables compose expands.
 DEFAULT_LANGUAGE="$(get_env_value DEFAULT_LANGUAGE)"
 [ -n "$DEFAULT_LANGUAGE" ] || DEFAULT_LANGUAGE="en-US"
+# This value is spliced into SQL literals below (and into TTS/LOCALE/SUGGESTIONS
+# version strings that are spliced in turn), so a quote in it would run as SQL
+# against a superuser connection. env_value_is_safe does not cover that: it only
+# rejects a quote at the very start or end of the value. A BCP-47 tag needs
+# nothing outside this set.
+case "$DEFAULT_LANGUAGE" in
+    *[!A-Za-z0-9_-]*)
+        die "DEFAULT_LANGUAGE may only contain letters, digits, '-' and '_'"
+        ;;
+esac
 
 LLAMA_URL="http://llama-cpp:8080/v1"
 # Must match LLAMA_ARG_ALIAS in compose.yaml.

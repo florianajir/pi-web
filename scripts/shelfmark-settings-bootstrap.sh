@@ -40,7 +40,9 @@ PGID=1000
 CHANGED=0
 
 read_json() {
-    # read_json <path> ; echoes the file, or {} when absent, empty or not an object.
+    # read_json <path> ; echoes the file, or {} when absent. Returns non-zero if it
+    # exists but cannot be read or is not a JSON object - the caller must not
+    # merge into a default in that case.
     #
     # The emptiness test has to be the shell's, not jq's: `jq -e` reports success
     # on empty input, because "no values out" is not an error to it - only a
@@ -48,12 +50,26 @@ read_json() {
     # string, apply() then compared "" against the "" jq echoes back for it, and
     # every tab whose file did not exist yet was silently reported as already
     # current. Only tabs Shelfmark had already written were ever reconciled.
+    #
+    # Absent is a legitimate {} (Shelfmark has not written that tab yet), but an
+    # exec that *failed* is not: treating it as {} makes the merge write back a
+    # file holding only the keys this script manages, dropping the neighbours
+    # (PROXY_AUTH_*, OIDC_SCOPES, SEARCH_MODE, CALIBRE_WEB_URL...).
     local raw=""
-    raw="$(docker exec "$SHELFMARK_CONTAINER" cat "$1" 2>/dev/null || true)"
-    [ -n "$raw" ] || raw='{}'
+    if ! docker exec "$SHELFMARK_CONTAINER" sh -c '[ -e "$1" ]' _ "$1" 2>/dev/null; then
+        printf '%s' '{}'
+        return 0
+    fi
+    raw="$(docker exec "$SHELFMARK_CONTAINER" cat "$1")" || {
+        log "ERROR: could not read $1 from $SHELFMARK_CONTAINER"
+        return 1
+    }
     # `type == "object"` rather than `.`: it also rejects a file holding a bare
     # array or scalar, which the merges below would fail on.
-    printf '%s' "$raw" | jq -e 'type == "object"' >/dev/null 2>&1 || raw='{}'
+    printf '%s' "$raw" | jq -e 'type == "object"' >/dev/null 2>&1 || {
+        log "ERROR: $1 in $SHELFMARK_CONTAINER is not a JSON object"
+        return 1
+    }
     printf '%s' "$raw"
 }
 
@@ -96,7 +112,8 @@ apply() {
     local path="" current="" desired=""
     path="$(tab_path "$tab")"
 
-    current="$(read_json "$path")"
+    current="$(read_json "$path")" ||
+        die "Refusing to rewrite $path: its current contents could not be read"
     desired="$(printf '%s' "$current" | jq "$@")" || die "Failed to build $tab.json"
 
     if [ "$(printf '%s' "$current" | jq -S .)" = "$(printf '%s' "$desired" | jq -S .)" ]; then
