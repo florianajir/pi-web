@@ -46,11 +46,15 @@ HOST_LAN_SUBNET=192.168.1.0/24
 PIHOLE_IP=192.168.1.250                 # outside the DHCP range
 ```
 
-Set your router's DHCP DNS option to `PIHOLE_IP`, or configure devices by hand. Two macvlan
-consequences, both load-bearing:
+Set your router's DHCP DNS option to `PIHOLE_IP`, or configure devices by hand — see below for the
+routers that expose no such setting. Two macvlan consequences, both load-bearing:
 
 - **The Docker host itself cannot reach a macvlan IP** over the parent interface. The Pi querying
-  its own `${HOST_LAN_IP}:53` therefore times out; it uses `127.0.0.1` instead.
+  its own `${HOST_LAN_IP}:53` therefore times out; query `127.0.0.1` instead. Note that nothing in
+  the installer points the Pi's own resolver at Pi-hole, so `/etc/resolv.conf` keeps whatever the
+  router handed out. Containers using Docker's embedded resolver inherit that, and therefore
+  resolve `*.<HOST_NAME>` to the **WAN** address — which is why several services carry an
+  `extra_hosts` entry pinning a stack hostname to an internal address instead.
 - **A LAN client must target `PIHOLE_IP`, never `${HOST_LAN_IP}`.** Docker DNATs the host's
   published `:53` to Pi-hole's *frontend* address, but the container has a direct route to the LAN
   subnet over the macvlan, so its reply leaves that way and never returns through the host's
@@ -80,6 +84,54 @@ it is how remote nodes reach the control plane to enrol and reconnect from outsi
 
 Verify the router does not strip private answers (some resolvers apply DNS rebinding protection):
 `dig @<router> <service>.<HOST_NAME> +short` must return `<HOST_LAN_IP>`.
+
+### Routers that cannot set the DHCP DNS option
+
+Some ISP routers — an Orange Livebox 7, measured — expose no DHCP DNS field at all, so the whole
+LAN keeps resolving through the router. Every client then lands on the WAN address and is refused
+by `lan@docker`: a bare `403` with body `Forbidden`, no login redirect, on every gated service at
+once. The middleware runs before `authelia@docker`, so this looks nothing like an auth problem.
+
+Two ways to tell it apart from a broken app, both from the Pi:
+
+- Traefik's access log is JSON. A rejected request carries `"DownstreamStatus":403` and a
+  `"ClientHost"` equal to your **public** IP. It never reaches the app, so the app's own log
+  stays silent — `docker logs pi-traefik` is the only place it appears.
+- Pi-hole's query database lists the clients that actually use it. No address from
+  `HOST_LAN_SUBNET` means nothing on the LAN resolves through it:
+
+  ```sh
+  docker exec pi-pihole pihole-FTL sqlite3 /etc/pihole/pihole-FTL.db \
+    "select client, count(*) from queries where timestamp > strftime('%s','now')-86400 group by client;"
+  ```
+
+Where the DHCP option is unavailable, the per-device fallback is a `hosts` entry per gated
+hostname — `/etc/hosts` on Linux and macOS, `%SystemRoot%\System32\drivers\etc\hosts` on Windows:
+
+```
+${HOST_LAN_IP}  nextcloud.<HOST_NAME>
+${HOST_LAN_IP}  immich.<HOST_NAME>
+...
+```
+
+`hosts` has no wildcard, so this is one line per gated hostname, to revisit whenever a service is
+added. Two things make it work better than it looks: the Let's Encrypt certificate is a wildcard
+for `*.<HOST_NAME>`, so aiming a name at the LAN address still presents a valid certificate; and
+because the Pi advertises `HOST_LAN_SUBNET` as a tailnet route, `${HOST_LAN_IP}` stays reachable
+from outside as well, so one static entry serves both on and off the LAN.
+
+**Leave `headscale.<HOST_NAME>` out of it**, for the reason given above: pin it to a private
+address and a laptop that is off-LAN with the tunnel down can no longer reach its control plane to
+reconnect. `auth.<HOST_NAME>` is not gated and works either way; pinning it only keeps the Authelia
+redirect on the local path.
+
+**Correcting DNS is not enough on its own.** Because one certificate covers every hostname in the
+stack, an HTTP/2 client that already holds a connection to the WAN address *coalesces* new
+hostnames onto it and performs no DNS lookup at all. A dashboard left open keeps that connection
+warm indefinitely, so it never re-resolves. Measured on Orion (WebKit): a single stale connection
+kept serving `homepage`, `immich`, `kavita`, `nextcloud` and `qbittorrent` — all 403 — while Chrome
+on the same machine, having resolved afresh, got 200. Quit the browser fully after editing `hosts`;
+closing the tab is not enough.
 
 ## Casting to a DLNA renderer
 
