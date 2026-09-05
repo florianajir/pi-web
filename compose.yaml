@@ -1112,7 +1112,15 @@ services:
       # /custom_apps/calendar/js/calendar-main.js, so the calendar never rendered
       # for anyone outside the LAN. Mirrors the /apps/ negation above so the
       # store apps' REST surfaces stay private.
-      - "traefik.http.routers.nextcloud-public.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/s/`) || PathPrefix(`/public.php`) || PathPrefix(`/avatar/guest/`) || PathPrefix(`/dist/`) || (PathPrefix(`/apps/`) && !PathRegexp(`^/apps/[^/]+/api/`)) || (PathPrefix(`/custom_apps/`) && !PathRegexp(`^/custom_apps/[^/]+/api/`)) || PathPrefix(`/js/`) || PathPrefix(`/core/`) || PathPrefix(`/themes/`) || PathPrefix(`/remote.php/dav/calendars/`) || PathPrefix(`/remote.php/dav/public-calendars/`))"
+      # Assets only under /apps, /custom_apps and /core, not the whole tree. The
+      # old "everything except /api/" form served /apps/files/, /apps/dashboard/
+      # and /core/preview publicly: with one phished password an attacker off-LAN
+      # could complete the OIDC flow at /apps/user_oidc/login (also public) and
+      # then browse those pages with the session it produced. The subdirectory
+      # list is the set a real public share page actually requests, plus the
+      # usual l10n/fonts/vendor. LAN and tailnet clients are unaffected - they
+      # match the `lan` router instead, which serves the full app.
+      - "traefik.http.routers.nextcloud-public.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/s/`) || PathPrefix(`/public.php`) || PathPrefix(`/avatar/guest/`) || PathPrefix(`/dist/`) || PathPrefix(`/js/`) || PathPrefix(`/themes/`) || PathPrefix(`/apps/files_sharing/publicpreview`) || PathRegexp(`^/core/(css|js|img|fonts|l10n|vendor)/`) || PathRegexp(`^/(apps|custom_apps)/[^/]+/(css|js|img|fonts|l10n|vendor|theme|favicon|icon|manifest)/`) || PathPrefix(`/remote.php/dav/calendars/`) || PathPrefix(`/remote.php/dav/public-calendars/`))"
       - "traefik.http.routers.nextcloud-public.entrypoints=websecure"
       - "traefik.http.routers.nextcloud-public.middlewares=frame-deny@docker"
       - "traefik.http.routers.nextcloud-public.tls=true"
