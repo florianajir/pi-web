@@ -152,7 +152,7 @@ The watcher runs on the host as a systemd unit — no extra container — starte
 
 Login messages carry the username, the real client IP (`remote_ip`, forwarded by Traefik), the auth method, the endpoint hit and the Authelia timestamp; bans also carry the expiry. Authelia logs its "Unsuccessful …" line with an *empty* username when the account does not exist, so those alerts come from the paired "username input" line instead — the alert always names the attempted username.
 
-**Why the OIDC row matters.** A client left holding a refresh token Authelia no longer accepts cannot sync, and nothing else in the stack notices: the container stays healthy, its Uptime Kuma monitor stays green, and the only trace is a 400 on `/api/oidc/token` repeating every few minutes. This alert is what turns that into minutes rather than days. It carries the client IP, the endpoint and the reason. The RFC 6749 boilerplate that `invalid_grant` opens with is stripped so the specific cause leads — `The refresh token has not been found`, say; other error classes keep their own preamble. There is no username: Authelia resolves no subject for a grant it rejected.
+**Why the OIDC row matters.** A client left holding a refresh token Authelia no longer accepts cannot sync, and nothing else in the stack notices: the container stays healthy, its Uptime Kuma monitor stays green, and the only trace is a 400 on `/api/oidc/token` repeating every few minutes. This alert is what turns that into minutes rather than days. It carries the client IP, the endpoint and the reason. The RFC 6749 boilerplate that `invalid_grant` opens with is stripped so the specific cause leads — `The refresh token has not been found`, say; other error classes keep their own preamble, as does a message that is nothing but the preamble. The reason is read up to the quote closing `msg`, not up to a named field: Authelia's logger sorts fields alphabetically, so anchoring on `method=` would break the day a field sorting earlier appears. There is no username: Authelia resolves no subject for a grant it rejected.
 
 **Noise control.** Identical `(event kind, user, IP)` events are collapsed inside a window, so a browser retry loop or a slow brute-force yields one alert plus the ban alert rather than a stream. Suppressed events go to the journal, not to ntfy.
 
@@ -160,14 +160,16 @@ The two families keep **separate** suppression slots and separate windows: login
 
 **The OIDC key includes the reason**, unlike the login key. A rejected grant has no username and one stable container IP per client, so on `(kind, user, IP)` alone the key would collapse to a single slot per client: a secret rotated an hour into a dead-refresh-token loop would produce a different, actionable failure that nobody hears about. Bans deliberately keep their detail *out* of the key — it is an expiry that moves on every attempt.
 
-Each family remembers **one** event, so a cause that alternates re-notifies on each change rather than collapsing. That is the existing design — the IP already differs between OIDC clients — and it errs toward being told.
+Each family remembers the **last 32 keys**, not one. A single slot is not enough once more than one source is failing — and every OIDC client has its own container IP, so two stuck refresh loops would alternate, every key would look new, and every retry would notify: precisely the storm the hour-wide window exists to prevent.
 
-**A failed publish leaves the slot unstamped**, so the next occurrence tries again instead of the window silencing a fault ntfy never actually delivered. Override either:
+**A failed publish is not remembered**, so the next occurrence tries again rather than the window silencing a fault ntfy never delivered. A hanging ntfy would then cost every matching line a full curl timeout, so a failed publish also starts a 60 s hold-off — attempts stay bounded and alerting resumes on its own once ntfy is back. Override any of it:
 
 ```bash
 sudo systemctl edit pi-pcloud-authelia-ntfy.service
 # [Service] Environment=AUTHELIA_NTFY_DEDUPE_WINDOW=300
 # [Service] Environment=AUTHELIA_NTFY_OIDC_DEDUPE_WINDOW=7200
+# [Service] Environment=AUTHELIA_NTFY_SEEN_MAX=64
+# [Service] Environment=AUTHELIA_NTFY_PUBLISH_RETRY_DELAY=120
 ```
 
 **Credentials.** `scripts/ntfy-pre-start.sh` provisions an `authelia` ntfy user with `rw` on `security` and stores its generated password in `config/ntfy/ntfy.env`. The watcher reads that file at publish time — so `make rotate-password` is picked up without restarting it — and passes the credentials to curl on stdin, never on the command line, so they never appear in the host process table. ntfy is reached over the Docker network by container IP, not through Traefik.

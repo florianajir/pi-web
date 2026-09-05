@@ -25,6 +25,15 @@ DEDUPE_WINDOW="${AUTHELIA_NTFY_DEDUPE_WINDOW:-60}"
 # every few minutes, for days. An hour-wide window keeps that one fault to a
 # handful of reminders instead of hundreds.
 OIDC_DEDUPE_WINDOW="${AUTHELIA_NTFY_OIDC_DEDUPE_WINDOW:-3600}"
+# How many recent keys each family remembers. One slot is not enough: several
+# sources can be failing at once - every OIDC client has its own container IP -
+# and with a single slot they alternate, every key looks new, and every retry
+# notifies. That is the storm the windows above exist to prevent.
+SEEN_MAX="${AUTHELIA_NTFY_SEEN_MAX:-32}"
+# After a failed publish, hold off this long before attempting another. A hanging
+# ntfy would otherwise cost every matching line a full curl timeout and the
+# watcher would fall behind the log stream it is following.
+PUBLISH_RETRY_DELAY="${AUTHELIA_NTFY_PUBLISH_RETRY_DELAY:-60}"
 RECONNECT_DELAY="${AUTHELIA_NTFY_RECONNECT_DELAY:-10}"
 
 # --- ntfy publishing ---
@@ -87,16 +96,28 @@ field() {
     printf '%s\n' "$2" | sed -n "$1" | head -n1
 }
 
-# Usage: within_window <key> <now> <window> <last-key> <last-time>
-within_window() {
-    _w_key="$1"
-    _w_now="$2"
-    _w_window="$3"
-    _w_last_key="$4"
-    _w_last_time="$5"
+# A ring is newline-separated "<epoch> <key>" entries, newest last.
 
-    [ "$_w_key" = "$_w_last_key" ] || return 1
-    [ $((_w_now - _w_last_time)) -lt "$_w_window" ]
+# Usage: ring_prune <ring> <now> <window> - prints the ring without stale entries.
+ring_prune() {
+    _rp_now="$2"
+    _rp_window="$3"
+
+    printf '%s\n' "$1" | while IFS=' ' read -r _rp_time _rp_key; do
+        case "$_rp_time" in ''|*[!0-9]*) continue ;; esac
+        [ $((_rp_now - _rp_time)) -lt "$_rp_window" ] || continue
+        printf '%s %s\n' "$_rp_time" "$_rp_key"
+    done
+}
+
+# Usage: ring_has <ring> <key>
+ring_has() {
+    printf '%s\n' "$1" | cut -d' ' -f2- | grep -qxF -- "$2"
+}
+
+# Usage: ring_add <ring> <now> <key> - prints the ring with <key> appended, capped.
+ring_add() {
+    printf '%s\n%s %s\n' "$1" "$2" "$3" | grep -v '^$' | tail -n "$SEEN_MAX"
 }
 
 notify_event() {
@@ -126,18 +147,23 @@ notify_event() {
     case "$_kind" in
         oidc_grant)
             _window="$OIDC_DEDUPE_WINDOW"
-            _last_key="${last_oidc_key:-}"
-            _last_time="${last_oidc_time:-0}"
+            _ring="$(ring_prune "${oidc_seen:-}" "$_now" "$_window")"
             ;;
         *)
             _window="$DEDUPE_WINDOW"
-            _last_key="${last_key:-}"
-            _last_time="${last_time:-0}"
+            _ring="$(ring_prune "${login_seen:-}" "$_now" "$_window")"
             ;;
     esac
 
-    if within_window "$_key" "$_now" "$_window" "$_last_key" "$_last_time"; then
+    if ring_has "$_ring" "$_key"; then
         log "Suppressed duplicate event ($_kind) within ${_window}s window"
+        return 0
+    fi
+
+    # Nothing is stamped while ntfy is failing, so without this the watcher would
+    # pay a curl timeout per matching line and drift behind docker logs -f.
+    if [ $((_now - ${last_publish_fail:-0})) -lt "$PUBLISH_RETRY_DELAY" ]; then
+        log "Holding off ($_kind): a publish failed less than ${PUBLISH_RETRY_DELAY}s ago"
         return 0
     fi
 
@@ -176,20 +202,18 @@ Reason: $_detail"
             ;;
     esac
 
-    # Stamp the slot only once the alert is actually out. Marking it before would
+    # Remember the key only once the alert is actually out. Marking it before would
     # let one ntfy hiccup silence the whole window - an hour, for a rejected grant,
     # which is exactly the alert meant to catch a vault locked out in minutes.
-    [ "$_published" -eq 0 ] || return 0
+    if [ "$_published" -ne 0 ]; then
+        last_publish_fail="$_now"
+        return 0
+    fi
+    last_publish_fail=0
 
     case "$_kind" in
-        oidc_grant)
-            last_oidc_key="$_key"
-            last_oidc_time="$_now"
-            ;;
-        *)
-            last_key="$_key"
-            last_time="$_now"
-            ;;
+        oidc_grant) oidc_seen="$(ring_add "$_ring" "$_now" "$_key")" ;;
+        *) login_seen="$(ring_add "$_ring" "$_now" "$_key")" ;;
     esac
 }
 
@@ -209,10 +233,18 @@ process_line() {
 
     case "$_line" in
         *'Access Request failed with error'*)
-            _reason="$(field 's|.*Access Request failed with error: \(.*\)" method=.*|\1|p' "$_line")"
-            # Drop the RFC 6749 boilerplate that prefixes every invalid_grant so
-            # the alert leads with the part that differs between causes.
-            _reason="$(printf '%s' "$_reason" | sed 's|.*was issued to another client\. ||')"
+            _reason="$(field 's|.*Access Request failed with error: ||p' "$_line")"
+            # Stop at the quote closing msg, whatever field logrus sorted next. It
+            # sorts them alphabetically, so anchoring on " method=" would break the
+            # day a field sorting earlier appears - and an unparsed reason is not
+            # cosmetic here: it joins the dedupe key, collapsing every distinct
+            # cause into one slot for the whole window.
+            _reason="$(printf '%s' "$_reason" | sed -e 's|" [a-z_]*=.*||' -e 's|"$||')"
+            # Drop the RFC 6749 boilerplate that opens invalid_grant so the alert
+            # leads with the part that differs between causes. Only when something
+            # follows it: a message that is nothing but the preamble keeps it.
+            _stripped="$(printf '%s' "$_reason" | sed 's|.*was issued to another client\. ||')"
+            [ -z "$_stripped" ] || _reason="$_stripped"
             [ -n "$_reason" ] || _reason="<unparsed>"
             notify_event oidc_grant "" "$_ip" "" "$_path" "$_time" "$_reason"
             return 0
