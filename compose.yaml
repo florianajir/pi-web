@@ -314,7 +314,10 @@ services:
       - "--entrypoints.websecure.http.middlewares=compress@docker,security-headers@docker,autodetect@docker"
       - "--entrypoints.websecure.http.tls.certresolver=cloudflare"
       - "--entrypoints.websecure.http3=true"
-      - "--entrypoints.websecure.forwardedHeaders.trustedIPs=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}"
+      # No forwardedHeaders.trustedIPs on purpose: nothing proxies in front of
+      # Traefik, so every X-Forwarded-* arriving here is client-supplied. Trusting
+      # them from ALLOW_IP_RANGES let any LAN or tailnet client forge
+      # X-Forwarded-Host and have Authelia apply another domain's (weaker) rule.
       - "--entrypoints.websecure.transport.respondingTimeouts.readTimeout=0"
       - "--entrypoints.websecure.transport.respondingTimeouts.writeTimeout=0"
       - "--entrypoints.websecure.transport.respondingTimeouts.idleTimeout=0"
@@ -2144,8 +2147,10 @@ services:
       - "traefik.http.routers.authelia.tls=true"
       - "traefik.http.services.authelia.loadbalancer.server.port=9091"
       - "traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/authz/forward-auth"
-      # trustForwardHeader is safe here: Traefik is the only trusted upstream on the internal frontend network
-      - "traefik.http.middlewares.authelia.forwardauth.trustForwardHeader=true"
+      # false: Traefik must derive Method/Proto/Host/Uri for the authz request from
+      # the request it actually received. true forwards the client's own
+      # X-Forwarded-*, which is what the caller wants Authelia to authorise.
+      - "traefik.http.middlewares.authelia.forwardauth.trustForwardHeader=false"
       - "traefik.http.middlewares.authelia.forwardauth.authRequestHeaders=Accept,Cookie,Authorization"
       - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
       - "traefik.http.middlewares.authelia.forwardauth.maxResponseBodySize=4096"
