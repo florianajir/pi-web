@@ -2,7 +2,7 @@
 
 Five layers, in the order a request meets them:
 
-1. **Nothing is exposed but Traefik** — one port, `443`, and the DNS-challenge certificates mean port 80 never has to be reachable.
+1. **Nothing web-facing is exposed but Traefik** — `443/tcp` and `443/udp` (HTTP/3), with `80/tcp` only redirecting; the DNS-challenge certificates mean port 80 never has to be reachable from the internet. The host also publishes DNS (`53/tcp+udp`, Pi-hole) and the VPN's own UDP ports (`3478`, `41641`) — see [Networking → Ports](NETWORKING.md#ports).
 2. **IP allowlist** (`lan` middleware) — only your LAN, your tailnet and the Docker networks reach a service at all.
 3. **VPN mesh** — remote access happens over WireGuard, not over an opened port.
 4. **SSO** — Authelia, either as forward-auth or as an OIDC provider.
@@ -84,7 +84,7 @@ That tolerance is not free, and it is not scoped to token grants: `timeout` cove
 | Service | `lan` | `authelia` | Own OIDC | Effective protection |
 |---------|:---:|:---:|:---:|----------|
 | Authelia portal | — | — | — | Public login entry point. No IP restriction so OIDC clients can reach it server-side; Authelia's own `regulation` handles brute force |
-| Headscale | — | — | ✓ | Public by necessity — VPN clients register from anywhere. `/admin` (Headplane) is separately LAN-only + SSO + 2FA |
+| Headscale | — | — | ✓ | Public by necessity — VPN clients register from anywhere. Bare `/` is a 302 to `/admin` (`headscale-root` + `headscale-root-redirect`), which is Headplane's own router: separately LAN-only + SSO + 2FA. The redirect hands the browser to that router rather than rewriting the path onto the headscale service, which has no `/admin` and answered 404 |
 | Nextcloud | ✓ | — | ✓ | LAN-only + OIDC; a second router leaves the public share paths (`/s/`, `/public.php`, …) open. Its `files_external` mounts are **read-write**, so an account in the `admin` group can delete or move anything in the download and library tree — see [Architecture](ARCHITECTURE.md#the-reading-libraries) |
 | Immich | ✓ | — | ✓ | LAN-only + OIDC; second router leaves share paths (`/share`, `/s/`, `/api`) open |
 | Vaultwarden | ✓ | — | ✓ | LAN-only + OIDC + master password — see [below](#vaultwarden) |
@@ -101,8 +101,9 @@ That tolerance is not free, and it is not scoped to token grants: `timeout` cove
 | Uptime Kuma | ✓ | ✓ | — | LAN-only + SSO |
 | qBittorrent | ✓ | ✓ | — | LAN-only + SSO |
 | Prowlarr / Kapowarr | ✓ | ✓ | — | LAN-only + SSO |
-| Traefik dashboard | ✓ | ✓ | — | LAN-only + admin + 2FA |
-| Pi-hole | ✓ | ✓ | — | LAN-only + admin + 2FA |
+| Traefik dashboard | ✓ | ✓ | — | LAN-only + admin + 2FA (the `traefik.<HOST_NAME>` router on `websecure`) |
+| Traefik API (`:8080`) | — | — | — | Not on `websecure` at all: the `internalapi` router serves `api@internal` on Traefik's implicit `traefik` entrypoint, reachable only inside `frontend`. `/api/rawdata` returns the full router map, including every public-bypass rule, so it carries `internalapi-allow` — an `ipallowlist` of `172.30.11.240/32`, Homepage's static address and its only consumer |
+| Pi-hole | ✓ | ✓ | — | LAN-only + admin + 2FA. The admin UI binds to `127.0.0.1:8082` and `172.30.11.241:8082` only, never `0.0.0.0` — Pi-hole also sits on the `lan` macvlan, where Docker's publishing rules do not apply, so a wildcard bind served the whole LAN (and, through the advertised subnet route, the whole tailnet) at `${PIHOLE_IP}:8082` behind `PASSWORD` alone, bypassing this row entirely. Loopback is for `scripts/pihole-bootstrap.sh`; `172.30.11.241` is what Traefik dials |
 | Backrest | ✓ | ✓ | — | LAN-only + admin + 2FA + **its own login**, whose password is per-service (`config/backrest/backrest.env`), not `${PASSWORD}` — the API hands the restic repository password and the S3 keys to any *authenticated* caller, and forward-auth only guards the Traefik path, not the container network. Which is why Backrest is also off `frontend`, on the dedicated `backup` segment: only Traefik and Homepage can open `:9898` at all |
 | Gluetun HTTP proxy | — | — | — | Not routed through Traefik at all. `gluetun:8888` is unauthenticated and reachable by anything on `frontend` — gluetun's firewall accepts the whole Docker network by design. Enabled for Shelfmark's direct downloads; the exposure is VPN egress for a container that already has internet, not a path to data |
 | LLDAP | ✓ | ✓ | — | LAN-only + 2FA + its own auth + `rate-limit-auth` |
@@ -148,11 +149,13 @@ never overriding a backend's own.
 
 List `frame-deny@docker` **first** in a router's chain. Middlewares listed later sit further inside, and anything that short-circuits — the `lan` 403, an Authelia portal redirect, the Stremio redirect — returns without reaching them, so a frame middleware placed last silently omits the header on exactly those responses. Adding a new router means adding it there too; nothing enforces this automatically.
 
-**Rate limiting** — `rate-limit-auth` is applied to LLDAP only (`lldap.*`), after the forward-auth middleware: 10 req/s average per source IP, burst 20, to blunt credential stuffing.
+**Rate limiting** — `rate-limit-auth` (10 req/s average per source IP, burst 20, period 1 s) is on two routers: `lldap`, where it sits *before* the forward-auth middleware and blunts credential stuffing, and `comet-public`, where it caps the upstream fan-out (see the Comet row above).
 
-**Why the Authelia portal has neither an allowlist nor a rate limit.** Two reasons, both structural: its SPA fires several API calls on page load and would trip the limiter, and OIDC clients (Open WebUI, Nextcloud, Immich…) make *server-side* calls to its discovery and token endpoints — an IP allowlist would 403 those container-to-container requests. Brute force is handled instead by Authelia's own `regulation` block: `max_retries: 3` within `find_time: 2m`, then `ban_time: 5m`.
+**Why the Authelia portal has neither an allowlist nor a rate limit.** Two reasons, both structural: its SPA fires several API calls on page load and would trip the limiter, and OIDC clients (Open WebUI, Nextcloud, Immich…) make *server-side* calls to its discovery and token endpoints — an IP allowlist would 403 those container-to-container requests. Brute force is handled instead by Authelia's own `regulation` block: `max_retries: 3` within `find_time: 2m`, then `ban_time: 5m`, applied in both modes — `user` and `ip`. IP mode is only sound because Traefik declares no `forwardedHeaders.trustedIPs` and the forward-auth call runs with `trustForwardHeader=false`: while the client's own `X-Forwarded-For` was trusted, the address Authelia regulated on was attacker-chosen, so a per-IP ban was evaded by changing a header. With `user` alone, spraying many usernames from one address locked each account for five minutes and never slowed the caller down.
 
 **Cookie forwarding.** The `authelia` middleware sets `authRequestHeaders=Accept,Cookie,Authorization` so Traefik passes the session cookie on every protected request. Without it, Authelia cannot find the session in Redis and returns a "user state" error.
+
+**Traefik trusts no forwarded header, and neither does the authz call.** Nothing proxies in front of Traefik, so every `X-Forwarded-*` arriving on `websecure` is client-supplied — the entrypoint therefore declares no `forwardedHeaders.trustedIPs` at all. Pairing that with `forwardauth.trustForwardHeader=false` makes Traefik derive the Method/Proto/Host/URI it sends Authelia from the request it actually received. With the previous settings (`trustedIPs=${ALLOW_IP_RANGES}` plus `trustForwardHeader=true`) any LAN or tailnet client could send `X-Forwarded-Host` naming a laxer domain and have Authelia evaluate *that* domain's rule for a request aimed at a gated service.
 
 ## Access-control policies
 
@@ -234,6 +237,24 @@ service's own configuration file by its bootstrap script (Kavita's `appsettings.
 `plugins/security.json`) or pushed over its admin API (Audiobookshelf's `PATCH /api/auth-settings`, whose
 settings live only in its SQLite database) — never through environment variables, where `docker inspect`
 would print them, and never baked into images.
+
+**A rendered file that carries a secret is 0600 from creation.** `lib.sh`'s `write_secret_file` renders
+into a `mktemp` file — 0600 before a byte is written — and `mv`s it into place, rather than `cmd > file`
+followed by a `chmod`, which creates the file world-readable with the secret already in it and narrows it
+only on the next line. It covers `config/headscale/config.yaml` and `config/headplane/config.yaml` (each
+holds its Authelia OIDC `client_secret`, and Headplane's also holds a reusable pre-auth key),
+`${DATA_LOCATION}/qbittorrent/qBittorrent/qBittorrent.conf` (qBittorrent writes `WebUI\Password_PBKDF2`
+and the ntfy bearer token back into it), `config/backrest/backrest.env`, `config/ntfy/ntfy.env` and
+`config/n8n/n8n.env`.
+
+`config/n8n/n8n.env` (mode `600`, gitignored) holds one value, `N8N_RUNNERS_AUTH_TOKEN`, written by
+`scripts/n8n-pre-start.sh` and loaded by both `n8n` and `n8n-runners` as an `env_file`. It used to be
+`${N8N_RUNNERS_AUTH_TOKEN:-<a hard-coded default>}` in `compose.yaml` with the variable set nowhere, so every
+install ran the task broker on the same published default while it listened on `0.0.0.0` inside
+`frontend` — any of the ~25 containers there could register as a task runner and receive the workflow code
+and data n8n hands out for execution. Like the Comet and Vaultwarden secrets it is machine-to-machine, so
+`rotate-password.sh` leaves it alone; rotate by deleting the file and running
+`docker compose up -d n8n n8n-runners`.
 
 ## Sessions
 

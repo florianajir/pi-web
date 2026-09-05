@@ -247,7 +247,7 @@ The `s3` repository survives the house burning down but cannot hand `.env` back 
 
 That cleartext password is deliberate. The disk already holds every service's live data plus a cleartext `.env` under `backrest/env-snapshot/`, so a password kept elsewhere would buy no secrecy while making the repository unreadable in the exact scenario it exists for. Set `BACKREST_LOCAL_REPO_PASSWORD` in `.env` to override it and take that trade-off back.
 
-Both files are (re)written by `scripts/backrest-pre-start.sh`, which also adds the repository and its plan to an existing `config.json` if they are missing — so this is picked up by a plain `make up`, not only by a fresh install.
+Both files are (re)written by `scripts/backrest-pre-start.sh`, which also adds the repository and its plan to an existing `config.json` if they are missing — so this is picked up by a plain `make restart` (or the next `make update`), not only by a fresh install.
 
 To restore from the data disk alone, on any machine with restic:
 

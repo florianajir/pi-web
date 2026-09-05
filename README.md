@@ -31,7 +31,7 @@ Prefer doing it by hand? See the [Installation guide](docs/INSTALLATION.md).
 ## What you get
 
 - **One login for everything.** Authelia SSO + LLDAP directory, with 2FA on the admin surfaces. Services speak OIDC where they can, forward-auth where they can't.
-- **Real HTTPS, everywhere.** Traefik terminates TLS with wildcard Let's Encrypt certificates issued over the Cloudflare DNS challenge, so nothing but `443` ever has to reach the internet.
+- **Real HTTPS, everywhere.** Traefik terminates TLS with wildcard Let's Encrypt certificates issued over the Cloudflare DNS challenge, so nothing but `443` (TCP, plus UDP for HTTP/3) ever has to reach the internet.
 - **Private DNS.** Pi-hole filters ads and trackers for your whole LAN; Unbound resolves recursively from the root servers, so no DNS provider sees your queries.
 - **Reachable from anywhere, exposed to no one.** Headscale runs your own Tailscale control plane; everything but the login portal is restricted to your LAN and your tailnet.
 - **Backups you can restore.** Backrest (restic) snapshots app data and databases nightly, encrypted and deduplicated, to any S3-compatible bucket.
@@ -70,7 +70,7 @@ You don't have to run all of it. Core infrastructure always starts; every other 
 | **Storage** | NVMe SSD HAT recommended (MicroSD degrades fast under continuous I/O) |
 | **Domain** | A domain on Cloudflare (free tier) + an API token with `Zone → DNS → Edit` |
 | **Software** | Docker and the Compose plugin — the installer offers to add them |
-| **Router** | Forward `443/tcp`. Optionally `41641/udp` and `3478/udp` for direct VPN links |
+| **Router** | Forward `443/tcp`. Optionally `443/udp` for HTTP/3, and `41641/udp` + `3478/udp` for direct VPN links |
 | **Off-site backup** | An S3-compatible bucket (optional but recommended) |
 
 ## Everyday use
