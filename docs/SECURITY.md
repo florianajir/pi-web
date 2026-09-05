@@ -247,6 +247,17 @@ holds its Authelia OIDC `client_secret`, and Headplane's also holds a reusable p
 and the ntfy bearer token back into it), `config/backrest/backrest.env`, `config/ntfy/ntfy.env` and
 `config/n8n/n8n.env`.
 
+**Rotating one of these: `make rotate-secret TARGET=<name>`.** `rotate-password.sh` covers the shared
+`PASSWORD` and everything derived from it; the secrets in this section are not, so they get their own
+command. What it exists for is not generating a value but reaching every consumer: rotating Backrest's
+API password without `config/homepage/secrets/backrest_password` leaves the Homepage widget answering
+401, rotating a restic password without `config.json` locks Backrest out of its own repository, and
+rotating the S3 keys without Beszel's PocketBase settings breaks its nightly backup silently. Each
+target verifies its own effect and restores what it touched if that verification fails - except past
+`restic key passwd`, where the old password no longer opens the repository and restoring it would be
+the opposite of a repair. `make check-secrets` runs the verifications alone, which also catches drift
+no rotation caused.
+
 `config/n8n/n8n.env` (mode `600`, gitignored) holds one value, `N8N_RUNNERS_AUTH_TOKEN`, written by
 `scripts/n8n-pre-start.sh` and loaded by both `n8n` and `n8n-runners` as an `env_file`. It used to be
 `${N8N_RUNNERS_AUTH_TOKEN:-<a hard-coded default>}` in `compose.yaml` with the variable set nowhere, so every

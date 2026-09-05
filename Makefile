@@ -1,4 +1,4 @@
-.PHONY: help install install-system uninstall pg-upgrade start stop restart update update-images status logs doctor preflight check-env print-required-vars test lint services enable disable config headscale-register headscale-reset rotate-password rotate-password-full recovery-kit
+.PHONY: help install install-system uninstall pg-upgrade start stop restart update update-images status logs doctor preflight check-env print-required-vars test lint services enable disable config headscale-register headscale-reset rotate-password rotate-password-full rotate-secret check-secrets recovery-kit
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -428,6 +428,29 @@ rotate-password:
 rotate-password-full:
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
 	sh scripts/rotate-password.sh
+
+# The per-service secrets rotate-password.sh deliberately leaves alone. TARGET is
+# required because each one has its own set of consumers to propagate to.
+rotate-secret:
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	@if [ -z "$(TARGET)" ]; then \
+		echo "Usage: make rotate-secret TARGET=<name>"; echo; \
+		sh scripts/rotate-secret.sh --list | sed 's/^/  /'; exit 1; \
+	fi
+	$(SUDO) sh scripts/rotate-secret.sh "$(TARGET)"
+
+# Reports which secrets have drifted from their consumers - the failure mode that
+# is otherwise silent until a widget 401s or a backup cannot open its repository.
+check-secrets:
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	@rc=0; for t in $$(sh scripts/rotate-secret.sh --list); do \
+		$(SUDO) sh scripts/rotate-secret.sh "$$t" --check >/dev/null 2>&1; \
+		case $$? in \
+			0) echo "  ✔ $$t" ;; \
+			2) echo "  · $$t (not verifiable here)" ;; \
+			*) echo "  ✘ $$t"; rc=1 ;; \
+		esac; \
+	done; exit $$rc
 
 # No check-env dependency: this reads config/backrest/config.json, not .env, and
 # it is most wanted precisely when the rest of the install is in a bad way.

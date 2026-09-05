@@ -49,6 +49,8 @@ The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pul
 | `make headscale-reset` | Reset all VPN nodes — **destructive** |
 | `make rotate-password` | Rotate `PASSWORD` after a leak (LLDAP admin + Authelia) |
 | `make rotate-password-full` | The same, plus every Postgres role and every other service using `PASSWORD` |
+| `make rotate-secret TARGET=<name>` | Rotate one *independent* per-service secret and propagate it to every consumer. `TARGET=` with no value lists them |
+| `make check-secrets` | Report which secrets have drifted from their consumers; changes nothing |
 
 ## What `make update` actually does
 
