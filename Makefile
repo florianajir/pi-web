@@ -384,6 +384,20 @@ doctor:
 	@$(COMPOSE) exec -T system-tools python3 -c \
 		"import urllib.request as r; print(r.urlopen('http://localhost:8000/status/anomalies').read().decode())" \
 		|| echo "❌ system-tools unreachable - check 'docker compose ps' and 'make logs'"
+	@echo
+	@echo "🔑 Secret consistency"
+	@# Without sudo, so `make doctor` stays non-interactive: the one target that
+	@# needs root then reports "not verifiable here" instead of prompting. Drift
+	@# here is otherwise silent until a widget 401s or a backup cannot open its
+	@# repository, which is exactly what a diagnostic is for.
+	@for t in $$(sh scripts/rotate-secret.sh --list); do \
+		sh scripts/rotate-secret.sh "$$t" --check >/dev/null 2>&1; \
+		case $$? in \
+			0) echo "  ✔ $$t" ;; \
+			2) echo "  · $$t (not verifiable without sudo)" ;; \
+			*) echo "  ✘ $$t - run: make rotate-secret TARGET=$$t" ;; \
+		esac; \
+	done
 
 # Postgres major upgrades are dump/restore: the immich-app/postgres image ships
 # one major's binaries, so pg_upgrade is not available. The old data directory

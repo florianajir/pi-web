@@ -32,7 +32,7 @@ The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pul
 |---------|--------------|
 | `make status` | Stack status and port bindings |
 | `make logs` | Follow live logs |
-| `make doctor` | Report anything outside its threshold: disk, RAM, swap, temperature, load, containers, restarts, backups |
+| `make doctor` | Report anything outside its threshold: disk, RAM, swap, temperature, load, containers, restarts, backups — then whether each secret still agrees with its consumers |
 | `make services` | List optional services and whether each is enabled |
 | `make enable <service>` | Enable a service: update `COMPOSE_PROFILES`, start it, run its init hooks |
 | `make disable <service>` | Disable a service: update `COMPOSE_PROFILES` and stop it |
