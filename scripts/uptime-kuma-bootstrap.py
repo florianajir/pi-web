@@ -248,7 +248,14 @@ def read_env_file(path):
                 continue
             if "=" in line:
                 k, v = line.split("=", 1)
-                values[k.strip()] = v.strip()
+                v = v.strip()
+                # One layer of matching quotes, as Compose and lib.sh's
+                # unquote_env_value do. Left in, a quoted ADMIN_USER becomes a
+                # Kuma admin whose name literally contains the quotes, and every
+                # later login fails.
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+                    v = v[1:-1]
+                values[k.strip()] = v
     return values
 
 
@@ -444,9 +451,18 @@ class UptimeKumaBootstrap:
             self.sio.disconnect()
 
     def wait_ready(self):
-        """Wait for monitorList event (signals all data has been sent)."""
+        """Wait for monitorList event (signals all data has been sent).
+
+        Fatal, not a warning: without that event self.monitors stays empty, and
+        every ensure_* below then takes its "does not exist yet" branch and adds
+        a second copy of all ~50 monitors, each alerting on its own. The hook
+        runs again on the next start, so exiting here costs one reconcile.
+        """
         if not self._ready.wait(timeout=self.timeout):
-            log("WARNING: Timed out waiting for monitor list event")
+            log(f"ERROR: no monitorList within {self.timeout}s - refusing to "
+                "reconcile against an empty monitor list (it would duplicate "
+                "every monitor). Retry on the next start.")
+            sys.exit(1)
 
     def _call(self, event, *args):
         """Emit a Socket.IO event and wait for the callback response.
@@ -1058,17 +1074,19 @@ def main():
         password = ""
         ntfy_password = ""
     else:
-        if not os.path.isfile(env_file):
-            log(f"ERROR: .env not found at {env_file}")
-            sys.exit(1)
-
-        env_values = read_env_file(env_file)
         ntfy_env = read_env_file(ntfy_env_file)
 
-        username = env_values.get("ADMIN_USER", "")
+        # ADMIN_USER comes from the environment: the wrapper passes just this key
+        # rather than bind-mounting .env, which would put every secret in the
+        # stack inside a container that pip-installs from PyPI at runtime. The
+        # file is still read when present, so a direct run outside the wrapper
+        # keeps working.
+        username = env("ADMIN_USER")
+        if not username and os.path.isfile(env_file):
+            username = read_env_file(env_file).get("ADMIN_USER", "")
         password = ntfy_env.get("UPTIME_KUMA_ADMIN_PASSWORD", "")
         if not username:
-            log("ERROR: ADMIN_USER must be set in .env")
+            log("ERROR: ADMIN_USER must be set (environment or .env)")
             sys.exit(1)
         if not password:
             log("ERROR: UPTIME_KUMA_ADMIN_PASSWORD not found in ntfy.env; run ntfy-pre-start.sh first")

@@ -10,6 +10,10 @@ set -eu
 
 PYTHON_SCRIPT="$SCRIPT_DIR/uptime-kuma-bootstrap.py"
 PYTHON_IMAGE="python:3.12-slim"
+# Pinned, not floating: this runs on every start, as root, on the frontend
+# network, and a compromised release of any of these would run with whatever the
+# container can reach. Bump deliberately, like any other dependency here.
+PIP_PACKAGES="python-socketio==5.16.4 python-engineio==4.14.0 websocket-client==1.9.2 bidict==0.24.1 simple-websocket==1.1.0 h11==0.16.0 wsproto==1.3.2"
 MAX_RETRIES=90
 RETRY_INTERVAL=2
 
@@ -47,6 +51,13 @@ main() {
     HOST_NAME="${HOST_NAME:-$(get_env_value HOST_NAME)}"
     [ -n "$HOST_NAME" ] || log "WARNING: HOST_NAME not resolved; TLS certificate monitor will be skipped"
 
+    # The bootstrap container used to get the whole .env bind-mounted for this
+    # one value, putting every secret in the stack inside a container that
+    # installs packages from PyPI at runtime.
+    ADMIN_USER="${ADMIN_USER:-$(get_env_value_clean ADMIN_USER)}"
+    [ -n "$ADMIN_USER" ] || die "ADMIN_USER is not set in .env"
+    export ADMIN_USER
+
     # Computed here because the bootstrap container has no docker CLI: monitors
     # of profile-disabled services get paused (not deleted) by the python side.
     ENABLED_SERVICES="$(enabled_services_csv)"
@@ -63,14 +74,14 @@ main() {
         --network frontend \
         -v "$PYTHON_SCRIPT:/bootstrap.py:ro" \
         -v "$PROJECT_DIR/compose.yaml:/project/compose.yaml:ro" \
-        -v "$PROJECT_DIR/.env:/project/.env:ro" \
         -v "$PROJECT_DIR/config/ntfy/ntfy.env:/project/config/ntfy/ntfy.env:ro" \
         -e PROJECT_DIR=/project \
         -e UPTIME_KUMA_URL=http://pi-uptime-kuma:3001 \
         -e HOST_NAME="$HOST_NAME" \
+        -e ADMIN_USER \
         -e ENABLED_SERVICES="$ENABLED_SERVICES" \
         "$PYTHON_IMAGE" \
-        sh -c 'pip install --quiet --disable-pip-version-check "python-socketio[client]" && python /bootstrap.py'
+        sh -c "pip install --quiet --disable-pip-version-check $PIP_PACKAGES && python /bootstrap.py"
 }
 
 main "$@"

@@ -6,6 +6,8 @@ set -eu
 OUTPUT_FILE="${PROJECT_DIR}/config/ntfy/ntfy.env"
 OUTPUT_DIR="$(dirname "$OUTPUT_FILE")"
 NTFY_IMAGE="${NTFY_IMAGE:-binwiederhier/ntfy:v2.17.0}"
+# Built by compose from config/backrest/Dockerfile, which installs apache2-utils.
+BCRYPT_IMAGE="${BCRYPT_IMAGE:-pi-backrest:local}"
 # One topic per reading mode, so each can be muted, scheduled or given its own
 # do-not-disturb rule on the phone independently. Publishers only ever get
 # access to the topic they belong to (see AUTH_ACCESS_VALUE below).
@@ -39,6 +41,38 @@ escape_compose_env_value() {
     printf '%s' "$1" | sed 's/[$]/$$/g'
 }
 
+unescape_compose_env_value() {
+    printf '%s' "$1" | sed 's/[$][$]/$/g'
+}
+
+# bcrypt salts are random, so re-hashing the same password yields a different
+# string every run. That rewrote NTFY_AUTH_USERS on every start, and a changed
+# env_file value makes compose recreate pi-ntfy - on every single boot. Reuse a
+# stored hash when it still matches its password. htpasswd is the only bcrypt
+# verifier available to this stack and it lives in the backrest image, which is
+# the same trick config/backrest/auth-entrypoint.sh already uses. If that image
+# is missing the verification simply fails and we re-hash, as before.
+bcrypt_matches() {
+    _stored="$1"
+    _plain="$2"
+    [ -n "$_stored" ] || return 1
+    case "$_stored" in '$2'*) ;; *) return 1 ;; esac
+    printf '%s\n' "$_plain" | docker run -i --rm --entrypoint sh "$BCRYPT_IMAGE" -c '
+        IFS= read -r plain
+        printf "u:%s\n" "$1" > /tmp/verify
+        htpasswd -vb /tmp/verify u "$plain" >/dev/null 2>&1
+    ' _ "$_stored" >/dev/null 2>&1
+}
+
+# hash_password_cached <stored_hash> <plaintext>
+hash_password_cached() {
+    if bcrypt_matches "$1" "$2"; then
+        printf '%s' "$1"
+        return 0
+    fi
+    hash_password "$2"
+}
+
 main() {
     if [ ! -f "$ENV_FILE" ]; then
         die ".env not found at $ENV_FILE"
@@ -58,6 +92,9 @@ main() {
     NTFY_AUTHELIA_PASSWORD_VALUE=""
     NTFY_SHELFMARK_PASSWORD_VALUE=""
     NTFY_SHELFMARK_TOKEN_VALUE=""
+    STORED_ADMIN_HASH=""; STORED_BACKREST_HASH=""; STORED_BESZEL_HASH=""
+    STORED_DOCKHAND_HASH=""; STORED_UPTIME_KUMA_HASH=""; STORED_PROWLARR_HASH=""
+    STORED_QBITTORRENT_HASH=""; STORED_AUTHELIA_HASH=""; STORED_SHELFMARK_HASH=""
 
     if [ -f "$OUTPUT_FILE" ]; then
         NTFY_BACKREST_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_BACKREST_PASSWORD)
@@ -76,6 +113,10 @@ main() {
         NTFY_AUTHELIA_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_AUTHELIA_PASSWORD)
         NTFY_SHELFMARK_PASSWORD_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_SHELFMARK_PASSWORD)
         NTFY_SHELFMARK_TOKEN_VALUE=$(read_env_value_from_file "$OUTPUT_FILE" NTFY_SHELFMARK_TOKEN)
+
+        for _u in ADMIN BACKREST BESZEL DOCKHAND UPTIME_KUMA PROWLARR QBITTORRENT AUTHELIA SHELFMARK; do
+            eval "STORED_${_u}_HASH=\"\$(unescape_compose_env_value \"\$(read_env_value_from_file \"\$OUTPUT_FILE\" NTFY_${_u}_HASH)\")\""
+        done
     fi
 
     if [ -z "$USER_VALUE" ]; then
@@ -150,16 +191,16 @@ main() {
         log "Generated NTFY_SHELFMARK_TOKEN for shelfmark ntfy user"
     fi
 
-    log "Generating bcrypt hashes for ntfy predefined users"
-    USER_HASH="$(hash_password "$PASSWORD_VALUE")"
-    BACKREST_HASH="$(hash_password "$NTFY_BACKREST_PASSWORD_VALUE")"
-    BESZEL_HASH="$(hash_password "$NTFY_BESZEL_PASSWORD_VALUE")"
-    DOCKHAND_HASH="$(hash_password "$NTFY_DOCKHAND_PASSWORD_VALUE")"
-    UPTIME_KUMA_HASH="$(hash_password "$NTFY_UPTIME_KUMA_PASSWORD_VALUE")"
-    PROWLARR_HASH="$(hash_password "$NTFY_PROWLARR_PASSWORD_VALUE")"
-    QBITTORRENT_HASH="$(hash_password "$NTFY_QBITTORRENT_PASSWORD_VALUE")"
-    AUTHELIA_HASH="$(hash_password "$NTFY_AUTHELIA_PASSWORD_VALUE")"
-    SHELFMARK_HASH="$(hash_password "$NTFY_SHELFMARK_PASSWORD_VALUE")"
+    log "Resolving bcrypt hashes for ntfy predefined users"
+    USER_HASH="$(hash_password_cached "$STORED_ADMIN_HASH" "$PASSWORD_VALUE")"
+    BACKREST_HASH="$(hash_password_cached "$STORED_BACKREST_HASH" "$NTFY_BACKREST_PASSWORD_VALUE")"
+    BESZEL_HASH="$(hash_password_cached "$STORED_BESZEL_HASH" "$NTFY_BESZEL_PASSWORD_VALUE")"
+    DOCKHAND_HASH="$(hash_password_cached "$STORED_DOCKHAND_HASH" "$NTFY_DOCKHAND_PASSWORD_VALUE")"
+    UPTIME_KUMA_HASH="$(hash_password_cached "$STORED_UPTIME_KUMA_HASH" "$NTFY_UPTIME_KUMA_PASSWORD_VALUE")"
+    PROWLARR_HASH="$(hash_password_cached "$STORED_PROWLARR_HASH" "$NTFY_PROWLARR_PASSWORD_VALUE")"
+    QBITTORRENT_HASH="$(hash_password_cached "$STORED_QBITTORRENT_HASH" "$NTFY_QBITTORRENT_PASSWORD_VALUE")"
+    AUTHELIA_HASH="$(hash_password_cached "$STORED_AUTHELIA_HASH" "$NTFY_AUTHELIA_PASSWORD_VALUE")"
+    SHELFMARK_HASH="$(hash_password_cached "$STORED_SHELFMARK_HASH" "$NTFY_SHELFMARK_PASSWORD_VALUE")"
 
     mkdir -p "$OUTPUT_DIR"
 
@@ -189,13 +230,25 @@ main() {
         # Read by scripts/backrest-post-hook.sh inside the backrest container,
         # which loads this file through the service's env_file.
         printf 'BACKREST_NTFY_TOPIC=%s\n' "$(escape_compose_env_value "$NTFY_MONITORING_TOPIC")"
+        printf 'NTFY_ADMIN_HASH=%s\n' "$(escape_compose_env_value "$USER_HASH")"
+        printf 'NTFY_BACKREST_HASH=%s\n' "$(escape_compose_env_value "$BACKREST_HASH")"
+        printf 'NTFY_BESZEL_HASH=%s\n' "$(escape_compose_env_value "$BESZEL_HASH")"
+        printf 'NTFY_DOCKHAND_HASH=%s\n' "$(escape_compose_env_value "$DOCKHAND_HASH")"
+        printf 'NTFY_UPTIME_KUMA_HASH=%s\n' "$(escape_compose_env_value "$UPTIME_KUMA_HASH")"
+        printf 'NTFY_PROWLARR_HASH=%s\n' "$(escape_compose_env_value "$PROWLARR_HASH")"
+        printf 'NTFY_QBITTORRENT_HASH=%s\n' "$(escape_compose_env_value "$QBITTORRENT_HASH")"
+        printf 'NTFY_AUTHELIA_HASH=%s\n' "$(escape_compose_env_value "$AUTHELIA_HASH")"
+        printf 'NTFY_SHELFMARK_HASH=%s\n' "$(escape_compose_env_value "$SHELFMARK_HASH")"
         printf 'NTFY_AUTH_USERS=%s\n' "$(escape_compose_env_value "$AUTH_USERS_VALUE")"
         printf 'NTFY_AUTH_ACCESS=%s\n' "$(escape_compose_env_value "$AUTH_ACCESS_VALUE")"
         printf 'NTFY_AUTH_TOKENS=%s\n' "$(escape_compose_env_value "$AUTH_TOKENS_VALUE")"
         printf 'UPTIME_KUMA_ADMIN_PASSWORD=%s\n' "$(escape_compose_env_value "$UPTIME_KUMA_ADMIN_PASSWORD_VALUE")"
-    } > "$OUTPUT_FILE"
+    } | write_secret_file "$OUTPUT_FILE" || die "could not write $OUTPUT_FILE"
+    # write_secret_file replaces the inode, so a root-run start would otherwise
+    # leave a file the login user cannot read (shelfmark-pre-start reads the
+    # shelfmark token out of it).
+    fix_ownership "$OUTPUT_FILE"
 
-    chmod 600 "$OUTPUT_FILE"
     log "Rendered ntfy env to $OUTPUT_FILE"
 }
 

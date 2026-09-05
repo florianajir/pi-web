@@ -158,7 +158,7 @@ main() {
 
     local password
     password="$(get_env_value PASSWORD)"
-    password="${password:-admin}"
+    [ -n "$password" ] || die "PASSWORD is empty in .env; refusing to try the default Pi-hole password"
 
     local sid
     sid=$(get_session "$password")

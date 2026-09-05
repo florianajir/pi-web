@@ -38,11 +38,16 @@ if [ -z "${repo_uri}" ] || [ -z "${repo_password}" ]; then
 fi
 
 # Export repo-specific env vars (e.g. AWS credentials)
-for kv in $(printf '%s' "${repo_json}" | jq -r '.env[]? // empty'); do
+# Read line by line, not `for kv in $(...)`: unquoted command substitution splits
+# on every space, so an env value containing one (an S3 endpoint description, a
+# proxy string) was exported truncated at the first word.
+while IFS= read -r kv; do
   case "${kv}" in
     *=*) export "${kv?}" ;;
   esac
-done
+done <<EOF
+$(printf '%s' "${repo_json}" | jq -r '.env[]? // empty')
+EOF
 
 export RESTIC_PASSWORD="${repo_password}"
 

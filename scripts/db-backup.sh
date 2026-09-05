@@ -59,6 +59,18 @@ fi
 
 mkdir -p "$BACKUP_DIR"
 
+# A failed pg_dump exits under `set -e` with the partial dump still on disk, and
+# the prune below only ever matches *.bak - so one *.bak.tmp per failing night
+# accumulated inside the directory restic snapshots.
+tmp_file=""
+restore_maintenance=0
+cleanup() {
+    [ -z "$tmp_file" ] || rm -f "$tmp_file"
+    [ "$restore_maintenance" = "1" ] || return 0
+    set_maintenance_state "$original_state" || true
+}
+trap cleanup EXIT INT TERM
+
 # --- Nextcloud maintenance mode ---
 if [ "$SERVICE" = "nextcloud" ]; then
     CONFIG_FILE="${NEXTCLOUD_CONFIG_FILE:-/nextcloud-config/config.php}"
@@ -90,10 +102,7 @@ if [ "$SERVICE" = "nextcloud" ]; then
     }
 
     original_state="$(current_maintenance_state)"
-    restore_original_state() {
-        set_maintenance_state "$original_state" || true
-    }
-    trap restore_original_state EXIT INT TERM
+    restore_maintenance=1
     set_maintenance_state true
 fi
 
@@ -105,6 +114,7 @@ out_file="$BACKUP_DIR/${SERVICE}-sqlbkp_${timestamp}.bak"
 export PGPASSWORD="$DB_PASSWORD"
 pg_dump -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -f "$tmp_file"
 mv "$tmp_file" "$out_file"
+tmp_file=""
 unset PGPASSWORD
 
 echo "${SERVICE} PostgreSQL backup created: ${out_file}"
@@ -112,7 +122,7 @@ echo "${SERVICE} PostgreSQL backup created: ${out_file}"
 # --- Restore nextcloud maintenance state ---
 if [ "$SERVICE" = "nextcloud" ]; then
     set_maintenance_state "$original_state"
-    trap - EXIT INT TERM
+    restore_maintenance=0
 fi
 
 # --- Prune ---
