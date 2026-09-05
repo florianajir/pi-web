@@ -157,6 +157,11 @@ jobs:
           # Creates audiobookshelf's /config and /metadata, and the audiobook
           # folder it shares with shelfmark.
           sh ./scripts/audiobookshelf-pre-start.sh
+          # comet is in COMPOSE_PROFILES above. Without this its env_file is absent
+          # (required: false), CONFIGURE_PAGE_PASSWORD is unset, and Comet drops the
+          # /s/<PUBLIC_API_TOKEN>/ prefix that comet-public@docker routes on - so the
+          # smoke test would exercise a configuration no real install ever runs.
+          sh ./scripts/comet-pre-start.sh
 
           # Make all generated files world-readable so docker compose (and the Docker
           # daemon) can open env_files regardless of the runner's umask or ownership.

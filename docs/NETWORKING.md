@@ -82,6 +82,13 @@ private address is not routable from outside anyway.
 **Never do this on the wildcard.** `headscale.<HOST_NAME>` must keep resolving to the WAN address —
 it is how remote nodes reach the control plane to enrol and reconnect from outside the tailnet.
 
+**Nor on `comet.<HOST_NAME>`.** `comet-public@docker` routes `/s/<PUBLIC_API_TOKEN>/` without
+`lan@docker` precisely so an addon installed on a Stremio account keeps resolving off-tailnet; a
+specific record aimed at `HOST_LAN_IP` hands the internet a private address and silently un-publishes
+it. The record is unnecessary here anyway: a cast receiver that hairpins to the WAN address now
+reaches the addon endpoints through the public router instead of the `403` this section exists to
+avoid. Only `/configure` and `/admin*` stay LAN-only, and neither is something a TV opens.
+
 Verify the router does not strip private answers (some resolvers apply DNS rebinding protection):
 `dig @<router> <service>.<HOST_NAME> +short` must return `<HOST_LAN_IP>`.
 
@@ -180,7 +187,8 @@ Since Pi-hole resolves `*.<HOST_NAME>` to the Pi, every service works from the V
 
 | Network | Subnet | Members | Purpose |
 |---------|--------|---------|---------|
-| `frontend` | `172.30.11.0/24` (Traefik at `.250`) | Traefik + every routed service | The only network Traefik proxies to |
+| `frontend` | `172.30.11.0/24` (Traefik at `.250`) | Traefik + every routed service except Backrest | The network Traefik proxies to by default (`--providers.docker.network`) |
+| `backup` | bridge | Traefik, Homepage, Backrest | Backrest's `:9898` returns the restic key and the S3 credentials to any authenticated caller, so it is not left on a segment with ~24 other containers. Not internal: restic reaches S3 through it. A service opts in with `traefik.docker.network=backup` |
 | `auth` | internal | Authelia, LLDAP, Postgres, Redis | LDAP and auth traffic never crosses an app network |
 | `nextcloud`, `immich`, `ai`, `vault`, `ntfy` | internal | each app + its own backends | Per-app isolation; `vault` deliberately has no path to LLDAP |
 | `dns_internal` | `172.30.53.0/24`, no gateway | Pi-hole, Unbound | Nothing else can query Unbound |

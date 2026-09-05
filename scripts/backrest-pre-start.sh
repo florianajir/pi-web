@@ -209,6 +209,36 @@ ensure_local_env_repo() {
   fi
 }
 
+# --- The API credential ---
+#
+# Backrest's :9898 API hands out repos[].password (the restic key) and repos[].env
+# (the S3 keys) to any authenticated caller, so this credential is exactly as
+# valuable as the backups themselves. It used to be ${PASSWORD}, which eight other
+# containers carry in their environment - a leak from any one of them reached every
+# snapshot. Generated per-service here instead, like the Vaultwarden admin token,
+# and rotate-password.sh leaves it alone.
+#
+# Deliberately above every early return below: an install whose config.json already
+# exists must still get the file, and config/backrest/auth-entrypoint.sh re-hashes
+# whatever it finds here on each start, so a rotation is picked up by itself.
+AUTH_ENV_FILE="${CONFIG_DIR}/backrest.env"
+AUTH_PASSWORD_VALUE="$(read_env_value_from_file "$AUTH_ENV_FILE" BACKREST_AUTH_PASSWORD)"
+
+if [ -z "$AUTH_PASSWORD_VALUE" ]; then
+  AUTH_PASSWORD_VALUE="$(generate_secret)"
+  log "Generated BACKREST_AUTH_PASSWORD for the Backrest API"
+fi
+
+mkdir -p "${CONFIG_DIR}"
+
+# generate_secret emits hex, so no value here needs Compose's $$ escaping.
+{
+  printf '# Managed by scripts/backrest-pre-start.sh\n'
+  printf 'BACKREST_AUTH_PASSWORD=%s\n' "$AUTH_PASSWORD_VALUE"
+} > "$AUTH_ENV_FILE"
+safe_chmod 600 "$AUTH_ENV_FILE"
+fix_ownership "$AUTH_ENV_FILE"
+
 if [ ! -f "${TEMPLATE_FILE}" ]; then
   die "template not found at ${TEMPLATE_FILE}"
 fi

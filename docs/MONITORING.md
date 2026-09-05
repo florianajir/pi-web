@@ -276,7 +276,11 @@ You get two sheets to cut apart and store in **two different places**: sheet A t
 
 ### The API holds the keys
 
-Backrest's API returns the restic repository password and the S3 access keys to any caller, and `pi-backrest` shares the `frontend` network with every other web-facing container. It is therefore password-protected: the image entrypoint (`config/backrest/auth-entrypoint.sh`) turns `BACKREST_AUTH_USER` / `BACKREST_AUTH_PASSWORD` into a bcrypt user in `config.json` on every start, defaulting to `ADMIN_USER` and `PASSWORD`. Disabling that (unsetting either variable) leaves the credentials readable by any container on the network.
+Backrest's API returns the restic repository password and the S3 access keys to any *authenticated* caller, so that login is worth exactly as much as the archive. Two things guard it.
+
+The image entrypoint (`config/backrest/auth-entrypoint.sh`) turns `BACKREST_AUTH_USER` / `BACKREST_AUTH_PASSWORD` into a bcrypt user in `config.json` on every start. The password is **not** `PASSWORD`: `scripts/backrest-pre-start.sh` generates a per-service one into `config/backrest/backrest.env`, because eight containers carry `PASSWORD` in their environment and a leak from any of them would otherwise reach every snapshot. Homepage's widget reads a copy from `config/homepage/secrets/backrest_password`. If the credential is missing and `config.json` defines no login, the entrypoint **refuses to start** rather than come up unprotected — one missed snapshot instead of an open archive.
+
+`pi-backrest` is also off `frontend`, on the dedicated `backup` network that only Traefik and Homepage join, so nothing else can open `:9898` in the first place — see [Networking](NETWORKING.md#network-isolation).
 
 The S3 key itself is still unrestricted, and the bucket has no versioning or object lock: whoever holds that key can delete every snapshot. Restricting it is a Scaleway-console change — see [Configuration](CONFIGURATION.md#backrest-restic-backups).
 

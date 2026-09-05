@@ -5,8 +5,9 @@
 #
 # Use this after PASSWORD has been exposed (leaked, shoulder-surfed, committed,
 # etc). It does NOT rotate ADMIN_USER, EMAIL, or any of the independent
-# per-service secrets (NTFY_*_PASSWORD, OIDC client secrets, S3/backup keys) -
-# those aren't derived from PASSWORD and don't need touching here.
+# per-service secrets (NTFY_*_PASSWORD, Comet's config/comet/comet.env, Backrest's
+# config/backrest/backrest.env, the Vaultwarden admin token, OIDC client secrets,
+# S3/backup keys) - those aren't derived from PASSWORD and don't need touching here.
 #
 # Lessons baked in from doing this rotation live on this exact stack once:
 #   - The LLDAP admin account's password is NOT "self-healing" on container
@@ -26,7 +27,7 @@
 #     `nextcloud` role), or Nextcloud loses its DB connection in the gap.
 #   - .env's PASSWORD feeds Postgres connection strings for lldap,
 #     immich-server, open-webui, vaultwarden, and backrest, AND local-login
-#     fallbacks for pihole/homepage/comet. Writing a new PASSWORD into .env
+#     fallbacks for pihole/homepage. Writing a new PASSWORD into .env
 #     without also rotating the Postgres roles those services hold poisons .env
 #     for a FUTURE, unrelated container recreate (a reboot, `make restart`, an
 #     image bump) to break on - so --skip-postgres mode never touches .env at all.
@@ -713,15 +714,15 @@ main() {
         # and deliberately untouched here - see scripts/vaultwarden-pre-start.sh.
         if [ "$VAULTWARDEN_ROLE_OK" = "1" ]; then recreate vaultwarden; else note "… Skipped recreating vaultwarden - its Postgres role didn't rotate"; fi
         # backrest is NOT gated on the roles, unlike the containers above.
-        # Two reasons. Its env also carries BACKREST_AUTH_PASSWORD, the UI
-        # login, and .env already holds the new PASSWORD - skipping the
-        # recreate would leave the documented credential unable to log in
-        # while homepage (recreated below) sends the new one and 401s. And the
-        # gate never bought consistency anyway: backrest bundles all six roles
-        # into one environment, so after a partial rotation *some* dump
-        # password is wrong either way. Recreating makes the rotated majority
-        # work; skipping breaks them instead. backrest touches Postgres only
-        # from its snapshot hooks, so there is no crash loop to avoid here.
+        # Its UI login is no longer PASSWORD - that lives in
+        # config/backrest/backrest.env and is untouched by a rotation - so the
+        # only thing the recreate carries is the six *_DB_PASSWORD values its
+        # snapshot hooks use for pg_dump. The gate would not buy consistency
+        # anyway: backrest bundles all six roles into one environment, so after
+        # a partial rotation *some* dump password is wrong either way.
+        # Recreating makes the rotated majority work; skipping breaks them
+        # instead. backrest touches Postgres only from its snapshot hooks, so
+        # there is no crash loop to avoid here.
         recreate backrest
         _stale_dumps=""
         [ "$NEXTCLOUD_ROLE_OK" = "1" ]   || _stale_dumps="$_stale_dumps nextcloud"
@@ -738,7 +739,6 @@ main() {
         recreate pihole
         recreate beszel
         recreate homepage
-        recreate comet
         rotate_ntfy
 
         log "=== Live API credential updates (no recreate needed) ==="

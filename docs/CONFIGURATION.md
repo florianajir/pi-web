@@ -106,8 +106,7 @@ Used by Backrest (backups), Beszel (snapshots and file uploads) and optionally N
 | `BACKREST_S3_URI` | `s3:${S3_ENDPOINT}/${S3_BUCKET}/restic` | Set explicitly for non-S3 storage |
 | `BACKREST_S3_REPO_PASSWORD` | — | Repository encryption key. 32+ random characters. **Keep a copy off this machine** — see [Monitoring](MONITORING.md#the-env-file-twice) |
 | `BACKREST_LOCAL_REPO_PASSWORD` | *(generated)* | Encryption key for the `usb` repository, which holds the `.env` history on the data disk. Left unset, `backrest-pre-start.sh` generates one into `${DATA_LOCATION}/backrest/repos/env-repo-password` so the disk can restore itself — see [Monitoring](MONITORING.md#the-env-file-twice) |
-| `BACKREST_AUTH_USER` | `${ADMIN_USER}` | Backrest UI/API login. Unset it to disable auth, which exposes the repository password to every container on the `frontend` network |
-| `BACKREST_AUTH_PASSWORD` | `${PASSWORD}` | Hashed with bcrypt into `config.json` by the image entrypoint on every start |
+| `BACKREST_AUTH_USER` | `${ADMIN_USER}` | Backrest UI/API login. Its password is **not** set here — see below |
 | `NEXTCLOUD_SQL_BACKUP_KEEP` | `30` | Nextcloud SQL dumps retained, separate from the full backups |
 
 Without complete S3 credentials Backrest still starts, but its `s3` repository is unusable — the pre-start script warns and the nightly plan has nowhere to write. The `usb` repository is unaffected — it is local and needs no S3 credentials — but it only covers `.env`. For a local-only setup, add a second repository under `/repos` (bind-mounted from `${DATA_LOCATION}/backrest/repos`, where `/repos/env` is already taken) in the Backrest UI. See [Backup strategy](MONITORING.md#backup-strategy).
@@ -205,6 +204,8 @@ per-account settings (`core/config.py`): putting it there would freeze every use
 audiobook provider instead of moving the default they can still change.
 
 ## Auto-generated secrets
+
+`BACKREST_AUTH_PASSWORD` is deliberately absent from this table: setting it in `.env` has no effect. `scripts/backrest-pre-start.sh` generates it into `config/backrest/backrest.env`, which the service loads as an `env_file`, and the image entrypoint hashes it into `config.json` on every start. Read it with `grep BACKREST_AUTH_PASSWORD config/backrest/backrest.env`; rotate it by deleting the line and running `docker compose up -d backrest`. Backrest refuses to start if it ends up with no login at all.
 
 These need no configuration and must not be edited by hand. `scripts/authelia-pre-start.sh` generates most of them on first start with mode `600` under `${DATA_LOCATION}/authelia-config/secrets/`, joined there by `scripts/vaultwarden-pre-start.sh` for the Vaultwarden `/admin` token; `scripts/headscale-init.sh` generates `config/headplane/headscale_api_key`. Full inventory: [Security → Secrets](SECURITY.md#secrets).
 

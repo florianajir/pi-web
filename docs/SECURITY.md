@@ -103,11 +103,11 @@ That tolerance is not free, and it is not scoped to token grants: `timeout` cove
 | Prowlarr / Kapowarr | ✓ | ✓ | — | LAN-only + SSO |
 | Traefik dashboard | ✓ | ✓ | — | LAN-only + admin + 2FA |
 | Pi-hole | ✓ | ✓ | — | LAN-only + admin + 2FA |
-| Backrest | ✓ | ✓ | — | LAN-only + admin + 2FA + **its own login** — the API hands the restic repository password and the S3 keys to any caller, and forward-auth only guards the Traefik path, not the container network |
+| Backrest | ✓ | ✓ | — | LAN-only + admin + 2FA + **its own login**, whose password is per-service (`config/backrest/backrest.env`), not `${PASSWORD}` — the API hands the restic repository password and the S3 keys to any *authenticated* caller, and forward-auth only guards the Traefik path, not the container network. Which is why Backrest is also off `frontend`, on the dedicated `backup` segment: only Traefik and Homepage can open `:9898` at all |
 | Gluetun HTTP proxy | — | — | — | Not routed through Traefik at all. `gluetun:8888` is unauthenticated and reachable by anything on `frontend` — gluetun's firewall accepts the whole Docker network by design. Enabled for Shelfmark's direct downloads; the exposure is VPN egress for a container that already has internet, not a path to data |
 | LLDAP | ✓ | ✓ | — | LAN-only + 2FA + its own auth + `rate-limit-auth` |
 | Stremio | ✓ | — | — | LAN-only; streaming clients and cast receivers can't do the portal |
-| Comet | ✓ | — | — | LAN-only; Stremio fetches manifests programmatically |
+| Comet | partial | — | — | Split in two routers. `/s/<PUBLIC_API_TOKEN>/` is public so an addon installed on a Stremio account resolves off-tailnet; `/configure` is excluded from it, and `/`, `/health` and `/admin*` stay LAN-only. No forward-auth on either — Stremio fetches manifests programmatically. The public half carries `rate-limit-auth`, because each request fans out to Torrentio/MediaFusion/Zilean from the Pi's WAN IP. Its two passwords are generated per-service (`config/comet/comet.env`), never `${PASSWORD}` |
 
 Services with their own account system (Immich, Kavita, Shelfmark, Audiobookshelf) deliberately do **not** stack forward-auth on top of OIDC — their apps and clients cannot complete an interactive portal.
 
@@ -219,6 +219,15 @@ Generated on first start, mode `600`, under `${DATA_LOCATION}/authelia-config/se
 | `ldap_password` | LLDAP bind password |
 | `vaultwarden_admin_token` | Vaultwarden `/admin` token, plaintext — the one you type. Written by `scripts/vaultwarden-pre-start.sh`, never mounted into any container |
 | `vaultwarden_admin_token_hash` | Argon2id digest of the above, the only form Vaultwarden receives |
+
+Two more live outside that directory, in `config/comet/comet.env` (mode `600`, gitignored), written by
+`scripts/comet-pre-start.sh`: `ADMIN_DASHBOARD_PASSWORD` and `CONFIGURE_PAGE_PASSWORD`, the credentials
+for Comet's `/admin` and `/configure` pages. Generated per-service rather than reusing `PASSWORD`, for the
+same reason as the Vaultwarden token — Comet has no forward-auth in front of it, and `/configure` is where
+a user's debrid API key is stored. Read the one you need with `grep CONFIGURE_PAGE_PASSWORD
+config/comet/comet.env`. Neither feeds `PUBLIC_API_TOKEN`, which lives in the `comet_data` volume, so
+rotating them leaves every installed Stremio addon URL valid — but `env_file` values are frozen at
+container creation, so pick them up with `docker compose up -d comet`, not `restart`.
 
 OIDC client secrets are injected into services through read-only Docker volumes, or written into the
 service's own configuration file by its bootstrap script (Kavita's `appsettings.json`, Shelfmark's

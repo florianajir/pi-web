@@ -18,6 +18,8 @@
 /config/backrest/config.json.bak.*
 /config/gluetun/gluetun.env
 /config/shelfmark/shelfmark.env
+/config/comet/comet.env
+/config/backrest/backrest.env
 /config/gluetun/openvpn.ovpn
 /config/homepage/secrets/*
 !/config/homepage/secrets/.gitkeep
