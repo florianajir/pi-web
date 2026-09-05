@@ -136,7 +136,9 @@ main() {
         exit 0
     fi
 
-    printf '%s\n' "$UPDATED_CONFIG" > "$CONFIG_FILE"
+    printf '%s\n' "$UPDATED_CONFIG" | write_secret_file "$CONFIG_FILE" ||
+        die "could not write $CONFIG_FILE"
+    fix_ownership "$CONFIG_FILE"
     log "Rendered config to $CONFIG_FILE"
 }
 

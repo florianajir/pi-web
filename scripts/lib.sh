@@ -156,6 +156,27 @@ write_file_atomic() {
     return 1
 }
 
+# Same idea for a *rendered* file that carries a secret (an OIDC client secret, a
+# preauth key, a cookie secret). `cmd > "$file"` creates it under the caller's
+# umask, so it is world-readable for the window before any chmod - and a chmod
+# that comes later is a chmod that can be skipped. mktemp is 0600 from creation
+# and mv preserves that mode, so the file is never briefly readable.
+# Usage: <producer> | write_secret_file <dest>
+write_secret_file() {
+    local dest="$1"
+    local tmp=""
+    if [ -d "$dest" ]; then
+        log "ERROR: $dest is a directory (created by a bind mount?) - refusing to write a file there"
+        return 1
+    fi
+    tmp="$(mktemp "${dest}.XXXXXX")" || return 1
+    if cat > "$tmp" && [ -s "$tmp" ] && mv "$tmp" "$dest"; then
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
 generate_secret() {
     if command -v openssl >/dev/null 2>&1; then
         openssl rand -hex 32

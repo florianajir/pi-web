@@ -125,7 +125,11 @@ init_headplane_config() {
         -e "s|__COOKIE_SECRET__|$(sed_escape "${COOKIE_SECRET}")|g" \
         -e "s|__HEADSCALE_URL__|$(sed_escape "${HEADSCALE_URL}")|g" \
         -e "s|__HEADPLANE_AGENT__PRE_AUTHKEY__|$(sed_escape "${HEADPLANE_AUTHKEY}")|g" \
-        "$template" > "$config"
+        "$template" | write_secret_file "$config" || {
+        log "ERROR: could not write $config"
+        return 1
+    }
+    fix_ownership "$config"
 
     log "Headplane config written to $config"
     log "Restarting Headplane container to apply new config..."
