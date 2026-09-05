@@ -67,7 +67,11 @@ done
 # Matches LLDAP_LDAP_BASE_DN in compose.yaml, which is not overridable via env.
 LLDAP_BASE_DN="dc=home,dc=ldap"
 LLDAP_ADMIN_USERNAME="admin"
-LDAP_CLIENT_IMAGE="osixia/openldap:1.5.0"
+# The backrest image, not osixia/openldap:1.5.0 - that one was archived upstream
+# in 2021 and pulled a whole LDAP *server* to run two client binaries. This image
+# is built by the stack itself (config/backrest/Dockerfile), so the tools are
+# already on disk: no registry fetch in the middle of a credential rotation.
+LDAP_CLIENT_IMAGE="pi-backrest:local"
 
 SUMMARY=""
 note() {
@@ -130,6 +134,10 @@ write_secret_file() {
 # Unlike write_secret_file, a backup failure is not swallowed - it's reported
 # via the return code so callers can warn instead of silently proceeding with
 # no safety net.
+# One fixed .bak per secret, deliberately not a timestamped one: these hold the
+# *previous* password in plaintext, they live in a directory Backrest snapshots
+# off-site, and nothing ever pruned them - so every rotation permanently widened
+# the set of old credentials on disk and in the backups.
 backup_secret_file() {
     local path="$1"
     local backup="$2"
@@ -153,13 +161,19 @@ rotate_postgres_role() {
         open-webui) sql_role='"open-webui"' ;;
     esac
 
-    if ! compose exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres \
-        -c "ALTER ROLE $sql_role WITH ENCRYPTED PASSWORD '$(sql_escape "$NEW_PASSWORD")';" >/dev/null 2>&1; then
+    # The statement goes in on stdin and PGPASSWORD is passed by name, not value:
+    # both spellings of `-c "... '<password>'"` and `env PGPASSWORD=<password>`
+    # land in the host's argv, readable via ps for the length of the call, and
+    # this runs once per role.
+    if ! printf "ALTER ROLE %s WITH ENCRYPTED PASSWORD '%s';\n" \
+        "$sql_role" "$(sql_escape "$NEW_PASSWORD")" |
+        compose exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -q >/dev/null 2>&1; then
         note "✘ FAILED to rotate postgres role '$role'"
         return 1
     fi
 
-    if compose exec -T postgres env PGPASSWORD="$NEW_PASSWORD" psql -U "$role" -d "$db" -h localhost -tAc "SELECT 1;" >/dev/null 2>&1; then
+    if PGPASSWORD="$NEW_PASSWORD" compose exec -T -e PGPASSWORD postgres \
+        psql -U "$role" -d "$db" -h localhost -tAc "SELECT 1;" >/dev/null 2>&1; then
         note "✔ Rotated + verified postgres role '$role'"
         return 0
     fi
@@ -202,24 +216,44 @@ rotate_lldap_admin_password() {
         return 1
     fi
 
-    if ! docker run --rm --network frontend --entrypoint ldappasswd "$LDAP_CLIENT_IMAGE" \
-        -x -H ldap://pi-lldap:3890 -D "$bind_dn" -w "$OLD_PASSWORD" \
-        -s "$NEW_PASSWORD" "$bind_dn" >/dev/null 2>&1; then
-        note "✘ FAILED to rotate LLDAP admin password (old password may already be wrong, or bind DN '$bind_dn' is wrong for this deployment)"
+    # -w/-s would put both the old and the new SSO master password in the
+    # container's argv, which every local process can read out of /proc for the
+    # length of the call. -y/-T read them from files instead; 0600 also keeps
+    # ldappasswd from warning that the password file is publicly readable.
+    local pw_dir=""
+    local rc=1
+    pw_dir="$(mktemp -d "${TMPDIR:-/tmp}/rotate-lldap.XXXXXX")" || {
+        note "✘ FAILED to rotate LLDAP admin password (could not create a temp directory)"
         LLDAP_ADMIN_OK=0
+        return 1
+    }
+    if ! (umask 077; printf '%s' "$OLD_PASSWORD" > "$pw_dir/old" &&
+          printf '%s' "$NEW_PASSWORD" > "$pw_dir/new"); then
+        note "✘ FAILED to rotate LLDAP admin password (could not stage the password files)"
+        LLDAP_ADMIN_OK=0
+        rm -rf "$pw_dir"
         return 1
     fi
 
-    if docker run --rm --network frontend --entrypoint ldapwhoami "$LDAP_CLIENT_IMAGE" \
-        -x -H ldap://pi-lldap:3890 -D "$bind_dn" -w "$NEW_PASSWORD" >/dev/null 2>&1; then
-        note "✔ Rotated + verified LLDAP admin ($LLDAP_ADMIN_USERNAME) password"
-        LLDAP_ADMIN_OK=1
-        return 0
+    if docker run --rm --network frontend -v "$pw_dir:/pw:ro" --entrypoint ldappasswd "$LDAP_CLIENT_IMAGE" \
+        -x -H ldap://pi-lldap:3890 -D "$bind_dn" -y /pw/old \
+        -T /pw/new "$bind_dn" >/dev/null 2>&1; then
+        if docker run --rm --network frontend -v "$pw_dir:/pw:ro" --entrypoint ldapwhoami "$LDAP_CLIENT_IMAGE" \
+            -x -H ldap://pi-lldap:3890 -D "$bind_dn" -y /pw/new >/dev/null 2>&1; then
+            note "✔ Rotated + verified LLDAP admin ($LLDAP_ADMIN_USERNAME) password"
+            LLDAP_ADMIN_OK=1
+            rc=0
+        else
+            note "✘ Rotated LLDAP admin password but verification bind FAILED - check manually"
+            LLDAP_ADMIN_OK=0
+        fi
+    else
+        note "✘ FAILED to rotate LLDAP admin password (old password may already be wrong, or bind DN '$bind_dn' is wrong for this deployment)"
+        LLDAP_ADMIN_OK=0
     fi
 
-    note "✘ Rotated LLDAP admin password but verification bind FAILED - check manually"
-    LLDAP_ADMIN_OK=0
-    return 1
+    rm -rf "$pw_dir"
+    return "$rc"
 }
 
 # --- Authelia secrets (files, not env - a restart re-reads them) ---
@@ -243,7 +277,7 @@ rotate_authelia_ldap_secret() {
         return 0
     fi
 
-    if backup_secret_file "$secrets_dir/ldap_password" "$secrets_dir/ldap_password.bak.$(date +%Y%m%d-%H%M%S)"; then
+    if backup_secret_file "$secrets_dir/ldap_password" "$secrets_dir/ldap_password.bak"; then
         :
     else
         note "⚠ Could not back up Authelia ldap_password before overwriting it (proceeding anyway)"
@@ -281,7 +315,7 @@ rotate_authelia_db_secret() {
         return 0
     fi
 
-    if ! backup_secret_file "$secrets_dir/db_password" "$secrets_dir/db_password.bak.$(date +%Y%m%d-%H%M%S)"; then
+    if ! backup_secret_file "$secrets_dir/db_password" "$secrets_dir/db_password.bak"; then
         note "⚠ Could not back up Authelia db_password before overwriting it (proceeding anyway)"
     fi
 
@@ -352,7 +386,9 @@ rotate_nextcloud_admin_password() {
     # $EMAIL - so that, not $ADMIN_USER, is the account that exists.
     for username in "$EMAIL" "$ADMIN_USER"; do
         [ -n "$username" ] || continue
-        if docker exec -e OC_PASS="$NEW_PASSWORD" pi-nextcloud php occ user:resetpassword --password-from-env "$username" >/dev/null 2>&1; then
+        # -e OC_PASS by name: spelled `-e OC_PASS=<value>` the password is in the
+        # host's argv for the length of the call.
+        if OC_PASS="$NEW_PASSWORD" docker exec -e OC_PASS pi-nextcloud php occ user:resetpassword --password-from-env "$username" >/dev/null 2>&1; then
             note "✔ Reset Nextcloud admin password for user '$username'"
             return 0
         fi
@@ -461,7 +497,7 @@ rotate_audiobookshelf() {
         # the new one lands in the host's process table.
         response="$(RP_OLD_PASSWORD="$OLD_PASSWORD" jq -nc --arg u "$ADMIN_USER" \
                 '{username:$u, password:$ENV.RP_OLD_PASSWORD}' \
-            | docker run --rm -i --network frontend "${CURL_IMAGE:-curlimages/curl:8.12.1}" \
+            | docker run --rm -i --network frontend "$CURL_IMAGE" $CURL_TIMEOUTS \
                 -sS -X POST -H 'Content-Type: application/json' --data @- \
                 "$url/login" 2>/dev/null || true)"
         token="$(printf '%s' "$response" | jq -r '.user.accessToken // empty')"
@@ -473,7 +509,7 @@ rotate_audiobookshelf() {
     fi
 
     if RP_NEW_PASSWORD="$NEW_PASSWORD" jq -nc '{password:$ENV.RP_NEW_PASSWORD}' \
-        | docker run --rm -i --network frontend "${CURL_IMAGE:-curlimages/curl:8.12.1}" \
+        | docker run --rm -i --network frontend "$CURL_IMAGE" $CURL_TIMEOUTS \
             -fsS -X PATCH -H "Authorization: Bearer $token" \
             -H 'Content-Type: application/json' --data @- \
             "$url/api/users/$user_id" >/dev/null 2>&1; then
@@ -602,7 +638,7 @@ rotate_dockhand() {
         # because a 401 here is an expected answer, not a failure.
         response="$(RP_OLD_PASSWORD="$OLD_PASSWORD" jq -nc --arg u "$candidate" \
                 '{username:$u,password:$ENV.RP_OLD_PASSWORD,provider:"local"}' \
-            | docker run --rm -i --network frontend "${CURL_IMAGE:-curlimages/curl:8.12.1}" \
+            | docker run --rm -i --network frontend "$CURL_IMAGE" $CURL_TIMEOUTS \
                 -sS -i -X POST -H 'Content-Type: application/json' --data @- \
                 "$url/api/auth/login" 2>/dev/null || true)"
         status="$(printf '%s' "$response" | awk 'NR==1 {print $2}')"
@@ -635,6 +671,8 @@ rotate_beszel_superuser() {
     fi
     [ -n "$EMAIL" ] || { note "✘ SKIPPED Beszel superuser (EMAIL not set)"; return 0; }
 
+    # The beszel CLI takes the password as a positional argument only - no stdin
+    # or env form exists - so this one call unavoidably puts it in argv.
     if docker exec pi-beszel /beszel superuser upsert "$EMAIL" "$NEW_PASSWORD" >/dev/null 2>&1; then
         note "✔ Rotated Beszel superuser password (break-glass only, DISABLE_PASSWORD_AUTH is on)"
     else

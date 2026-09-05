@@ -513,9 +513,17 @@ get_oidc_secret() {
 # --- Docker API helpers ---
 
 # A throwaway container, so no service needs curl installed to be probed.
+#
+# The timeouts are not optional: these run from pre-start and post-start hooks
+# under a Type=oneshot unit with no TimeoutStartSec, so a service that accepts
+# the connection and then never answers (Prowlarr mid-migration, Pi-hole during
+# a gravity rebuild) would hang the whole start sequence forever.
+CURL_IMAGE="${CURL_IMAGE:-curlimages/curl:8.12.1}"
+CURL_TIMEOUTS="--connect-timeout 5 --max-time 30"
+
 docker_curl() {
-    local curl_image="${CURL_IMAGE:-curlimages/curl:8.12.1}"
-    docker run --rm --network frontend "$curl_image" -fsS "$@"
+    # shellcheck disable=SC2086  # CURL_TIMEOUTS is two flag pairs, split on purpose
+    docker run --rm --network frontend "$CURL_IMAGE" -fsS $CURL_TIMEOUTS "$@"
 }
 
 # Same, but the request body is read from stdin (`--data @-`) instead of being
@@ -523,8 +531,8 @@ docker_curl() {
 # table, so a `-d '{"password":"..."}'` is readable by any local `ps` for the
 # length of the call. Use this whenever the payload carries a credential.
 docker_curl_stdin() {
-    local curl_image="${CURL_IMAGE:-curlimages/curl:8.12.1}"
-    docker run --rm -i --network frontend "$curl_image" -fsS --data @- "$@"
+    # shellcheck disable=SC2086  # CURL_TIMEOUTS is two flag pairs, split on purpose
+    docker run --rm -i --network frontend "$CURL_IMAGE" -fsS $CURL_TIMEOUTS --data @- "$@"
 }
 
 # Usage: api_send_json_stdin <method> <base_url> <path> [cookie]  (body on stdin)
@@ -582,47 +590,6 @@ api_get_with_cookie() {
     fi
 }
 
-# Usage: api_post_json_with_cookie <base_url> <path> <payload> [cookie]
-api_post_json_with_cookie() {
-    local base_url="$1"
-    local path="$2"
-    local payload="$3"
-    local cookie="${4:-}"
-
-    if [ -n "$cookie" ]; then
-        docker_curl -X POST \
-            -H "Cookie: $cookie" \
-            -H 'Content-Type: application/json' \
-            -d "$payload" \
-            "$base_url$path"
-    else
-        docker_curl -X POST \
-            -H 'Content-Type: application/json' \
-            -d "$payload" \
-            "$base_url$path"
-    fi
-}
-
-# Usage: api_put_json_with_cookie <base_url> <path> <payload> [cookie]
-api_put_json_with_cookie() {
-    local base_url="$1"
-    local path="$2"
-    local payload="$3"
-    local cookie="${4:-}"
-
-    if [ -n "$cookie" ]; then
-        docker_curl -X PUT \
-            -H "Cookie: $cookie" \
-            -H 'Content-Type: application/json' \
-            -d "$payload" \
-            "$base_url$path"
-    else
-        docker_curl -X PUT \
-            -H 'Content-Type: application/json' \
-            -d "$payload" \
-            "$base_url$path"
-    fi
-}
 
 # --- qBittorrent ---
 
