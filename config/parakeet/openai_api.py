@@ -167,11 +167,22 @@ def transcriptions(
     model: str | None = Form(None),
     language: str | None = Form(None),
 ) -> JSONResponse:
-    raw = file.file.read()
+    # Read in bounded chunks and stop one byte past the limit. `read()` then
+    # checking the length buffers the whole upload first, so a body larger than
+    # the container's mem_limit is an OOM kill before the check ever runs.
+    chunks = []
+    total = 0
+    while True:
+        chunk = file.file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Audio file too large")
+        chunks.append(chunk)
+    raw = b"".join(chunks)
     if not raw:
         raise HTTPException(status_code=400, detail="Empty upload")
-    if len(raw) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Audio file too large")
 
     waveform = decode_audio(raw)
     seconds = waveform.size / SAMPLE_RATE

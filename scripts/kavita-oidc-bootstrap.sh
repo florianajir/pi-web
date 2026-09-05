@@ -47,7 +47,17 @@ main() {
     secret="$(get_oidc_secret "kavita")" || die "Could not read Kavita OIDC client secret"
     [ -n "$secret" ] || die "Kavita OIDC client secret is empty"
 
-    current="$(docker exec "$KAVITA_CONTAINER" cat "$APPSETTINGS_PATH" 2>/dev/null || echo '{}')"
+    # Absent is fine (fresh install); unreadable is not. Treating a failed exec as
+    # {} makes the merge below write back a file holding only OpenIdConnectSettings,
+    # and Kavita keeps TokenKey there - every session dies with it.
+    if docker exec "$KAVITA_CONTAINER" sh -c '[ -e "$1" ]' _ "$APPSETTINGS_PATH" 2>/dev/null; then
+        current="$(docker exec "$KAVITA_CONTAINER" cat "$APPSETTINGS_PATH")" ||
+            die "Could not read $APPSETTINGS_PATH from $KAVITA_CONTAINER"
+        printf '%s' "$current" | jq -e 'type == "object"' >/dev/null 2>&1 ||
+            die "$APPSETTINGS_PATH is not a JSON object - refusing to overwrite it"
+    else
+        current='{}'
+    fi
 
     desired="$(printf '%s' "$current" | jq \
         --arg authority "$authority" \

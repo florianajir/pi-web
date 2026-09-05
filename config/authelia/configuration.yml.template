@@ -98,6 +98,13 @@ session:
     database_index: 1
 
 regulation:
+  # Ban the source IP as well as the account. IP mode is only meaningful now that
+  # Traefik declares no forwardedHeaders.trustedIPs and the forward-auth call runs
+  # with trustForwardHeader=false: while the client's own X-Forwarded-For was
+  # trusted, the address Authelia regulated on was attacker-chosen, so a per-IP ban
+  # was evaded by changing a header. With `user` alone, spraying many usernames
+  # from one address locks each account for 5 minutes and never slows the caller.
+  modes: ['user', 'ip']
   max_retries: 3
   find_time: '2m'
   ban_time: '5m'

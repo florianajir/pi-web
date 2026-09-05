@@ -71,6 +71,7 @@ nextcloud:nextcloud-pre-start.sh
 llama-cpp:llama-cpp-pre-start.sh
 stremio-lan:stremio-lan-pre-start.sh
 comet:comet-pre-start.sh
+n8n:n8n-pre-start.sh
 '
 
 # Best-effort: these need their service answering, and a slow one must not fail

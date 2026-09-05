@@ -1,4 +1,4 @@
-.PHONY: help install install-system uninstall start stop restart update update-images status logs doctor preflight check-env print-required-vars test lint services enable disable config headscale-register headscale-reset rotate-password rotate-password-full recovery-kit
+.PHONY: help install install-system uninstall pg-upgrade start stop restart update update-images status logs doctor preflight check-env print-required-vars test lint services enable disable config headscale-register headscale-reset rotate-password rotate-password-full rotate-secret check-secrets recovery-kit
 
 REQUIRED_ENV_VARS := HOST_NAME TIMEZONE EMAIL ADMIN_USER PASSWORD HOST_LAN_IP CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_ZONE_ID
 
@@ -172,7 +172,7 @@ install-system:
 	HOST_LAN_IP_VAL=$$(read_env_value_from_file .env HOST_LAN_IP); \
 	if [ -n "$$HOST_NAME_VAL" ] && [ -n "$$HOST_LAN_IP_VAL" ]; then \
 		$(SUDO) sed -i "/# pi-pcloud local overrides/,/# end pi-pcloud local overrides/d" /etc/hosts; \
-		printf "# pi-pcloud local overrides\n$$HOST_LAN_IP_VAL\theadscale.$$HOST_NAME_VAL\n# end pi-pcloud local overrides\n" | $(SUDO) tee -a /etc/hosts >/dev/null; \
+		printf "# pi-pcloud local overrides\n%s\theadscale.%s\n# end pi-pcloud local overrides\n" "$$HOST_LAN_IP_VAL" "$$HOST_NAME_VAL" | $(SUDO) tee -a /etc/hosts >/dev/null; \
 		echo "  ✔ headscale.$$HOST_NAME_VAL -> $$HOST_LAN_IP_VAL"; \
 	else \
 		echo "  ⚠ HOST_NAME or HOST_LAN_IP not set, skipping"; \
@@ -184,8 +184,13 @@ install-system:
 	@set -e; \
 	rendered=$$(mktemp); \
 	trap 'rm -f "$$rendered"' EXIT INT TERM; \
+	$(LIB_SH); \
+	LAN_PARENT_VAL=$$(unquote_env_value "$$(read_env_value_from_file .env HOST_LAN_PARENT)"); \
+	LAN_PARENT_VAL=$${LAN_PARENT_VAL:-eth0}; \
 	for unit in $(UNIT) $(WATCH_UNIT) nextcloud-cron.service; do \
-		sed 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' "config/systemd/system/$$unit" > "$$rendered"; \
+		sed -e 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' \
+		    -e "s|__HOST_LAN_PARENT__|$$(sed_escape "$$LAN_PARENT_VAL")|g" \
+		    "config/systemd/system/$$unit" > "$$rendered"; \
 		$(SUDO) install -m 644 -o root -g root "$$rendered" "/etc/systemd/system/$$unit"; \
 	done
 	$(SUDO) cp config/systemd/system/nextcloud-cron.timer /etc/systemd/system/
@@ -215,7 +220,7 @@ uninstall:
 	@echo "   - Generated config: ./config/beszel-agent/agent.env"
 	@echo "   - Systemd service units"
 	@echo ""
-	@read -p "Are you sure? Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
+	@printf "Are you sure? Type 'yes' to confirm: "; read -r confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
 	@echo ""
 	@echo "🛑 Stopping services..."
 	-$(SUDO) systemctl stop $(WATCH_UNIT) 2>/dev/null || true
@@ -372,13 +377,27 @@ config:
 # The same endpoint the assistant calls for the `anomalies` topic, so the shell
 # and the chat cannot disagree. Asked from inside the container because
 # system-tools only exposes its port on the compose networks, and with python3
-# because the image (python:3.12-slim) ships no curl - the same call its
+# because the image (python:3.14-slim) ships no curl - the same call its
 # healthcheck makes.
 doctor:
 	@echo "🩺 Diagnostic"
 	@$(COMPOSE) exec -T system-tools python3 -c \
 		"import urllib.request as r; print(r.urlopen('http://localhost:8000/status/anomalies').read().decode())" \
 		|| echo "❌ system-tools unreachable - check 'docker compose ps' and 'make logs'"
+	@echo
+	@echo "🔑 Secret consistency"
+	@# Without sudo, so `make doctor` stays non-interactive: the one target that
+	@# needs root then reports "not verifiable here" instead of prompting. Drift
+	@# here is otherwise silent until a widget 401s or a backup cannot open its
+	@# repository, which is exactly what a diagnostic is for.
+	@for t in $$(sh scripts/rotate-secret.sh --list); do \
+		sh scripts/rotate-secret.sh "$$t" --check >/dev/null 2>&1; \
+		case $$? in \
+			0) echo "  ✔ $$t" ;; \
+			2) echo "  · $$t (not verifiable without sudo)" ;; \
+			*) echo "  ✘ $$t - run: make rotate-secret TARGET=$$t" ;; \
+		esac; \
+	done
 
 # Postgres major upgrades are dump/restore: the immich-app/postgres image ships
 # one major's binaries, so pg_upgrade is not available. The old data directory
@@ -407,7 +426,7 @@ headscale-register:
 
 headscale-reset:
 	@echo "⚠️  This will WIPE ALL Headscale nodes, preauth keys, and IP allocations!"
-	@read -p "Are you sure? Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
+	@printf "Are you sure? Type 'yes' to confirm: "; read -r confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
 	@echo "🧹 Deleting all Headscale nodes..."
 	-docker compose exec -T headscale headscale nodes list -o json | jq -r '.[].id' 2>/dev/null | xargs -r -I{} docker compose exec -T headscale headscale nodes delete --identifier {} --force
 	@echo "🧹 Deleting all Headscale preauth keys..."
@@ -423,6 +442,29 @@ rotate-password:
 rotate-password-full:
 	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
 	sh scripts/rotate-password.sh
+
+# The per-service secrets rotate-password.sh deliberately leaves alone. TARGET is
+# required because each one has its own set of consumers to propagate to.
+rotate-secret:
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	@if [ -z "$(TARGET)" ]; then \
+		echo "Usage: make rotate-secret TARGET=<name>"; echo; \
+		sh scripts/rotate-secret.sh --list | sed 's/^/  /'; exit 1; \
+	fi
+	$(SUDO) sh scripts/rotate-secret.sh "$(TARGET)"
+
+# Reports which secrets have drifted from their consumers - the failure mode that
+# is otherwise silent until a widget 401s or a backup cannot open its repository.
+check-secrets:
+	@if [ ! -f .env ]; then echo "❌ .env missing (copy .env.dist)"; exit 1; fi
+	@rc=0; for t in $$(sh scripts/rotate-secret.sh --list); do \
+		$(SUDO) sh scripts/rotate-secret.sh "$$t" --check >/dev/null 2>&1; \
+		case $$? in \
+			0) echo "  ✔ $$t" ;; \
+			2) echo "  · $$t (not verifiable here)" ;; \
+			*) echo "  ✘ $$t"; rc=1 ;; \
+		esac; \
+	done; exit $$rc
 
 # No check-env dependency: this reads config/backrest/config.json, not .env, and
 # it is most wanted precisely when the rest of the install is in a bad way.

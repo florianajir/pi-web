@@ -162,6 +162,12 @@ jobs:
           # /s/<PUBLIC_API_TOKEN>/ prefix that comet-public@docker routes on - so the
           # smoke test would exercise a configuration no real install ever runs.
           sh ./scripts/comet-pre-start.sh
+          # n8n and n8n-runners are both in COMPOSE_PROFILES above. Without this
+          # their env_file is absent (required: false), so N8N_RUNNERS_AUTH_TOKEN
+          # is unset on both sides and the runner cannot authenticate to the task
+          # broker - it never reports healthy. There is deliberately no default
+          # for it in compose.yaml any more.
+          sh ./scripts/n8n-pre-start.sh
 
           # Make all generated files world-readable so docker compose (and the Docker
           # daemon) can open env_files regardless of the runner's umask or ownership.

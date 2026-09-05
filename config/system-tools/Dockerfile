@@ -7,8 +7,8 @@ ENV PYTHONUNBUFFERED=1 \
     HOSTFS=/hostfs
 
 RUN pip install --no-cache-dir \
-        "fastapi>=0.115,<1" \
-        "uvicorn>=0.34,<1"
+        "fastapi==0.141.1" \
+        "uvicorn==0.52.4"
 
 COPY app.py /app/app.py
 WORKDIR /app

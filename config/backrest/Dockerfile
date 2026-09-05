@@ -11,7 +11,13 @@ RUN apk add --no-cache postgresql18-client=18.6-r0 jq=1.8.1-r0
 # apache2-utils provides htpasswd, the only bcrypt tool available here; the
 # auth entrypoint needs it to turn BACKREST_AUTH_PASSWORD into config.json's
 # user. The host has no bcrypt tool, so this cannot happen in pre-start.
+# scripts/ntfy-pre-start.sh borrows the same htpasswd to *verify* a stored hash
+# rather than re-generating one on every start.
 RUN apk add --no-cache apache2-utils=2.4.68-r0
+# openldap-clients gives scripts/rotate-password.sh ldappasswd/ldapwhoami. Baked
+# rather than pulled at run time: fetching a package mid-rotation is the worst
+# time to fail, and the image the stack already builds is always on disk.
+RUN apk add --no-cache openldap-clients=2.6.14-r0
 # sqlite gives scripts/sqlite-backup.sh the `.backup` command, the only way to
 # get a consistent copy of a live WAL-mode database. restic copying the .db and
 # its -wal at different instants cannot.

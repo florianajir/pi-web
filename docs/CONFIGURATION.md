@@ -162,6 +162,7 @@ qBittorrent, Kapowarr and Stremio run inside Gluetun's network namespace, so all
 
 ```bash
 cp config/gluetun/gluetun.env.dist config/gluetun/gluetun.env
+chmod 600 config/gluetun/gluetun.env
 ```
 
 | Variable | Example |
@@ -173,7 +174,7 @@ cp config/gluetun/gluetun.env.dist config/gluetun/gluetun.env
 | `SERVER_COUNTRIES` | `Netherlands` |
 | `FIREWALL_VPN_INPUT_PORTS` | `6881` — improves peer reachability |
 
-The file is optional: without it Gluetun starts with no tunnel and traffic takes the host's default route.
+The file is optional: without it Gluetun starts with no tunnel and traffic takes the host's default route. `chmod 600` because `cp` copies the mode of `.dist`, which is tracked in Git and therefore world-readable — every other secret file in this repo is generated 0600 by a script (`lib.sh`'s `write_secret_file`), and this is the only one you create by hand.
 
 qBittorrent's credentials (`ADMIN_USER` / `PASSWORD`) are applied on first start by `scripts/qbittorrent-bootstrap.sh`. The config template pre-authorises localhost and `ALLOW_IP_RANGES` so the bootstrap can call the API unauthenticated; it is idempotent on later restarts.
 
@@ -205,7 +206,9 @@ audiobook provider instead of moving the default they can still change.
 
 ## Auto-generated secrets
 
-`BACKREST_AUTH_PASSWORD` is deliberately absent from this table: setting it in `.env` has no effect. `scripts/backrest-pre-start.sh` generates it into `config/backrest/backrest.env`, which the service loads as an `env_file`, and the image entrypoint hashes it into `config.json` on every start. Read it with `grep BACKREST_AUTH_PASSWORD config/backrest/backrest.env`; rotate it by deleting the line and running `docker compose up -d backrest`. Backrest refuses to start if it ends up with no login at all.
+`BACKREST_AUTH_PASSWORD` is deliberately absent from this table: setting it in `.env` has no effect. `scripts/backrest-pre-start.sh` generates it into `config/backrest/backrest.env`, which the service loads as an `env_file`, and the image entrypoint hashes it into `config.json` on every start. Read it with `grep BACKREST_AUTH_PASSWORD config/backrest/backrest.env`; rotate it by deleting the line, then running `sudo sh scripts/backrest-pre-start.sh`, `docker compose up -d backrest` and `sudo sh scripts/homepage-widgets-bootstrap.sh` — that last step is not optional: Homepage authenticates to Backrest with its own copy at `config/homepage/secrets/backrest_password`, and without the sync its widget answers `401 Unauthorized`. The bootstrap restarts Homepage itself when the value changed. Backrest refuses to start if it ends up with no login at all.
+
+`N8N_RUNNERS_AUTH_TOKEN` is absent for the same reason, and setting it in `.env` has no effect either: `scripts/n8n-pre-start.sh` generates it into `config/n8n/n8n.env`, which both `n8n` and `n8n-runners` load as an `env_file`. It used to be a hard-coded default in `compose.yaml`, shared by every install — see [Security → Secrets](SECURITY.md#secrets). Rotate it by deleting the file and running `docker compose up -d n8n n8n-runners`; `env_file` values are frozen at container creation, so `restart` keeps the old one.
 
 These need no configuration and must not be edited by hand. `scripts/authelia-pre-start.sh` generates most of them on first start with mode `600` under `${DATA_LOCATION}/authelia-config/secrets/`, joined there by `scripts/vaultwarden-pre-start.sh` for the Vaultwarden `/admin` token; `scripts/headscale-init.sh` generates `config/headplane/headscale_api_key`. Full inventory: [Security → Secrets](SECURITY.md#secrets).
 

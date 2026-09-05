@@ -232,11 +232,12 @@ fi
 mkdir -p "${CONFIG_DIR}"
 
 # generate_secret emits hex, so no value here needs Compose's $$ escaping.
+# write_secret_file, not `> file` + chmod: the redirect creates the file 0644 with
+# the password already in it, and only the next line narrows it.
 {
   printf '# Managed by scripts/backrest-pre-start.sh\n'
   printf 'BACKREST_AUTH_PASSWORD=%s\n' "$AUTH_PASSWORD_VALUE"
-} > "$AUTH_ENV_FILE"
-safe_chmod 600 "$AUTH_ENV_FILE"
+} | write_secret_file "$AUTH_ENV_FILE" || die "could not write $AUTH_ENV_FILE"
 fix_ownership "$AUTH_ENV_FILE"
 
 if [ ! -f "${TEMPLATE_FILE}" ]; then

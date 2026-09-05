@@ -22,8 +22,8 @@ ENV PIPER_VOICE_DIR=/voices \
 
 RUN pip install --no-cache-dir \
         "piper-tts==${PIPER_VERSION}" \
-        "fastapi>=0.115,<1" \
-        "uvicorn>=0.34,<1"
+        "fastapi==0.141.1" \
+        "uvicorn==0.52.4"
 
 RUN mkdir -p "$PIPER_VOICE_DIR" \
     && for voice in $VOICES; do \
@@ -32,6 +32,10 @@ RUN mkdir -p "$PIPER_VOICE_DIR" \
 
 COPY openai_api.py /app/openai_api.py
 WORKDIR /app
+
+# Non-root: it only reads the baked-in voices and writes to an in-memory buffer.
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin app
+USER app
 
 EXPOSE 8000
 CMD ["uvicorn", "openai_api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

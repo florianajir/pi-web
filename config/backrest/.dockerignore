@@ -3,3 +3,8 @@
 # config.json is the rendered template and carries the S3 credentials and the
 # restic repository password.
 config.json
+# Its rotation backups carry the same secrets, and backrest.env carries the API
+# password. Nothing COPYs them today, but they are still uploaded to the daemon
+# as part of the build context.
+config.json.bak.*
+*.env

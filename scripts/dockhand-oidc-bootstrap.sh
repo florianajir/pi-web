@@ -30,12 +30,15 @@ dockhand_api_get() {
     api_get_with_cookie "$DOCKHAND_URL_DOCKER" "$path" "$cookie"
 }
 
+# The payloads here carry the local admin password and the OIDC client secret,
+# so the body goes in on stdin - `docker run ... -d "$payload"` would put it in
+# the host's process table for the length of the call.
 dockhand_api_post_json() {
     local path="$1"
     local payload="$2"
     local cookie="$3"
 
-    api_post_json_with_cookie "$DOCKHAND_URL_DOCKER" "$path" "$payload" "$cookie"
+    printf '%s' "$payload" | api_send_json_stdin POST "$DOCKHAND_URL_DOCKER" "$path" "$cookie"
 }
 
 dockhand_api_put_json() {
@@ -43,22 +46,23 @@ dockhand_api_put_json() {
     local payload="$2"
     local cookie="$3"
 
-    api_put_json_with_cookie "$DOCKHAND_URL_DOCKER" "$path" "$payload" "$cookie"
+    printf '%s' "$payload" | api_send_json_stdin PUT "$DOCKHAND_URL_DOCKER" "$path" "$cookie"
 }
 
 dockhand_login_with_user() {
     local username="$1"
     local password="$2"
-    local curl_image payload response status cookie
+    local response status cookie
 
-    curl_image="${CURL_IMAGE:-curlimages/curl:8.12.1}"
-    payload="$(jq -nc --arg u "$username" --arg p "$password" '{username:$u,password:$p,provider:"local"}')"
-
-    response="$(docker run --rm --network frontend "$curl_image" \
-        -sS -i -X POST \
-        -H 'Content-Type: application/json' \
-        -d "$payload" \
-        "$DOCKHAND_URL_DOCKER/api/auth/login" 2>/dev/null || true)"
+    # -f is deliberately absent: a 401 here is an expected answer, not a failure,
+    # so this cannot use api_send_json_stdin. The body still goes in on stdin and
+    # the password reaches jq through the environment, never through argv.
+    response="$(DH_PASSWORD="$password" jq -nc --arg u "$username" \
+            '{username:$u,password:$ENV.DH_PASSWORD,provider:"local"}' \
+        | docker run --rm -i --network frontend "$CURL_IMAGE" $CURL_TIMEOUTS \
+            -sS -i -X POST \
+            -H 'Content-Type: application/json' --data @- \
+            "$DOCKHAND_URL_DOCKER/api/auth/login" 2>/dev/null || true)"
 
     status="$(printf '%s' "$response" | awk 'NR==1 {print $2}')"
     cookie="$(printf '%s' "$response" | awk 'tolower($0) ~ /^set-cookie:/ {sub(/^[^:]*:[[:space:]]*/, "", $0); split($0, a, ";"); print a[1]; exit}' | tr -d '\r\n')"

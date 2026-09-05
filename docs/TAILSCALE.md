@@ -5,7 +5,7 @@ Headscale is a self-hosted Tailscale control plane. You get the official Tailsca
 | Component | Where | Access |
 |-----------|-------|--------|
 | **headscale** | `https://headscale.<HOST_NAME>` | Public by necessity — clients must reach it from anywhere. Runs an embedded DERP relay (STUN on `3478/udp`) |
-| **headplane** | `https://headscale.<HOST_NAME>/admin` | Admin web UI — LAN-only, `admin` group, 2FA |
+| **headplane** | `https://headscale.<HOST_NAME>/admin` | Admin web UI — LAN-only, `admin` group, 2FA. Bare `https://headscale.<HOST_NAME>/` redirects here |
 | **tailscale** | The Pi's own node, on the host network | WireGuard on `41641/udp` |
 
 The Pi's node starts with `--advertise-exit-node --advertise-routes=${HOST_LAN_SUBNET} --ssh`, so exit-node use, LAN access and Tailscale SSH need nothing extra on the Pi — only approval and per-client enabling. `scripts/headscale-init.sh` runs on stack start: it creates the Headscale user, registers the Pi with a short-lived preauth key, and provisions Headplane's API key.

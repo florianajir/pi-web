@@ -30,9 +30,9 @@ ENV HF_HOME=/models \
 
 RUN pip install --no-cache-dir \
         "onnx-asr[cpu,hub]==${ONNX_ASR_VERSION}" \
-        "fastapi>=0.115,<1" \
-        "uvicorn>=0.34,<1" \
-        "python-multipart>=0.0.9,<1"
+        "fastapi==0.141.1" \
+        "uvicorn==0.52.4" \
+        "python-multipart==0.0.32"
 
 # Baked into the image rather than fetched at start, like piper's voices: the ai
 # network is internal and a container that has to reach huggingface.co before it
@@ -49,6 +49,11 @@ ENV HF_HUB_OFFLINE=1
 
 COPY openai_api.py /app/openai_api.py
 WORKDIR /app
+
+# Non-root: it only reads the baked-in model. HF_HUB_OFFLINE above keeps onnx_asr
+# off the cache, and decode_audio pipes through ffmpeg rather than a temp file.
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin app
+USER app
 
 EXPOSE 8000
 CMD ["uvicorn", "openai_api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

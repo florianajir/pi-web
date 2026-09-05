@@ -22,7 +22,9 @@ main() {
     config_dir="$data_location/qbittorrent/qBittorrent"
     config_file="$config_dir/qBittorrent.conf"
 
-    if [ -f "$config_file" ]; then
+    # -s, not -f: an empty file left by a failed render would be accepted forever,
+    # and qBittorrent then boots with no AuthSubnetWhitelist and no username.
+    if [ -s "$config_file" ]; then
         log "Config already exists at $config_file, skipping"
         return 0
     fi
@@ -37,10 +39,14 @@ main() {
 
     mkdir -p "$config_dir"
 
+    # qBittorrent writes WebUI\Password_PBKDF2 and the ntfy bearer token back into
+    # this file, so it must not be world-readable.
     sed \
         -e "s|__ALLOW_IP_RANGES__|$(sed_escape "$allow_ip_ranges_ini")|g" \
         -e "s|__USER__|$(sed_escape "$user")|g" \
-        "$QB_CONFIG_TEMPLATE" > "$config_file"
+        "$QB_CONFIG_TEMPLATE" | write_secret_file "$config_file" ||
+        die "could not render $config_file"
+    fix_ownership "$config_file"
 
     log "Rendered qBittorrent config to $config_file"
 }

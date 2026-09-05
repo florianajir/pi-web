@@ -26,7 +26,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response
 from piper import PiperVoice, SynthesisConfig
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("piper-openai")
@@ -106,8 +106,13 @@ def get_voice(name: str) -> PiperVoice:
         return _voices[name]
 
 
+# OpenAI's own cap. Synthesis holds _synth_lock and the single worker for its
+# whole duration, so an unbounded input takes the endpoint down for everyone.
+MAX_INPUT_CHARS = 4096
+
+
 class SpeechRequest(BaseModel):
-    input: str = ""
+    input: str = Field(default="", max_length=MAX_INPUT_CHARS)
     # Accepted and ignored: the model is the voice here. Open WebUI always sends
     # whatever is in its "TTS model" box (tts-1 by default).
     model: str | None = None
@@ -115,7 +120,8 @@ class SpeechRequest(BaseModel):
     response_format: str | None = None
     # OpenAI's 0.25-4.0 multiplier. Piper scales the other way round: its
     # length_scale stretches the audio, so speed 2.0 is length_scale 0.5.
-    speed: float | None = None
+    # Bounded: speed=1e-9 becomes length_scale=1e9, which never returns.
+    speed: float | None = Field(default=None, ge=0.25, le=4.0)
 
 
 @app.get("/v1/audio/voices")

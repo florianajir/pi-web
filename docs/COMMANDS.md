@@ -32,7 +32,7 @@ The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pul
 |---------|--------------|
 | `make status` | Stack status and port bindings |
 | `make logs` | Follow live logs |
-| `make doctor` | Report anything outside its threshold: disk, RAM, swap, temperature, load, containers, restarts, backups |
+| `make doctor` | Report anything outside its threshold: disk, RAM, swap, temperature, load, containers, restarts, backups — then whether each secret still agrees with its consumers |
 | `make services` | List optional services and whether each is enabled |
 | `make enable <service>` | Enable a service: update `COMPOSE_PROFILES`, start it, run its init hooks |
 | `make disable <service>` | Disable a service: update `COMPOSE_PROFILES` and stop it |
@@ -49,6 +49,8 @@ The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pul
 | `make headscale-reset` | Reset all VPN nodes — **destructive** |
 | `make rotate-password` | Rotate `PASSWORD` after a leak (LLDAP admin + Authelia) |
 | `make rotate-password-full` | The same, plus every Postgres role and every other service using `PASSWORD` |
+| `make rotate-secret TARGET=<name>` | Rotate one *independent* per-service secret and propagate it to every consumer. `TARGET=` with no value lists them |
+| `make check-secrets` | Report which secrets have drifted from their consumers; changes nothing |
 
 ## What `make update` actually does
 

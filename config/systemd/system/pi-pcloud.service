@@ -13,7 +13,10 @@ WorkingDirectory=__PROJECT_PATH__
 # .env overrides this (EnvironmentFile= wins over Environment=).
 Environment=COMPOSE_PROFILES=all
 EnvironmentFile=__PROJECT_PATH__/.env
-ExecStartPre=-/usr/sbin/ethtool -K eth0 rx-udp-gro-forwarding on rx-gro-list off
+# The macvlan parent, not a literal eth0: on any other interface this silently
+# did nothing (the leading `-` hides the failure) and Tailscale lost the UDP GRO
+# forwarding tuning it wants.
+ExecStartPre=-/usr/sbin/ethtool -K __HOST_LAN_PARENT__ rx-udp-gro-forwarding on rx-gro-list off
 # One script rather than twenty Exec* lines, so `make update` can re-run
 # exactly what boot runs without stopping the stack first. It keeps the
 # semantics those lines had: a failed pre-start hook aborts, a failed

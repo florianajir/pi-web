@@ -51,12 +51,20 @@ fi
 
 ntfy_url="${NTFY_BASE_URL%/}/${NTFY_TOPIC}"
 
-if ! curl -fsS --retry 3 --max-time 15 \
-  -u "${NTFY_USER}:${NTFY_PASSWORD}" \
+# 0600 config file, not `-u user:pass`, which is visible in the process table.
+# Body on stdin because curl reads `--data-binary @foo` as a *filename*, so a
+# summary starting with "@" would post a file, or fail.
+curl_config="$(mktemp)"
+trap 'rm -f "${curl_config}"' EXIT INT TERM
+chmod 600 "${curl_config}"
+printf 'user = "%s:%s"\n' "${NTFY_USER}" "${NTFY_PASSWORD}" > "${curl_config}"
+
+if ! printf '%s' "${message}" | curl -fsS --retry 3 --max-time 15 \
+  --config "${curl_config}" \
   -H "Title: ${NTFY_TITLE}" \
   -H "Priority: ${NTFY_PRIORITY}" \
   -H "Tags: ${NTFY_TAGS}" \
-  --data-binary "${message}" \
+  --data-binary @- \
   "${ntfy_url}" >/dev/null; then
   log "failed to publish ntfy message to ${ntfy_url}"
 fi

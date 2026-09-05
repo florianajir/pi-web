@@ -156,6 +156,25 @@ write_file_atomic() {
     return 1
 }
 
+# Same idea for a *rendered* file that carries a secret. `cmd > "$file"` creates
+# it under the caller's umask, world-readable until a chmod that may never come;
+# mktemp is 0600 from creation and mv preserves that.
+# Usage: <producer> | write_secret_file <dest>
+write_secret_file() {
+    local dest="$1"
+    local tmp=""
+    if [ -d "$dest" ]; then
+        log "ERROR: $dest is a directory (created by a bind mount?) - refusing to write a file there"
+        return 1
+    fi
+    tmp="$(mktemp "${dest}.XXXXXX")" || return 1
+    if cat > "$tmp" && [ -s "$tmp" ] && mv "$tmp" "$dest"; then
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
 generate_secret() {
     if command -v openssl >/dev/null 2>&1; then
         openssl rand -hex 32
@@ -492,9 +511,16 @@ get_oidc_secret() {
 # --- Docker API helpers ---
 
 # A throwaway container, so no service needs curl installed to be probed.
+#
+# The timeouts matter: these run from hooks under a Type=oneshot unit with no
+# TimeoutStartSec, so a service that accepts the connection and never answers
+# hangs the whole start sequence forever.
+CURL_IMAGE="${CURL_IMAGE:-curlimages/curl:8.12.1}"
+CURL_TIMEOUTS="--connect-timeout 5 --max-time 30"
+
 docker_curl() {
-    local curl_image="${CURL_IMAGE:-curlimages/curl:8.12.1}"
-    docker run --rm --network frontend "$curl_image" -fsS "$@"
+    # shellcheck disable=SC2086  # CURL_TIMEOUTS is two flag pairs, split on purpose
+    docker run --rm --network frontend "$CURL_IMAGE" -fsS $CURL_TIMEOUTS "$@"
 }
 
 # Same, but the request body is read from stdin (`--data @-`) instead of being
@@ -502,8 +528,8 @@ docker_curl() {
 # table, so a `-d '{"password":"..."}'` is readable by any local `ps` for the
 # length of the call. Use this whenever the payload carries a credential.
 docker_curl_stdin() {
-    local curl_image="${CURL_IMAGE:-curlimages/curl:8.12.1}"
-    docker run --rm -i --network frontend "$curl_image" -fsS --data @- "$@"
+    # shellcheck disable=SC2086  # CURL_TIMEOUTS is two flag pairs, split on purpose
+    docker run --rm -i --network frontend "$CURL_IMAGE" -fsS $CURL_TIMEOUTS --data @- "$@"
 }
 
 # Usage: api_send_json_stdin <method> <base_url> <path> [cookie]  (body on stdin)
@@ -561,47 +587,6 @@ api_get_with_cookie() {
     fi
 }
 
-# Usage: api_post_json_with_cookie <base_url> <path> <payload> [cookie]
-api_post_json_with_cookie() {
-    local base_url="$1"
-    local path="$2"
-    local payload="$3"
-    local cookie="${4:-}"
-
-    if [ -n "$cookie" ]; then
-        docker_curl -X POST \
-            -H "Cookie: $cookie" \
-            -H 'Content-Type: application/json' \
-            -d "$payload" \
-            "$base_url$path"
-    else
-        docker_curl -X POST \
-            -H 'Content-Type: application/json' \
-            -d "$payload" \
-            "$base_url$path"
-    fi
-}
-
-# Usage: api_put_json_with_cookie <base_url> <path> <payload> [cookie]
-api_put_json_with_cookie() {
-    local base_url="$1"
-    local path="$2"
-    local payload="$3"
-    local cookie="${4:-}"
-
-    if [ -n "$cookie" ]; then
-        docker_curl -X PUT \
-            -H "Cookie: $cookie" \
-            -H 'Content-Type: application/json' \
-            -d "$payload" \
-            "$base_url$path"
-    else
-        docker_curl -X PUT \
-            -H 'Content-Type: application/json' \
-            -d "$payload" \
-            "$base_url$path"
-    fi
-}
 
 # --- qBittorrent ---
 
