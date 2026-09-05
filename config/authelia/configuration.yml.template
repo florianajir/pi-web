@@ -26,6 +26,15 @@ authentication_backend:
   ldap:
     implementation: lldap
     address: ldap://lldap:3890
+    # The default 5s bind timeout is shorter than an I/O stall on a swapping host,
+    # and a bind that times out mid-refresh-grant surfaces to the client as a 500.
+    # Pooling keeps warm connections so a stall costs a retry, not a dead session.
+    timeout: '15s'
+    pooling:
+      enable: true
+      count: 5
+      retries: 2
+      timeout: '10s'
     base_dn: dc=home,dc=ldap
     additional_users_dn: ou=people
     users_filter: (&(|({username_attribute}={input})(mail={input}))(objectClass=person))

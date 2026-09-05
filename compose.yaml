@@ -1923,6 +1923,12 @@ services:
       # an emergency-access contact - must exist in LLDAP. An invitation only
       # creates a stub account, claimed by signing in through Authelia.
       - SSO_ONLY=true
+      # Authelia rotates refresh tokens single-use with no grace period, and the
+      # Bitwarden clients refresh even while their access token is still valid.
+      # Any refresh response that fails to reach the client (a restart mid-flight,
+      # a transient 500) therefore burns the only token it holds and locks it out
+      # for good. Authelia stays the sole way *in*; the session it opens is ours.
+      - SSO_AUTH_ONLY_NOT_SESSION=true
       # Deliberate, not just the default: needs the SMTP below to deliver its
       # invite, grant and takeover-notification mails.
       - EMERGENCY_ACCESS_ALLOWED=true
@@ -2092,7 +2098,9 @@ services:
       - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
       - "traefik.http.middlewares.authelia.forwardauth.maxResponseBodySize=4096"
     cpu_shares: *cpu-prio-critical
-    mem_limit: 128m
+    # Measured at 74m serving the current client list; 128m left almost no room
+    # for a request spike, and an OOM here takes every gated router down with it.
+    mem_limit: 192m
     mem_reservation: 48m
     oom_score_adj: *oom-score-critical
 
