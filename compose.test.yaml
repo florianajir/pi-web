@@ -133,6 +133,9 @@ services:
     command: ["-d"]
     volumes: !override
       - ./config/unbound/unbound.conf:/etc/unbound/unbound.conf:ro
+      # This image ships its trust anchor at /var/unbound/root.key, not where the
+      # production image keeps it; unbound.conf includes this path either way.
+      - ./config/unbound/dnssec-ci.conf:/etc/unbound/dnssec.d/dnssec.conf:ro
     healthcheck:
       test: ["CMD", "unbound-host", "-r", "-t", "A", "cloudflare.com"]
       interval: 30s

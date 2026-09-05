@@ -594,6 +594,9 @@ services:
       - 5335
     volumes:
       - ./config/unbound/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
+      # The DNSSEC anchor path is image-specific; unbound.conf includes whatever
+      # is mounted here. compose.test.yaml mounts its own for the CI image.
+      - ./config/unbound/dnssec.conf:/etc/unbound/dnssec.d/dnssec.conf:ro
     healthcheck:
       <<: *healthcheck-default
       test: ["CMD", "drill", "@127.0.0.1", "-p", "5335", "cloudflare.com"]
