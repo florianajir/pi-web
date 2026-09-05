@@ -206,7 +206,8 @@ restic_run() {
     _repo="$1"
     shift
     RS_ARGS="$*"
-    docker exec -i -e RS_REPO="$_repo" -e RS_ARGS="$RS_ARGS" "$BACKREST_CONTAINER" sh -s <<'INNEREOF'
+    export RS_ARGS
+    RS_REPO="$_repo" docker exec -i -e RS_REPO -e RS_ARGS "$BACKREST_CONTAINER" sh -s <<'INNEREOF'
 set -eu
 rj=$(jq -cer --arg r "$RS_REPO" '.repos[] | select(.id==$r)' /config/backrest/config.json)
 while IFS= read -r kv; do case "$kv" in *=*) export "${kv?}" ;; esac; done <<ENVEOF
@@ -225,7 +226,7 @@ restic_key_passwd() {
     # file, never through argv.
     _repo="$1"
     _new="$2"
-    docker exec -i -e RS_REPO="$_repo" -e RS_NEW="$_new" "$BACKREST_CONTAINER" sh -s <<'INNEREOF'
+    RS_REPO="$_repo" RS_NEW="$_new" docker exec -i -e RS_REPO -e RS_NEW "$BACKREST_CONTAINER" sh -s <<'INNEREOF'
 set -eu
 rj=$(jq -cer --arg r "$RS_REPO" '.repos[] | select(.id==$r)' /config/backrest/config.json)
 while IFS= read -r kv; do case "$kv" in *=*) export "${kv?}" ;; esac; done <<ENVEOF
@@ -244,6 +245,14 @@ INNEREOF
 
 require_backrest() {
     container_is_running "$BACKREST_CONTAINER" || die "$BACKREST_CONTAINER is not running"
+}
+
+# In --check, a stopped Backrest means "cannot tell", not "drifted". Reporting
+# drift there makes `make doctor` print `run: make rotate-secret TARGET=restic-s3`,
+# and following that advice on a healthy repository runs an irreversible
+# `restic key passwd`.
+backrest_available() {
+    container_is_running "$BACKREST_CONTAINER"
 }
 
 # --- Targets ------------------------------------------------------------------
@@ -275,7 +284,7 @@ rotate_backrest_auth() {
 check_restic() {
     _repo="$1"
     _envkey="$2"
-    require_backrest
+    backrest_available || { log "UNKNOWN: $BACKREST_CONTAINER is not running"; return 2; }
     _cfg="$(backrest_repo_password "$_repo")"
     _env="$(get_env_value "$_envkey")"
     _ok=0
@@ -335,7 +344,7 @@ rotate_restic() {
 }
 
 check_s3_keys() {
-    require_backrest
+    backrest_available || { log "UNKNOWN: $BACKREST_CONTAINER is not running"; return 2; }
     _ok=0
     for _k in ACCESS_KEY_ID SECRET_ACCESS_KEY; do
         _cfg="$(backrest_repo_env_value s3 "AWS_$_k")"
@@ -369,7 +378,7 @@ rotate_s3_keys() {
     # but the candidate credentials. A key with read but not write access is a
     # backup that fails at 4am, so the check writes: `check` takes a lock.
     log "testing the keys in .env against the bucket (read, then write)"
-    docker exec -i -e NAK="$_ak" -e NSK="$_sk" "$BACKREST_CONTAINER" sh -s <<'INNEREOF' >/dev/null 2>&1 ||
+    NAK="$_ak" NSK="$_sk" docker exec -i -e NAK -e NSK "$BACKREST_CONTAINER" sh -s <<'INNEREOF' >/dev/null 2>&1 ||
 set -eu
 rj=$(jq -cer '.repos[] | select(.id=="s3")' /config/backrest/config.json)
 while IFS= read -r kv; do
@@ -423,9 +432,33 @@ check_secret_file() {
 }
 
 check_generated_env_file() {
-    # check_generated_env_file <file> <key> <label>
+    # check_generated_env_file <file> <key> <label> [container]
+    #
+    # Presence alone proves nothing: env_file values are frozen when a container
+    # is created, so the file can hold a value the running container never saw -
+    # which is the drift this tool exists to catch. When a container is named and
+    # running, compare against what it actually holds.
     _v="$(read_env_value_from_file "$1" "$2")"
     if [ -n "$_v" ]; then
+        _ctr="${4:-}"
+        if [ -n "$_ctr" ] && container_is_running "$_ctr"; then
+            _live="$(docker inspect "$_ctr" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null |
+                sed -n "s/^$2=//p" | head -n1)"
+            if [ -z "$_live" ]; then
+                log "DRIFT: $2 is in $3 but $_ctr does not carry it"
+                return 1
+            fi
+            # The file carries Compose's `$$` escaping; the container's environment
+            # carries the single `$` Compose produced from it. Comparing the raw
+            # forms reports drift for every bcrypt hash in ntfy.env.
+            _vu="$(printf '%s' "$_v" | sed 's/[$][$]/$/g')"
+            if [ "$_live" != "$_v" ] && [ "$_live" != "$_vu" ]; then
+                log "DRIFT: $3 holds $(fingerprint "$_v") but $_ctr is running with $(fingerprint "$_live") - recreate it with up -d"
+                return 1
+            fi
+            log "OK: $2 in $3 matches the running $_ctr ($(fingerprint "$_v"))"
+            return 0
+        fi
         log "OK: $2 present in $3 ($(fingerprint "$_v"))"
         return 0
     fi
@@ -453,11 +486,11 @@ do_check() {
         restic-s3)     check_restic s3 BACKREST_S3_REPO_PASSWORD ;;
         restic-usb)    check_restic usb BACKREST_LOCAL_REPO_PASSWORD ;;
         s3-keys)       check_s3_keys ;;
-        beszel-token)  check_generated_env_file "${PROJECT_DIR}/config/beszel-agent/agent.env" TOKEN "agent.env" ;;
-        n8n-runner)    check_generated_env_file "${PROJECT_DIR}/config/n8n/n8n.env" N8N_RUNNERS_AUTH_TOKEN "n8n.env" ;;
-        comet)         check_generated_env_file "${PROJECT_DIR}/config/comet/comet.env" ADMIN_DASHBOARD_PASSWORD "comet.env" ;;
+        beszel-token)  check_generated_env_file "${PROJECT_DIR}/config/beszel-agent/agent.env" TOKEN "agent.env" pi-beszel-agent ;;
+        n8n-runner)    check_generated_env_file "${PROJECT_DIR}/config/n8n/n8n.env" N8N_RUNNERS_AUTH_TOKEN "n8n.env" pi-n8n ;;
+        comet)         check_generated_env_file "${PROJECT_DIR}/config/comet/comet.env" ADMIN_DASHBOARD_PASSWORD "comet.env" pi-comet ;;
         vaultwarden)   check_secret_file "$(resolve_data_location_path)/authelia-config/secrets/vaultwarden_admin_token" "the Vaultwarden admin token" ;;
-        ntfy)          check_generated_env_file "${PROJECT_DIR}/config/ntfy/ntfy.env" NTFY_AUTH_USERS "ntfy.env" ;;
+        ntfy)          check_generated_env_file "${PROJECT_DIR}/config/ntfy/ntfy.env" NTFY_AUTH_USERS "ntfy.env" pi-ntfy ;;
         *) die "unknown target '$TARGET' (see --list)" ;;
     esac
 }
@@ -505,8 +538,21 @@ rotate_ntfy() {
     # ntfy.env holds every publisher's password and token. The three services
     # that read it as an env_file must be recreated, and the publishers that keep
     # their own copy re-bootstrapped.
-    backup_path "${PROJECT_DIR}/config/ntfy/ntfy.env"
-    rm -f "${PROJECT_DIR}/config/ntfy/ntfy.env"
+    _nf="${PROJECT_DIR}/config/ntfy/ntfy.env"
+    backup_path "$_nf"
+    # Drop only the ntfy credentials, never the whole file. ntfy-pre-start.sh also
+    # keeps UPTIME_KUMA_ADMIN_PASSWORD here, and that one is not ours to reissue:
+    # Uptime Kuma stores its own hash in its database and its bootstrap has to log
+    # in with the old value to disable auth. Regenerating it locks the bootstrap
+    # out for good, with the only copy of the old password in a backup this script
+    # deletes on success.
+    if [ -s "$_nf" ]; then
+        _keep="$(mktemp "${_nf}.XXXXXX")" || fail "mktemp failed"
+        grep -v -E '^NTFY_[A-Z_]*(PASSWORD|TOKEN|HASH)=' "$_nf" > "$_keep" || true
+        chmod 600 "$_keep"
+        mv "$_keep" "$_nf"
+        fix_ownership "$_nf"
+    fi
     sh "${SCRIPT_DIR}/ntfy-pre-start.sh" >/dev/null || fail "ntfy-pre-start.sh failed"
     [ -s "${PROJECT_DIR}/config/ntfy/ntfy.env" ] || fail "ntfy.env was not recreated"
     recreate_enabled ntfy backrest uptime-kuma ||

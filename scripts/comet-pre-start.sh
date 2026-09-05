@@ -40,9 +40,7 @@ mkdir -p "$(dirname "$OUTPUT_FILE")"
     printf '# Managed by scripts/comet-pre-start.sh\n'
     printf 'ADMIN_DASHBOARD_PASSWORD=%s\n' "$ADMIN_PASSWORD_VALUE"
     printf 'CONFIGURE_PAGE_PASSWORD=%s\n' "$CONFIGURE_PASSWORD_VALUE"
-} > "$OUTPUT_FILE"
-
-safe_chmod 600 "$OUTPUT_FILE"
+} | write_secret_file "$OUTPUT_FILE" || die "could not write $OUTPUT_FILE"
 # The systemd unit runs this as root, so without this the file lands root:root
 # 0600: the grep documented in docs/SECURITY.md is denied, and the next non-root
 # run of this script dies under `set -eu` - which stack-up.sh turns into a fatal
