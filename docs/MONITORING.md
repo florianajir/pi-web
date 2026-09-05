@@ -152,11 +152,17 @@ The watcher runs on the host as a systemd unit — no extra container — starte
 
 Login messages carry the username, the real client IP (`remote_ip`, forwarded by Traefik), the auth method, the endpoint hit and the Authelia timestamp; bans also carry the expiry. Authelia logs its "Unsuccessful …" line with an *empty* username when the account does not exist, so those alerts come from the paired "username input" line instead — the alert always names the attempted username.
 
-**Why the OIDC row matters.** A client left holding a refresh token Authelia no longer accepts cannot sync, and nothing else in the stack notices: the container stays healthy, its Uptime Kuma monitor stays green, and the only trace is a 400 on `/api/oidc/token` repeating every few minutes. This alert is what turns that into minutes rather than days. It carries the client IP, the endpoint and the reason, with the RFC 6749 boilerplate that prefixes every `invalid_grant` stripped so the specific cause leads — `The refresh token has not been found`, say. There is no username: Authelia resolves no subject for a grant it rejected.
+**Why the OIDC row matters.** A client left holding a refresh token Authelia no longer accepts cannot sync, and nothing else in the stack notices: the container stays healthy, its Uptime Kuma monitor stays green, and the only trace is a 400 on `/api/oidc/token` repeating every few minutes. This alert is what turns that into minutes rather than days. It carries the client IP, the endpoint and the reason. The RFC 6749 boilerplate that `invalid_grant` opens with is stripped so the specific cause leads — `The refresh token has not been found`, say; other error classes keep their own preamble. There is no username: Authelia resolves no subject for a grant it rejected.
 
 **Noise control.** Identical `(event kind, user, IP)` events are collapsed inside a window, so a browser retry loop or a slow brute-force yields one alert plus the ban alert rather than a stream. Suppressed events go to the journal, not to ntfy.
 
-The two families keep **separate** suppression slots and separate windows: login events collapse over 60 s, rejected OIDC grants over an hour, because a client stuck on a dead token retries for as long as it stays open — days, not minutes. Sharing one slot would let any login failure landing mid-loop flush the wider window and re-notify. Override either:
+The two families keep **separate** suppression slots and separate windows: login events collapse over 60 s, rejected OIDC grants over an hour, because a client stuck on a dead token retries for as long as it stays open — days, not minutes. Sharing one slot would let any login failure landing mid-loop flush the wider window and re-notify.
+
+**The OIDC key includes the reason**, unlike the login key. A rejected grant has no username and one stable container IP per client, so on `(kind, user, IP)` alone the key would collapse to a single slot per client: a secret rotated an hour into a dead-refresh-token loop would produce a different, actionable failure that nobody hears about. Bans deliberately keep their detail *out* of the key — it is an expiry that moves on every attempt.
+
+Each family remembers **one** event, so a cause that alternates re-notifies on each change rather than collapsing. That is the existing design — the IP already differs between OIDC clients — and it errs toward being told.
+
+**A failed publish leaves the slot unstamped**, so the next occurrence tries again instead of the window silencing a fault ntfy never actually delivered. Override either:
 
 ```bash
 sudo systemctl edit pi-pcloud-authelia-ntfy.service

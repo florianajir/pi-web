@@ -37,6 +37,8 @@ resolve_ntfy_address() {
 }
 
 # Usage: publish <title> <priority> <tags> <message>
+# Returns non-zero when the notification did not go out, so the caller can leave
+# its dedupe slot unstamped and let the next occurrence try again.
 publish() {
     _title="$1"
     _priority="$2"
@@ -48,7 +50,7 @@ publish() {
 
     if [ -z "$_password" ]; then
         log "WARNING: NTFY_AUTHELIA_PASSWORD missing from $NTFY_ENV_FILE; skipping notification"
-        return 0
+        return 1
     fi
 
     if [ -n "${NTFY_URL:-}" ]; then
@@ -57,7 +59,7 @@ publish() {
         _address="$(resolve_ntfy_address)"
         if [ -z "$_address" ]; then
             log "WARNING: could not resolve $NTFY_CONTAINER address; skipping notification"
-            return 0
+            return 1
         fi
         _base_url="http://$_address"
     fi
@@ -75,7 +77,7 @@ publish() {
     fi
 
     log "WARNING: failed to publish notification to ntfy topic '$_topic'"
-    return 0
+    return 1
 }
 
 # --- Log parsing ---
@@ -112,26 +114,32 @@ notify_event() {
     # Deduplicate repeats of the same event within the window for its kind. The
     # two families keep separate slots: with one shared slot, a login failure
     # landing mid-loop would flush the hour-wide OIDC suppression and re-notify.
+    #
+    # The reason joins the key for OIDC only. There the user is always unknown and
+    # the IP is one stable container address, so without it the key collapses to a
+    # single slot per client and a fault that changes cause mid-window - a rotated
+    # secret after a dead refresh token - would go unheard for the rest of the hour.
+    # Bans keep it out: their detail is an expiry that moves on every attempt.
     _key="$_kind|$_user|$_ip"
+    [ "$_kind" != oidc_grant ] || _key="$_key|$_detail"
     _now="$(date +%s)"
     case "$_kind" in
         oidc_grant)
-            if within_window "$_key" "$_now" "$OIDC_DEDUPE_WINDOW" "${last_oidc_key:-}" "${last_oidc_time:-0}"; then
-                log "Suppressed duplicate event ($_kind) within ${OIDC_DEDUPE_WINDOW}s window"
-                return 0
-            fi
-            last_oidc_key="$_key"
-            last_oidc_time="$_now"
+            _window="$OIDC_DEDUPE_WINDOW"
+            _last_key="${last_oidc_key:-}"
+            _last_time="${last_oidc_time:-0}"
             ;;
         *)
-            if within_window "$_key" "$_now" "$DEDUPE_WINDOW" "${last_key:-}" "${last_time:-0}"; then
-                log "Suppressed duplicate event ($_kind) within ${DEDUPE_WINDOW}s window"
-                return 0
-            fi
-            last_key="$_key"
-            last_time="$_now"
+            _window="$DEDUPE_WINDOW"
+            _last_key="${last_key:-}"
+            _last_time="${last_time:-0}"
             ;;
     esac
+
+    if within_window "$_key" "$_now" "$_window" "$_last_key" "$_last_time"; then
+        log "Suppressed duplicate event ($_kind) within ${_window}s window"
+        return 0
+    fi
 
     # A rejected grant has no resolved subject, so Authelia logs no username on
     # that line: the client IP is all the alert can lead with.
@@ -148,22 +156,39 @@ Endpoint: $_path"
     [ -z "$_time" ] || _message="$_message
 Time: $_time"
 
+    _published=0
     case "$_kind" in
         banned)
             _message="$_message
 Banned until: $_detail"
-            publish "Authelia: user banned" high "lock,rotating_light" "$_message"
+            publish "Authelia: user banned" high "lock,rotating_light" "$_message" || _published=1
             ;;
         unknown_user)
-            publish "Authelia: unknown user login attempt" default "warning,detective" "$_message"
+            publish "Authelia: unknown user login attempt" default "warning,detective" "$_message" || _published=1
             ;;
         oidc_grant)
             _message="$_message
 Reason: $_detail"
-            publish "Authelia: OIDC grant rejected" default "key,warning" "$_message"
+            publish "Authelia: OIDC grant rejected" default "key,warning" "$_message" || _published=1
             ;;
         *)
-            publish "Authelia: failed login" default "warning" "$_message"
+            publish "Authelia: failed login" default "warning" "$_message" || _published=1
+            ;;
+    esac
+
+    # Stamp the slot only once the alert is actually out. Marking it before would
+    # let one ntfy hiccup silence the whole window - an hour, for a rejected grant,
+    # which is exactly the alert meant to catch a vault locked out in minutes.
+    [ "$_published" -eq 0 ] || return 0
+
+    case "$_kind" in
+        oidc_grant)
+            last_oidc_key="$_key"
+            last_oidc_time="$_now"
+            ;;
+        *)
+            last_key="$_key"
+            last_time="$_now"
             ;;
     esac
 }
