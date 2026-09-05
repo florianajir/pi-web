@@ -22,10 +22,8 @@ main() {
     config_dir="$data_location/qbittorrent/qBittorrent"
     config_file="$config_dir/qBittorrent.conf"
 
-    # -s, not -f: an empty config.xml left by a failed render must be regenerated
-    # rather than accepted forever - qBittorrent would boot with defaults (no
-    # AuthSubnetWhitelist, no username) and qbittorrent-bootstrap.sh's
-    # unauthenticated setPreferences would then 403 on every start.
+    # -s, not -f: an empty file left by a failed render would be accepted forever,
+    # and qBittorrent then boots with no AuthSubnetWhitelist and no username.
     if [ -s "$config_file" ]; then
         log "Config already exists at $config_file, skipping"
         return 0

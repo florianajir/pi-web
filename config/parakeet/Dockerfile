@@ -50,9 +50,8 @@ ENV HF_HUB_OFFLINE=1
 COPY openai_api.py /app/openai_api.py
 WORKDIR /app
 
-# Runs as a non-root uid: it needs read access to the baked-in model and its own
-# socket. HF_HUB_OFFLINE above keeps onnx_asr from ever writing to the HF cache,
-# and decode_audio pipes through ffmpeg's stdin/stdout rather than a temp file.
+# Non-root: it only reads the baked-in model. HF_HUB_OFFLINE above keeps onnx_asr
+# off the cache, and decode_audio pipes through ffmpeg rather than a temp file.
 RUN useradd --system --no-create-home --shell /usr/sbin/nologin app
 USER app
 

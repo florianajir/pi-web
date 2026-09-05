@@ -67,10 +67,9 @@ done
 # Matches LLDAP_LDAP_BASE_DN in compose.yaml, which is not overridable via env.
 LLDAP_BASE_DN="dc=home,dc=ldap"
 LLDAP_ADMIN_USERNAME="admin"
-# The backrest image, not osixia/openldap:1.5.0 - that one was archived upstream
-# in 2021 and pulled a whole LDAP *server* to run two client binaries. This image
-# is built by the stack itself (config/backrest/Dockerfile), so the tools are
-# already on disk: no registry fetch in the middle of a credential rotation.
+# The backrest image, not osixia/openldap (archived 2021, and a whole LDAP server
+# for two client binaries). The stack builds this one, so the tools are on disk:
+# no registry fetch in the middle of a credential rotation.
 LDAP_CLIENT_IMAGE="pi-backrest:local"
 
 SUMMARY=""
@@ -134,10 +133,9 @@ write_secret_file() {
 # Unlike write_secret_file, a backup failure is not swallowed - it's reported
 # via the return code so callers can warn instead of silently proceeding with
 # no safety net.
-# One fixed .bak per secret, deliberately not a timestamped one: these hold the
-# *previous* password in plaintext, they live in a directory Backrest snapshots
-# off-site, and nothing ever pruned them - so every rotation permanently widened
-# the set of old credentials on disk and in the backups.
+# One fixed .bak per secret, never timestamped: these hold the *previous*
+# password in plaintext in a directory Backrest snapshots off-site, and nothing
+# prunes them, so timestamps accumulate old credentials forever.
 backup_secret_file() {
     local path="$1"
     local backup="$2"
@@ -161,10 +159,8 @@ rotate_postgres_role() {
         open-webui) sql_role='"open-webui"' ;;
     esac
 
-    # The statement goes in on stdin and PGPASSWORD is passed by name, not value:
-    # both spellings of `-c "... '<password>'"` and `env PGPASSWORD=<password>`
-    # land in the host's argv, readable via ps for the length of the call, and
-    # this runs once per role.
+    # Statement on stdin, PGPASSWORD by name: both `-c "... '<password>'"` and
+    # `env PGPASSWORD=<password>` land in the host's argv, once per role.
     if ! printf "ALTER ROLE %s WITH ENCRYPTED PASSWORD '%s';\n" \
         "$sql_role" "$(sql_escape "$NEW_PASSWORD")" |
         compose exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -q >/dev/null 2>&1; then

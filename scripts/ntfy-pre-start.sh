@@ -45,13 +45,11 @@ unescape_compose_env_value() {
     printf '%s' "$1" | sed 's/[$][$]/$/g'
 }
 
-# bcrypt salts are random, so re-hashing the same password yields a different
-# string every run. That rewrote NTFY_AUTH_USERS on every start, and a changed
-# env_file value makes compose recreate pi-ntfy - on every single boot. Reuse a
-# stored hash when it still matches its password. htpasswd is the only bcrypt
-# verifier available to this stack and it lives in the backrest image, which is
-# the same trick config/backrest/auth-entrypoint.sh already uses. If that image
-# is missing the verification simply fails and we re-hash, as before.
+# bcrypt salts are random, so re-hashing rewrites NTFY_AUTH_USERS every run and a
+# changed env_file value makes compose recreate pi-ntfy on every boot. Reuse a
+# stored hash while it still verifies. htpasswd is the only bcrypt verifier this
+# stack has (config/backrest/auth-entrypoint.sh uses it too); if the image is
+# missing, verification fails and we re-hash, as before.
 bcrypt_matches() {
     _stored="$1"
     _plain="$2"

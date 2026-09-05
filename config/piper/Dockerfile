@@ -33,8 +33,7 @@ RUN mkdir -p "$PIPER_VOICE_DIR" \
 COPY openai_api.py /app/openai_api.py
 WORKDIR /app
 
-# Runs as a non-root uid: it needs read access to the baked-in voices and its own
-# socket, and writes only to an in-memory buffer (io.BytesIO), never to disk.
+# Non-root: it only reads the baked-in voices and writes to an in-memory buffer.
 RUN useradd --system --no-create-home --shell /usr/sbin/nologin app
 USER app
 

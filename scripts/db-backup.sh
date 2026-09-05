@@ -59,9 +59,8 @@ fi
 
 mkdir -p "$BACKUP_DIR"
 
-# A failed pg_dump exits under `set -e` with the partial dump still on disk, and
-# the prune below only ever matches *.bak - so one *.bak.tmp per failing night
-# accumulated inside the directory restic snapshots.
+# A failed pg_dump exits under `set -e` leaving its partial *.bak.tmp, which the
+# prune below never matches - one per failing night, inside a restic snapshot.
 tmp_file=""
 restore_maintenance=0
 cleanup() {

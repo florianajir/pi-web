@@ -4,15 +4,12 @@ set -eu
 # Generates the shared secret the n8n task broker and its external runner
 # authenticate with.
 #
-# It used to be `${N8N_RUNNERS_AUTH_TOKEN:-<a hard-coded default>}` in compose.yaml,
-# with the variable defined nowhere - so every install ran the broker with the
-# same published default, listening on 0.0.0.0 inside `frontend`. Any of the
-# ~25 containers there could register as a task runner and receive the workflow
-# code and data n8n hands out for execution.
+# The broker listens on 0.0.0.0 inside `frontend`, so this is what stops any of
+# the ~25 containers there registering as a task runner and receiving the
+# workflow code n8n hands out. It must never fall back to a shared default.
 #
-# Not derived from PASSWORD: this is a machine-to-machine credential with no
-# login behind it, so rotate-password.sh leaves it alone, like Comet's and
-# ntfy's own secrets.
+# Not derived from PASSWORD - machine-to-machine, no login behind it - so
+# rotate-password.sh leaves it alone, like Comet's and ntfy's own secrets.
 
 . "$(dirname "$0")/lib.sh"
 

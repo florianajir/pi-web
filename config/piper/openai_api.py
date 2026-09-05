@@ -107,8 +107,7 @@ def get_voice(name: str) -> PiperVoice:
 
 
 # OpenAI's own cap. Synthesis holds _synth_lock and the single worker for its
-# whole duration, so an unbounded input is a self-inflicted outage of the TTS
-# endpoint for everyone else - Open WebUI proxies user text straight through.
+# whole duration, so an unbounded input takes the endpoint down for everyone.
 MAX_INPUT_CHARS = 4096
 
 

@@ -47,11 +47,9 @@ main() {
     secret="$(get_oidc_secret "kavita")" || die "Could not read Kavita OIDC client secret"
     [ -n "$secret" ] || die "Kavita OIDC client secret is empty"
 
-    # `cat || echo {}` turned any transient exec failure - a container mid-restart,
-    # a daemon hiccup - into "the file is empty", and the merge below then wrote a
-    # settings file containing only OpenIdConnectSettings. Kavita keeps TokenKey
-    # there, so that silently invalidates every session and drops BaseUrl/Port.
-    # Absent is fine (fresh install); unreadable is not.
+    # Absent is fine (fresh install); unreadable is not. Treating a failed exec as
+    # {} makes the merge below write back a file holding only OpenIdConnectSettings,
+    # and Kavita keeps TokenKey there - every session dies with it.
     if docker exec "$KAVITA_CONTAINER" sh -c '[ -e "$1" ]' _ "$APPSETTINGS_PATH" 2>/dev/null; then
         current="$(docker exec "$KAVITA_CONTAINER" cat "$APPSETTINGS_PATH")" ||
             die "Could not read $APPSETTINGS_PATH from $KAVITA_CONTAINER"

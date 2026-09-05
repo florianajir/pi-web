@@ -315,9 +315,8 @@ services:
       - "--entrypoints.websecure.http.tls.certresolver=cloudflare"
       - "--entrypoints.websecure.http3=true"
       # No forwardedHeaders.trustedIPs on purpose: nothing proxies in front of
-      # Traefik, so every X-Forwarded-* arriving here is client-supplied. Trusting
-      # them from ALLOW_IP_RANGES let any LAN or tailnet client forge
-      # X-Forwarded-Host and have Authelia apply another domain's (weaker) rule.
+      # Traefik, so every X-Forwarded-* here is client-supplied. Trusting them
+      # lets a client forge X-Forwarded-Host and pick which rule Authelia applies.
       - "--entrypoints.websecure.transport.respondingTimeouts.readTimeout=0"
       - "--entrypoints.websecure.transport.respondingTimeouts.writeTimeout=0"
       - "--entrypoints.websecure.transport.respondingTimeouts.idleTimeout=0"
@@ -336,9 +335,8 @@ services:
       - "homepage.href=https://traefik.${HOST_NAME:-pi.lan}"
       - "homepage.description=Reverse proxy"
       - "homepage.widget.type=traefik"
-      # The address, not the name: traefik sits on both frontend and backup, and
-      # Docker's DNS answers pi-traefik with the backup address, so the request
-      # left homepage from its backup IP and missed internalapi-allow below.
+      # The address, not the name: traefik is on frontend and backup, and Docker's
+      # DNS answers pi-traefik with the backup one, which internalapi-allow denies.
       - "homepage.widget.url=http://172.30.11.250:8080"
       - "traefik.enable=true"
       - "traefik.docker.network=frontend"
@@ -371,17 +369,15 @@ services:
       - "traefik.http.routers.internalapi.rule=PathPrefix(`/api`)"
       - "traefik.http.routers.internalapi.entrypoints=traefik"
       - "traefik.http.routers.internalapi.service=api@internal"
-      # Unauthenticated, and :8080 is reachable by every container on frontend -
-      # /api/rawdata is the full router map, including the public-bypass rules.
-      # Homepage's widget is the only consumer.
+      # api@internal is unauthenticated and /api/rawdata is the full router map,
+      # public-bypass rules included. Homepage's widget is the only consumer.
       - "traefik.http.middlewares.internalapi-allow.ipallowlist.sourcerange=172.30.11.240/32"
       - "traefik.http.routers.internalapi.middlewares=internalapi-allow@docker"
     ports:
       - "80:80"
       - "443:443"
-      # websecure advertises HTTP/3 via Alt-Svc, which browsers cache for 30 days.
-      # Without the UDP listener they retry QUIC, time out and fall back on every
-      # connection. Internet clients also need UDP 443 forwarded on the router.
+      # http3=true advertises Alt-Svc, which browsers cache for ~30 days; without
+      # this listener they retry QUIC and time out. Also needs a router forward.
       - "443:443/udp"
     expose:
       - 8080
@@ -468,13 +464,10 @@ services:
       traefik:
         condition: service_healthy
     network_mode: host
-    # Not privileged: the only thing that needed it is smartctl. SYS_RAWIO covers
-    # the SG_IO passthrough for the USB/SAT disk, SYS_ADMIN the NVMe admin ioctl
-    # (verified: drop either and that disk alone reports "Operation not
-    # permitted"). The cgroup rules stay wildcard because the NVMe major is
-    # allocated dynamically by the kernel, so a fixed number would break on a
-    # kernel upgrade. This still drops the rest of privileged: the full
-    # capability set, seccomp/AppArmor confinement and a writable /proc, /sys.
+    # smartctl is the only thing here that needs privilege: SYS_RAWIO for the
+    # USB/SAT disk's SG_IO passthrough, SYS_ADMIN for the NVMe admin ioctl. The
+    # cgroup rules stay wildcard because the kernel allocates the NVMe major
+    # dynamically.
     cap_add:
       - SYS_RAWIO
       - SYS_ADMIN
@@ -627,15 +620,12 @@ services:
       # Unbound is primary; public resolvers are only used as failover if Unbound stops answering.
       FTLCONF_dns_upstreams: ${PIHOLE_DNS_UPSTREAMS:-172.30.53.53#5335;1.1.1.1;9.9.9.9}
       FTLCONF_misc_dnsmasq_lines: "address=/${HOST_NAME:-pi.lan}/${HOST_LAN_IP:-192.168.1.30}"
-      # Bound to loopback + this container's frontend address, never 0.0.0.0.
-      # pihole also sits on the `lan` macvlan, where publishing rules do not
-      # apply: every listening port is reachable directly at PIHOLE_IP, so
-      # 0.0.0.0:8082 handed the admin UI to the whole LAN and, through the
-      # advertised subnet route, the whole tailnet - with only PASSWORD in front
-      # of it, bypassing lan@docker + Authelia + 2FA entirely.
-      # Loopback stays for scripts/pihole-bootstrap.sh, which curls the API from
-      # inside the container; the frontend address is what Traefik dials. It must
-      # match the ipv4_address below.
+      # Never 0.0.0.0: pihole also sits on the `lan` macvlan, where publishing
+      # rules do not apply, so a wildcard bind serves the admin UI directly at
+      # PIHOLE_IP to the whole LAN and tailnet, bypassing lan@docker + Authelia.
+      # Loopback is for pihole-bootstrap.sh, which curls the API from inside the
+      # container; the frontend address is what Traefik dials and must match the
+      # ipv4_address below.
       FTLCONF_webserver_port: "127.0.0.1:8082,172.30.11.241:8082"
       FTLCONF_dns_domain_name: ${HOST_NAME:-pi.lan}
       # FTL compares the *host-wide* 15min loadavg (/proc/loadavg is not
@@ -883,10 +873,8 @@ services:
       - "traefik.http.routers.headscale.tls.domains[0].main=${HOST_NAME:-pi.lan}"
       - "traefik.http.routers.headscale.tls.domains[0].sans=*.${HOST_NAME:-pi.lan}"
       - "traefik.http.routers.headscale.middlewares=frame-deny@docker,headscale-cors"
-      # Bare https://headscale.<host>/ is a person looking for the admin UI, which
-      # Headplane serves at /admin. addprefix sent it to the *headscale* service
-      # instead, which has no /admin and answered 404; a redirect hands the browser
-      # to Headplane's own router, so its lan+authelia gate still applies.
+      # A redirect, not an addprefix onto the headscale service (which has no
+      # /admin): it hands the browser to Headplane's router, gate included.
       - "traefik.http.routers.headscale-root.rule=Host(`headscale.${HOST_NAME:-pi.lan}`) && Path(`/`)"
       - "traefik.http.routers.headscale-root.entrypoints=websecure"
       - "traefik.http.routers.headscale-root.tls=true"
@@ -1144,14 +1132,11 @@ services:
       # /custom_apps/calendar/js/calendar-main.js, so the calendar never rendered
       # for anyone outside the LAN. Mirrors the /apps/ negation above so the
       # store apps' REST surfaces stay private.
-      # Assets only under /apps, /custom_apps and /core, not the whole tree. The
-      # old "everything except /api/" form served /apps/files/, /apps/dashboard/
-      # and /core/preview publicly: with one phished password an attacker off-LAN
-      # could complete the OIDC flow at /apps/user_oidc/login (also public) and
-      # then browse those pages with the session it produced. The subdirectory
-      # list is the set a real public share page actually requests, plus the
-      # usual l10n/fonts/vendor. LAN and tailnet clients are unaffected - they
-      # match the `lan` router instead, which serves the full app.
+      # Assets only under /apps, /custom_apps and /core, never the whole tree:
+      # anything broader publishes /apps/user_oidc/login and with it a way to
+      # reach /apps/files/ and /core/preview from off-LAN. The subdirectory list
+      # is what a real public share page requests, plus l10n/fonts/vendor. LAN
+      # and tailnet clients match the `lan` router instead and are unaffected.
       - "traefik.http.routers.nextcloud-public.rule=Host(`nextcloud.${HOST_NAME:-pi.lan}`) && (PathPrefix(`/s/`) || PathPrefix(`/public.php`) || PathPrefix(`/avatar/guest/`) || PathPrefix(`/dist/`) || PathPrefix(`/js/`) || PathPrefix(`/themes/`) || PathPrefix(`/apps/files_sharing/publicpreview`) || PathRegexp(`^/core/(css|js|img|fonts|l10n|vendor)/`) || PathRegexp(`^/(apps|custom_apps)/[^/]+/(css|js|img|fonts|l10n|vendor|theme|favicon|icon|manifest)/`) || PathPrefix(`/remote.php/dav/calendars/`) || PathPrefix(`/remote.php/dav/public-calendars/`))"
       - "traefik.http.routers.nextcloud-public.entrypoints=websecure"
       - "traefik.http.routers.nextcloud-public.middlewares=frame-deny@docker"
@@ -2213,9 +2198,8 @@ services:
       - "traefik.http.routers.authelia.tls=true"
       - "traefik.http.services.authelia.loadbalancer.server.port=9091"
       - "traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/authz/forward-auth"
-      # false: Traefik must derive Method/Proto/Host/Uri for the authz request from
-      # the request it actually received. true forwards the client's own
-      # X-Forwarded-*, which is what the caller wants Authelia to authorise.
+      # false so Traefik derives Method/Proto/Host/Uri from the request it actually
+      # received; true forwards the client's own, i.e. what the caller chose.
       - "traefik.http.middlewares.authelia.forwardauth.trustForwardHeader=false"
       - "traefik.http.middlewares.authelia.forwardauth.authRequestHeaders=Accept,Cookie,Authorization"
       - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
@@ -2711,9 +2695,8 @@ networks:
     driver: bridge
     name: backup
     # Traefik publishes :80/:443 from whichever of its networks Docker picks, so
-    # this segment needs an address the `lan` allowlist covers. Left to Docker it
-    # got 172.31.0.0/16, outside 172.30.0.0/16, and every request originating on
-    # the Pi itself was then rejected by lan@docker with a bare 403.
+    # this subnet must sit inside ALLOW_IP_RANGES. Left to Docker it lands on
+    # 172.31.0.0/16 and every host-originated request gets a bare 403 from lan@docker.
     ipam:
       config:
         - subnet: 172.30.12.0/24

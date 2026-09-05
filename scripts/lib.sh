@@ -156,11 +156,9 @@ write_file_atomic() {
     return 1
 }
 
-# Same idea for a *rendered* file that carries a secret (an OIDC client secret, a
-# preauth key, a cookie secret). `cmd > "$file"` creates it under the caller's
-# umask, so it is world-readable for the window before any chmod - and a chmod
-# that comes later is a chmod that can be skipped. mktemp is 0600 from creation
-# and mv preserves that mode, so the file is never briefly readable.
+# Same idea for a *rendered* file that carries a secret. `cmd > "$file"` creates
+# it under the caller's umask, world-readable until a chmod that may never come;
+# mktemp is 0600 from creation and mv preserves that.
 # Usage: <producer> | write_secret_file <dest>
 write_secret_file() {
     local dest="$1"
@@ -514,10 +512,9 @@ get_oidc_secret() {
 
 # A throwaway container, so no service needs curl installed to be probed.
 #
-# The timeouts are not optional: these run from pre-start and post-start hooks
-# under a Type=oneshot unit with no TimeoutStartSec, so a service that accepts
-# the connection and then never answers (Prowlarr mid-migration, Pi-hole during
-# a gravity rebuild) would hang the whole start sequence forever.
+# The timeouts matter: these run from hooks under a Type=oneshot unit with no
+# TimeoutStartSec, so a service that accepts the connection and never answers
+# hangs the whole start sequence forever.
 CURL_IMAGE="${CURL_IMAGE:-curlimages/curl:8.12.1}"
 CURL_TIMEOUTS="--connect-timeout 5 --max-time 30"
 

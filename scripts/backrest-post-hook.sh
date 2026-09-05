@@ -51,10 +51,9 @@ fi
 
 ntfy_url="${NTFY_BASE_URL%/}/${NTFY_TOPIC}"
 
-# The credential goes in through a 0600 config file, not `-u user:pass`, which is
-# visible in the container's process table for the length of the call. The body
-# goes in on stdin because curl reads `--data-binary @foo` as a *filename*: a
-# summary that happens to start with "@" would post a file, or fail.
+# 0600 config file, not `-u user:pass`, which is visible in the process table.
+# Body on stdin because curl reads `--data-binary @foo` as a *filename*, so a
+# summary starting with "@" would post a file, or fail.
 curl_config="$(mktemp)"
 trap 'rm -f "${curl_config}"' EXIT INT TERM
 chmod 600 "${curl_config}"
