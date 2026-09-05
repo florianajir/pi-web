@@ -38,5 +38,5 @@ WebUI\AuthSubnetWhitelist=__ALLOW_IP_RANGES__
 WebUI\AuthSubnetWhitelistEnabled=true
 WebUI\ReverseProxySupportEnabled=true
 WebUI\ServerDomains=*
-WebUI\TrustedReverseProxiesList=172.30.11.5/32
+WebUI\TrustedReverseProxiesList=172.30.11.250/32
 WebUI\Username=__USER__
