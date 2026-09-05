@@ -1118,6 +1118,12 @@ main() {
 
         if prepare_agent_env_for_passwordless_mode; then
             if AUTH_TOKEN=$(login_and_get_superuser_token); then
+                # Reconcile the PocketBase settings here too, not just in the two
+                # branches below: this is the path a healthy passwordless install
+                # takes on every start, so without it the S3 credentials and SMTP
+                # settings in .env are never propagated after the first bootstrap -
+                # a rotated S3 key leaves Beszel's own backups failing silently.
+                configure_pocketbase_settings || true
                 sync_system_user_access "$AUTH_TOKEN" || true
                 configure_ntfy_webhook_and_temperature_alerts "$AUTH_TOKEN" || true
             else
