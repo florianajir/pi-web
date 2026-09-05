@@ -9,6 +9,7 @@
 #   Unsuccessful <method> authentication attempt by user '<user>' and they are banned until <time>
 #   Error occurred getting details for user with username input '<user>' which usually
 #     indicates they do not exist
+#   Access Request failed with error: <reason>
 set -eu
 
 . "$(dirname "$0")/lib.sh"
@@ -20,6 +21,10 @@ NTFY_USER="${AUTHELIA_NTFY_USER:-authelia}"
 # Collapse identical (kind, user, ip) events inside this window to keep a browser
 # retry loop or a slow brute-force from turning into a notification storm.
 DEDUPE_WINDOW="${AUTHELIA_NTFY_DEDUPE_WINDOW:-60}"
+# A client left holding a dead refresh token retries for as long as it is open -
+# every few minutes, for days. An hour-wide window keeps that one fault to a
+# handful of reminders instead of hundreds.
+OIDC_DEDUPE_WINDOW="${AUTHELIA_NTFY_OIDC_DEDUPE_WINDOW:-3600}"
 RECONNECT_DELAY="${AUTHELIA_NTFY_RECONNECT_DELAY:-10}"
 
 # --- ntfy publishing ---
@@ -80,6 +85,18 @@ field() {
     printf '%s\n' "$2" | sed -n "$1" | head -n1
 }
 
+# Usage: within_window <key> <now> <window> <last-key> <last-time>
+within_window() {
+    _w_key="$1"
+    _w_now="$2"
+    _w_window="$3"
+    _w_last_key="$4"
+    _w_last_time="$5"
+
+    [ "$_w_key" = "$_w_last_key" ] || return 1
+    [ $((_w_now - _w_last_time)) -lt "$_w_window" ]
+}
+
 notify_event() {
     _kind="$1"
     _user="$2"
@@ -87,23 +104,43 @@ notify_event() {
     _method="$4"
     _path="$5"
     _time="$6"
-    _banned_until="$7"
+    _detail="$7"
 
     [ -n "$_user" ] || _user="<unknown>"
     [ -n "$_ip" ] || _ip="<unknown>"
 
-    # Deduplicate repeats of the same event within DEDUPE_WINDOW seconds.
+    # Deduplicate repeats of the same event within the window for its kind. The
+    # two families keep separate slots: with one shared slot, a login failure
+    # landing mid-loop would flush the hour-wide OIDC suppression and re-notify.
     _key="$_kind|$_user|$_ip"
     _now="$(date +%s)"
-    if [ "$_key" = "${last_key:-}" ] && [ $((_now - ${last_time:-0})) -lt "$DEDUPE_WINDOW" ]; then
-        log "Suppressed duplicate event ($_kind) within ${DEDUPE_WINDOW}s window"
-        return 0
-    fi
-    last_key="$_key"
-    last_time="$_now"
+    case "$_kind" in
+        oidc_grant)
+            if within_window "$_key" "$_now" "$OIDC_DEDUPE_WINDOW" "${last_oidc_key:-}" "${last_oidc_time:-0}"; then
+                log "Suppressed duplicate event ($_kind) within ${OIDC_DEDUPE_WINDOW}s window"
+                return 0
+            fi
+            last_oidc_key="$_key"
+            last_oidc_time="$_now"
+            ;;
+        *)
+            if within_window "$_key" "$_now" "$DEDUPE_WINDOW" "${last_key:-}" "${last_time:-0}"; then
+                log "Suppressed duplicate event ($_kind) within ${DEDUPE_WINDOW}s window"
+                return 0
+            fi
+            last_key="$_key"
+            last_time="$_now"
+            ;;
+    esac
 
-    _message="User: $_user
+    # A rejected grant has no resolved subject, so Authelia logs no username on
+    # that line: the client IP is all the alert can lead with.
+    if [ "$_kind" = oidc_grant ]; then
+        _message="IP: $_ip"
+    else
+        _message="User: $_user
 IP: $_ip"
+    fi
     [ -z "$_method" ] || _message="$_message
 Method: $_method"
     [ -z "$_path" ] || _message="$_message
@@ -114,11 +151,16 @@ Time: $_time"
     case "$_kind" in
         banned)
             _message="$_message
-Banned until: $_banned_until"
+Banned until: $_detail"
             publish "Authelia: user banned" high "lock,rotating_light" "$_message"
             ;;
         unknown_user)
             publish "Authelia: unknown user login attempt" default "warning,detective" "$_message"
+            ;;
+        oidc_grant)
+            _message="$_message
+Reason: $_detail"
+            publish "Authelia: OIDC grant rejected" default "key,warning" "$_message"
             ;;
         *)
             publish "Authelia: failed login" default "warning" "$_message"
@@ -132,12 +174,25 @@ process_line() {
     case "$_line" in
         *'Unsuccessful '*' authentication attempt by user '*) ;;
         *'username input '*'which usually indicates they do not exist'*) ;;
+        *'Access Request failed with error'*) ;;
         *) return 0 ;;
     esac
 
     _ip="$(field 's|.* remote_ip=\([^ ]*\).*|\1|p' "$_line")"
     _path="$(field 's|.* path=\([^ ]*\).*|\1|p' "$_line")"
     _time="$(field 's|^time="\([^"]*\)".*|\1|p' "$_line")"
+
+    case "$_line" in
+        *'Access Request failed with error'*)
+            _reason="$(field 's|.*Access Request failed with error: \(.*\)" method=.*|\1|p' "$_line")"
+            # Drop the RFC 6749 boilerplate that prefixes every invalid_grant so
+            # the alert leads with the part that differs between causes.
+            _reason="$(printf '%s' "$_reason" | sed 's|.*was issued to another client\. ||')"
+            [ -n "$_reason" ] || _reason="<unparsed>"
+            notify_event oidc_grant "" "$_ip" "" "$_path" "$_time" "$_reason"
+            return 0
+            ;;
+    esac
 
     case "$_line" in
         *'which usually indicates they do not exist'*)
