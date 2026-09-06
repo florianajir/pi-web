@@ -267,6 +267,55 @@ and data n8n hands out for execution. Like the Comet and Vaultwarden secrets it 
 `rotate-password.sh` leaves it alone; rotate by deleting the file and running
 `docker compose up -d n8n n8n-runners`.
 
+## Accepted risks
+
+Deliberate trade-offs rather than oversights. Each is written down so it is not
+rediscovered as a finding, and so the reasoning can be revisited if the balance
+changes.
+
+**`system-tools` answers without authentication to anything on `frontend`.** Its
+`/status/{topic}` endpoints are readable by every container on that network,
+including the two internet-facing ones. Measured on a healthy stack, that
+discloses the tailnet inventory (device names and their owners, 11 lines) and
+little else; `/status/errors` returns the log tail of whatever is failing, which
+is empty in normal operation but is the part worth having during an incident,
+since a crashing service often prints a connection string. Reaching any of it
+requires code execution in a frontend container first.
+
+Binding the listener to the `ai` network instead - the fix used for Pi-hole's
+admin UI - does not work here: Uptime Kuma is not on `ai`, it reads
+`/health/backups` over `frontend`, and uvicorn binds one address. Putting Uptime
+Kuma on `ai` would be worse, since its own auth is disabled and `ai` is where
+Open WebUI runs admin-supplied Python. So the real option is a bearer token,
+which both consumers support natively (Open WebUI's tool server already carries
+`auth_type`/`key` fields, Uptime Kuma monitors take custom headers). That is five
+integration points and a tenth `rotate-secret` target, weighed against a
+conditional disclosure behind a prerequisite compromise - deferred, not dismissed.
+
+**Pi-hole's public upstreams see a share of normal traffic.** See
+[Networking → The DNS pipeline](NETWORKING.md#the-dns-pipeline): dnsmasq spreads
+queries rather than treating Unbound as primary, and the `strict-order` that
+would change it leaves DNSSEC-bogus domains hanging with no answer at all.
+Cloudflare and Quad9 both validate DNSSEC, so the cost is privacy, not integrity.
+
+**The VPN and the download tooling are one-factor.** Any LLDAP account can join
+the tailnet (the `headscale` OIDC client is `one_factor`, with no group filter and
+an ACL that grants the full LAN subnet), and any LLDAP account reaches
+qBittorrent, Prowlarr and Kapowarr - where Prowlarr's UI exposes indexer
+credentials and its API key. Both were raised and kept: this is a household
+stack, and 2FA on every family device was judged the larger cost.
+
+**`ALLOW_IP_RANGES` includes `172.30.0.0/16`.** Every container therefore passes
+`lan@docker`, so a compromised one can reach any `lan`-gated router through
+Traefik. Narrowing it means pinning static addresses for Uptime Kuma's probes and
+the tailnet and host gateways; the services behind those routers each have their
+own login, so the gain was judged smaller than the breakage risk.
+
+**Authelia binds to LLDAP as the directory's super-admin.** A dedicated service
+account in `lldap_password_manager` would be tighter - password reset is enabled,
+so read-only is not an option - but it needs its own bootstrap, secret and
+rotation path.
+
 ## Sessions
 
 Sessions live in Redis; persistent state (preferences, TOTP and WebAuthn credentials) lives in PostgreSQL. Cookies are **Secure + HttpOnly, SameSite=Lax**, with a **45-minute inactivity timeout**, a **12-hour absolute expiry**, and **1 month** for "remember me".

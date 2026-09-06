@@ -617,7 +617,13 @@ services:
       TZ: ${TIMEZONE:-Europe/Paris}
       FTLCONF_webserver_api_password: ${PASSWORD}
       FTLCONF_dns_listeningMode: "all"
-      # Unbound is primary; public resolvers are only used as failover if Unbound stops answering.
+      # dnsmasq spreads queries across all three and re-probes the ones it thinks
+      # are slower, so these are not failover: a share of household queries goes
+      # to Cloudflare and Quad9 in normal operation. Accepted deliberately -
+      # `strict-order` would make Unbound truly primary, but then a DNSSEC-bogus
+      # domain gets no answer at all instead of a prompt SERVFAIL, because dnsmasq
+      # walks all three upstreams and never replies. Both of those validate
+      # DNSSEC themselves, so the protection holds; what is lost is privacy.
       FTLCONF_dns_upstreams: ${PIHOLE_DNS_UPSTREAMS:-172.30.53.53#5335;1.1.1.1;9.9.9.9}
       FTLCONF_misc_dnsmasq_lines: "address=/${HOST_NAME:-pi.lan}/${HOST_LAN_IP:-192.168.1.30}"
       # Never 0.0.0.0: pihole also sits on the `lan` macvlan, where publishing
