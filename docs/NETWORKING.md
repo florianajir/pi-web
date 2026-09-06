@@ -2,7 +2,7 @@
 
 ## The DNS pipeline
 
-No third-party resolver sees your LAN queries. Pi-hole filters, Unbound resolves recursively from the root servers; the public resolvers in `PIHOLE_DNS_UPSTREAMS` are failover only, for when Unbound stops answering.
+Pi-hole filters and Unbound resolves recursively from the root servers, so most queries reach no third party. The public resolvers in `PIHOLE_DNS_UPSTREAMS` are **not** failover-only: dnsmasq spreads queries across every upstream it is given and periodically re-probes the ones it considers slower, so Cloudflare and Quad9 do see a share of normal traffic. That is an accepted trade rather than an oversight - the alternative, `strict-order`, leaves a DNSSEC-bogus domain with no answer at all instead of a prompt SERVFAIL. Remove them from `PIHOLE_DNS_UPSTREAMS` if you want Unbound to be the only resolver, at the cost of having no fallback when it is down.
 
 ```mermaid
 sequenceDiagram
