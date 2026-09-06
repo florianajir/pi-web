@@ -191,8 +191,8 @@ Since Pi-hole resolves `*.<HOST_NAME>` to the Pi, every service works from the V
 |---------|--------|---------|---------|
 | `frontend` | `172.30.11.0/24` (Traefik `.250`, Homepage `.240`, Pi-hole `.241`; everything else dynamic) | Traefik + every routed service except Backrest, Dockhand and Vaultwarden | The network Traefik proxies to by default (`--providers.docker.network`). The three static addresses exist because something binds to or allowlists them by number: Pi-hole's `FTLCONF_webserver_port`, Traefik's `internalapi-allow` ipallowlist, and Homepage's Traefik widget URL. They are high in the range because Docker allocates dynamically from `.2` upwards |
 | `backup` | `172.30.12.0/24` | Traefik, Homepage, Backrest | Backrest's `:9898` returns the restic key and the S3 credentials to any authenticated caller, so it is not left on a segment with ~24 other containers. Not internal: restic reaches S3 through it. A service opts in with `traefik.docker.network=backup`. The subnet is pinned rather than left to Docker, which handed out `172.31.0.0/16` — outside `ALLOW_IP_RANGES`, so any request Traefik answered from its `backup` address was refused by `lan@docker` with a bare `403` |
-| `auth` | internal | Authelia, LLDAP, Postgres, Redis | LDAP and auth traffic never crosses an app network |
-| `nextcloud`, `immich`, `ai`, `vault`, `ntfy` | internal | each app + its own backends | Per-app isolation; `vault` deliberately has no path to LLDAP |
+| `auth` | internal | Authelia, LLDAP, Postgres, Redis, Backrest | LDAP and auth traffic never crosses an app network. Backrest is there only to `pg_dump` the `authelia` and `lldap` databases |
+| `nextcloud`, `immich`, `ai`, `vault`, `ntfy` | internal | each app + its own backends | Per-app isolation; `vault` deliberately has no path to LLDAP. Backrest also joins `nextcloud` and `immich` for their dumps, and `ntfy` to push a failed run |
 | `dns_internal` | `172.30.53.0/24`, no gateway | Pi-hole, Unbound | Nothing else can query Unbound |
 | `dockhand` | `172.30.13.0/24` (Traefik `.250`) | Traefik, Dockhand | Dockhand reads the Docker socket, so `:3000` is a path to every container on the host; it is not left on a segment with ~20 neighbours. Also on `ntfy`, for its OOM/unhealthy notifications |
 | `vaultwarden_web` | `172.30.14.0/24` (Traefik `.250`) | Traefik, Vaultwarden | The vault has no east-west consumer at all. Traefik's address is static here because Vaultwarden's `extra_hosts` names it by number, so the OIDC discovery call resolves |
@@ -255,8 +255,9 @@ range (see [Security → Network segmentation](SECURITY.md#network-segmentation)
 so a `cloudflared` network left to allocate itself would land in the allowlist —
 precisely the failure this paragraph warns about, and silently. And a wildcard
 hostname must never point at the tunnel, for the same reason. `ALLOW_IP_RANGES`
-itself cannot be narrowed instead: Uptime Kuma probes the gated routers from
-`172.30.11.6`, and tailnet traffic arrives SNATed as `172.30.11.1`.
+itself cannot be narrowed instead: Uptime Kuma probes the gated routers from whatever
+address Docker hands it on `frontend`, and tailnet traffic arrives SNATed as that
+network's gateway, `172.30.11.1`.
 
 ## Cloudflare records
 

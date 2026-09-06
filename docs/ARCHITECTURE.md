@@ -65,21 +65,26 @@ Every routed service follows the same path: TLS at Traefik, then the `lan` IP al
 | **Tailscale** | The Pi's own VPN node; advertises the LAN and an exit node | your devices |
 | **Nextcloud** | Files, sharing, collaboration | users |
 | **Immich** | Photo and video library with ML tagging | users |
+| **immich-machine-learning** | Immich's ML worker: face and object tagging, CLIP search | Immich only |
 | **Vaultwarden** | Bitwarden-compatible password manager | Bitwarden clients |
 | **n8n** | Workflow automation | users |
+| **n8n-runners** | Isolated task runner that executes n8n Code nodes | n8n only |
 | **ntfy** | Push notifications | the other services |
 | **Kavita** | Comics, manga and ebook reader | users, and OPDS clients |
 | **Gluetun** | VPN gateway; owns the network namespace for qBittorrent, Kapowarr and Stremio | those three |
 | **qBittorrent** | Torrent client, all traffic through Gluetun | users |
-| **Prowlarr** | Indexer manager, with FlareSolverr for protected indexers | users |
+| **Prowlarr** | Indexer manager | users |
+| **FlareSolverr** | Solves the Cloudflare challenges of Prowlarr's protected indexers | Prowlarr only |
 | **Kapowarr** | Comics and manga manager; feeds the Kavita libraries | users |
 | **Shelfmark** | Book and audiobook search; files what it downloads into the Kavita Books library | users |
 | **Audiobookshelf** | Audiobook player for `download/audiobooks/`, with Audible metadata matching and progress sync | users |
 | **Stremio + Comet** | Streaming server and its debrid addon | users |
+| **stremio-lan** | The same Stremio server on a LAN macvlan address instead of the VPN, for DLNA casting — mutually exclusive with `stremio` | users, LAN renderers |
 | **Open WebUI** | Local AI chat frontend — see [Local AI](AI.md) | users |
 | **llama.cpp / Piper / Parakeet / system-tools** | Inference, TTS, STT and the host-status tool | Open WebUI |
 | **Homepage** | Dashboard with live widgets | users |
 | **Beszel** | Hardware metrics and threshold alerts | admins |
+| **beszel-agent** | Host-side collector feeding the Beszel hub over a shared Unix socket | Beszel only |
 | **Uptime Kuma** | Service and route monitoring | admins |
 | **Dockhand** | Container management UI | admins, 2FA |
 | **Backrest** | Nightly restic backups | S3 |
@@ -419,7 +424,7 @@ which substitutes for another.
 
 | Cores | Who | Why |
 |---|---|---|
-| `0` | Traefik, Headscale, Cloudflared | Reverse proxy and the two tunnel daemons, kept off the cores the AI stack saturates |
+| `0` | Traefik, Headscale | The reverse proxy and the VPN control plane, kept off the cores the AI stack saturates |
 | `0-1` | Pi-hole | Also `FTLCONF_misc_check_load: "false"` — FTL reads the *host* loadavg and compares it to the cores it can see |
 | `1-3` | llama.cpp, Piper, Parakeet, Immich (server), Nextcloud | The compute set, pinned away from core 0 |
 | `2-3` | immich-machine-learning | Narrower still; `MACHINE_LEARNING_*_THREADS` are matched to it |

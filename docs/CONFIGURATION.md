@@ -82,7 +82,7 @@ Defaults suit a `192.168.1.0/24` LAN. The installer auto-detects all of these.
 | `HOST_LAN_GATEWAY` | `192.168.1.1` | Your router's IP |
 | `PIHOLE_IP` | `192.168.1.250` | Pi-hole's own LAN address — in the subnet, outside the DHCP range |
 | `STREMIO_IP` | `192.168.1.251` | Only for the `stremio-lan` profile — Stremio's own LAN address, so it can discover cast renderers. Same constraints as `PIHOLE_IP`. The installer derives it from the detected subnet on a `/24`; on any other subnet it warns and you set it by hand. An `.env` from before this variable existed has no line for it — `stremio-lan-pre-start.sh` refuses the start and names the fix rather than letting Compose fail with "Invalid address" |
-| `PIHOLE_DNS_UPSTREAMS` | `172.30.53.53#5335;1.1.1.1;9.9.9.9` | Unbound first; the public resolvers are failover only |
+| `PIHOLE_DNS_UPSTREAMS` | `172.30.53.53#5335;1.1.1.1;9.9.9.9` | Semicolon-separated. dnsmasq load-balances across all of them rather than treating the first as primary, so the public resolvers do see a share of normal traffic — leave only the Unbound entry to stop that. See [Networking](NETWORKING.md#the-dns-pipeline) |
 | `ALLOW_IP_RANGES` | `127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16` | Comma-separated CIDRs allowed to reach the services |
 
 `ALLOW_IP_RANGES` in order: localhost, your home LAN (**adjust to your network**), the Tailscale allocation, and the Docker internal networks. It drives Traefik's `lan` middleware — see [Security](SECURITY.md#per-service-protection).
@@ -106,8 +106,8 @@ Used by Backrest (backups), Beszel (snapshots and file uploads) and optionally N
 | `BACKREST_S3_URI` | `s3:${S3_ENDPOINT}/${S3_BUCKET}/restic` | Set explicitly for non-S3 storage |
 | `BACKREST_S3_REPO_PASSWORD` | — | Repository encryption key. 32+ random characters. **Keep a copy off this machine** — see [Monitoring](MONITORING.md#the-env-file-twice) |
 | `BACKREST_LOCAL_REPO_PASSWORD` | *(generated)* | Encryption key for the `usb` repository, which holds the `.env` history on the data disk. Left unset, `backrest-pre-start.sh` generates one into `${DATA_LOCATION}/backrest/repos/env-repo-password` so the disk can restore itself — see [Monitoring](MONITORING.md#the-env-file-twice) |
-| `BACKREST_AUTH_USER` | `${ADMIN_USER}` | Backrest UI/API login. Its password is **not** set here — see below |
-| `NEXTCLOUD_SQL_BACKUP_KEEP` | `30` | Nextcloud SQL dumps retained, separate from the full backups |
+| `BACKREST_AUTH_USER` | — | **Not a knob**: `compose.yaml` pins the Backrest UI/API login to `${ADMIN_USER}`, so a `BACKREST_AUTH_USER` line in `.env` does nothing. Its password is not set here either — see below |
+| `NEXTCLOUD_SQL_BACKUP_KEEP` | `7` in `.env.dist`, `30` if the line is absent | Nextcloud SQL dumps retained in `data/nextcloud-config/backups`, separate from the full backups |
 
 Without complete S3 credentials Backrest still starts, but its `s3` repository is unusable — the pre-start script warns and the nightly plan has nowhere to write. The `usb` repository is unaffected — it is local and needs no S3 credentials — but it only covers `.env`. For a local-only setup, add a second repository under `/repos` (bind-mounted from `${DATA_LOCATION}/backrest/repos`, where `/repos/env` is already taken) in the Backrest UI. See [Backup strategy](MONITORING.md#backup-strategy).
 
@@ -231,8 +231,8 @@ COMPOSE_PROFILES=                                             # core services on
 The exclusion is declared once, as `pi-pcloud.conflicts-with` on `stremio-lan` in `compose.yaml`, and enforced everywhere a selection is made: `make config` unticks one box when you tick the other, `make enable` refuses and names the service to disable first, and `stack-up.sh` refuses a hand-edited `.env` before anything starts. Switching modes is therefore two steps:
 
 ```bash
-make disable s=stremio
-make enable s=stremio-lan
+make disable stremio
+make enable stremio-lan
 ```
 
 **Some services pull in their dependencies** — the dependency carries the dependent's profile too, so enabling one starts both:
@@ -258,7 +258,7 @@ make disable stremio     # remove from COMPOSE_PROFILES and stop it
 
 ```
 Choose which services run — applying starts and stops containers now
-24/24 enabled · Traefik, Authelia, Pi-hole, Headscale, Postgres … always run
+26/27 enabled · Traefik, Authelia, Pi-hole, Headscale, Postgres … always run
 ── Download ──────────────────────────────────────────────────────────────
  [x] prowlarr                   Indexer manager
  [x]   flaresolverr             Cloudflare challenge solver for Prowlarr
@@ -297,7 +297,7 @@ Every service holding a Postgres role must be rotated *and* recreated together, 
 
 ## Customising further
 
-A `compose.override.yaml` is not the way to switch services off — `profiles:` lists *merge* across compose files, so an override can only add activation profiles, never remove the built-in ones. Use `make enable` / `make disable`, and verify with `make services` or `make status`.
+A `compose.override.yaml` is not the way to switch services off — `profiles:` lists *merge* across compose files, so an override can only add activation profiles, never remove the built-in ones. Use `make enable` / `make disable`, and verify with `make services`.
 
 Non-secret behaviour lives in `config/<service>/` (Traefik is the exception: it is configured entirely by CLI flags and labels in `compose.yaml`). Secrets and anything a script reads belong in `.env`. Either way, apply with `make restart`.
 

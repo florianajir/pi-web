@@ -132,8 +132,11 @@ Two release sources are wired up:
   `https://annas-archive.gl` — upstream's recommendation, and the only candidate that
   was actually serving the site when this was written. Mirrors move; the list is
   **seeded, not enforced**, so edit it freely under **Settings → Mirrors** and the
-  bootstrap will leave your version alone. `EXT_BYPASSER_URL` points at this stack's
-  FlareSolverr, which solves the Cloudflare challenges those mirrors put up.
+  bootstrap will leave your version alone. The challenges those mirrors put up are
+  solved by the bypasser **bundled in the Shelfmark image** (`USING_EXTERNAL_BYPASSER=false`),
+  not by this stack's FlareSolverr: Anna's Archive is behind DDoS-Guard, which
+  FlareSolverr reports as solved while handing back the interstitial. That bundled
+  browser is the whole reason the full image is used instead of `-lite`.
 - **AudiobookBay and IRC** are the other audiobook sources; both need a hostname or a
   network only you can choose.
 
@@ -145,7 +148,7 @@ audio edition data — see
 
 A donator key (**Settings → Direct Download → `AA_DONATOR_KEY`**) removes the wait on
 the slow download hosts. Without one, Anna's Archive queues you for a minute or two per
-file, which is why `RELEASE_SEARCH_TIMEOUT` defaults to 300 s.
+file, so a direct download that looks stuck is usually just queued.
 
 Per-account language: the stack seeds the default from `DEFAULT_LANGUAGE`
 (`fr-FR` → `fr`) on first start, and each user can override it for their own
