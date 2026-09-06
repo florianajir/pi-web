@@ -87,10 +87,10 @@ That tolerance is not free, and it is not scoped to token grants: `timeout` cove
 | Headscale | — | — | ✓ | Public by necessity — VPN clients register from anywhere. Bare `/` is a 302 to `/admin` (`headscale-root` + `headscale-root-redirect`), which is Headplane's own router: separately LAN-only + SSO + 2FA. The redirect hands the browser to that router rather than rewriting the path onto the headscale service, which has no `/admin` and answered 404 |
 | Nextcloud | ✓ | — | ✓ | LAN-only + OIDC; a second router leaves the public share paths (`/s/`, `/public.php`, …) open. Its `files_external` mounts are **read-write**, so an account in the `admin` group can delete or move anything in the download and library tree — see [Architecture](ARCHITECTURE.md#the-reading-libraries) |
 | Immich | ✓ | — | ✓ | LAN-only + OIDC; second router leaves share paths (`/share`, `/s/`, `/api`) open |
-| Vaultwarden | ✓ | — | ✓ | LAN-only + OIDC + master password — see [below](#vaultwarden) |
+| Vaultwarden | ✓ | — | ✓ | LAN-only + OIDC + master password — see [below](#vaultwarden). Off `frontend`, on the two-member `vaultwarden_web` segment with Traefik: nothing else has any reason to open `:80` on the vault, and no script does |
 | Beszel | ✓ | — | ✓ | LAN-only + OIDC, password login disabled |
 | Open WebUI | ✓ | — | ✓ | LAN-only + OIDC |
-| Dockhand | ✓ | — | ✓ | LAN-only + OIDC + admin + 2FA, local login disabled |
+| Dockhand | ✓ | — | ✓ | LAN-only + OIDC + admin + 2FA, local login disabled. Off `frontend`, on the two-member `dockhand` segment with Traefik: it reads the Docker socket, so reaching `:3000` from a neighbour is a path to every container on the host. Uptime Kuma watches it over `docker.sock`, not over HTTP; `dockhand-oidc-bootstrap.sh` and `rotate-password.sh` set `DOCKER_CURL_NETWORK` to join that segment |
 | Headplane | ✓ | ✓ | ✓ | LAN-only + SSO + OIDC + admin + 2FA |
 | Kavita | ✓ | — | ✓ | LAN-only + own accounts / OIDC — OPDS clients can't pass an interactive portal |
 | Shelfmark | ✓ | — | ✓ | LAN-only + OIDC only; password login disabled (`DISABLE_LOCAL_AUTH`), so requests and download history stay per-user |
@@ -262,10 +262,37 @@ no rotation caused.
 `scripts/n8n-pre-start.sh` and loaded by both `n8n` and `n8n-runners` as an `env_file`. It used to be
 `${N8N_RUNNERS_AUTH_TOKEN:-<a hard-coded default>}` in `compose.yaml` with the variable set nowhere, so every
 install ran the task broker on the same published default while it listened on `0.0.0.0` inside
-`frontend` — any of the ~25 containers there could register as a task runner and receive the workflow code
+`frontend` — any of the containers there could register as a task runner and receive the workflow code
 and data n8n hands out for execution. Like the Comet and Vaultwarden secrets it is machine-to-machine, so
 `rotate-password.sh` leaves it alone; rotate by deleting the file and running
 `docker compose up -d n8n n8n-runners`.
+
+## Network segmentation
+
+Every service that needs nothing but an ingress route gets a two-member segment
+with Traefik rather than a seat on `frontend`. `backup`, `dockhand` and
+`vaultwarden_web` are that pattern; `auth`, `immich`, `nextcloud`, `ai`, `vault`
+and `ntfy` are the `internal: true` data segments behind it. Three
+single-member networks — `egress_unbound`, `egress_immich`, `egress_ddns` — exist
+only because a bridge is the sole way to give a container the internet: their
+occupants need egress and no peer at all, so one member is the correct size.
+
+`frontend` still carries ~20 containers, and inside it there is no isolation:
+any member can open any other member's `expose`d port, with no Traefik and so no
+`lan` middleware and no forward-auth in the path. That is a property of a Docker
+bridge, not a misconfiguration — `enable_icc=false` would also cut Traefik off
+from its own backends. The mitigation is to keep moving services out, which is
+why the list above grows.
+
+**Docker's default address pool must not be used.** Left alone the daemon hands
+out `/16`s from `172.17.0.0/12` — fifteen in total, which this stack came within
+one of exhausting — and only `172.30.0.0/16` is inside `ALLOW_IP_RANGES`. A
+network that lands outside it makes Traefik answer a bare 403 with nothing in the
+logs to explain it. `install.sh` writes `/etc/docker/daemon.json` with a
+`172.30.128.0/17` base in `/24` chunks: 128 networks, all inside the allowlist,
+and starting at `.128` so auto-allocation can never collide with the subnets
+`compose.yaml` pins by hand (`172.30.11/12/13/14/53`). On an existing host the
+installer says what to add rather than rewriting the file.
 
 ## Accepted risks
 

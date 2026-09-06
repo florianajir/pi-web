@@ -92,6 +92,8 @@ services:
     <<: *service-defaults
     image: ghcr.io/qdm12/ddns-updater:v2.10.0
     container_name: pi-ddns-updater
+    networks:
+      - egress_ddns
     environment:
       CONFIG: >-
         {"settings":[ {"provider":"cloudflare","zone_identifier":"${CLOUDFLARE_ZONE_ID}","domain":"${HOST_NAME}","token":"${CLOUDFLARE_DNS_API_TOKEN}","ttl":1,"proxied":false}, {"provider":"cloudflare","zone_identifier":"${CLOUDFLARE_ZONE_ID}","domain":"*.${HOST_NAME}","token":"${CLOUDFLARE_DNS_API_TOKEN}","ttl":1,"proxied":false} ]}
@@ -390,6 +392,12 @@ services:
       # Only so backrest.$HOST_NAME can still be routed after backrest left
       # frontend. Nothing else lives on this segment except homepage.
       backup: {}
+      # Same again for dockhand and vaultwarden. Static .250 as on frontend, so
+      # vaultwarden's extra_hosts can name Traefik by address.
+      dockhand:
+        ipv4_address: 172.30.13.250
+      vaultwarden_web:
+        ipv4_address: 172.30.14.250
     healthcheck:
       <<: *healthcheck-fast
       test: ["CMD", "traefik", "healthcheck", "--ping"]
@@ -544,8 +552,12 @@ services:
     image: fnsys/dockhand:v1.0.46
     container_name: pi-dockhand
     profiles: ["dockhand", "all"]
+    # Not frontend: this container reads the Docker socket. See the `dockhand`
+    # network below; its bootstrap sets DOCKER_CURL_NETWORK to reach it.
     networks:
-      - frontend
+      - dockhand
+      # Its OOM/unhealthy notifications used to reach ntfy over frontend.
+      - ntfy
     expose:
       - 3000
     environment:
@@ -562,7 +574,7 @@ services:
       - "homepage.href=https://dockhand.${HOST_NAME:-pi.lan}"
       - "homepage.description=Container management"
       - "traefik.enable=true"
-      - "traefik.docker.network=frontend"
+      - "traefik.docker.network=dockhand"
       - "traefik.http.routers.dockhand.rule=Host(`dockhand.${HOST_NAME:-pi.lan}`)"
       - "traefik.http.routers.dockhand.entrypoints=websecure"
       - "traefik.http.routers.dockhand.middlewares=frame-deny@docker,lan@docker"
@@ -582,7 +594,7 @@ services:
     networks:
       dns_internal:
         ipv4_address: 172.30.53.53
-      dns_egress: {}
+      egress_unbound: {}
     expose:
       - 5335
     volumes:
@@ -948,7 +960,7 @@ services:
       - "pi-pcloud.companion-of=immich-server"
     image: ghcr.io/immich-app/immich-machine-learning:v3.1.0
     networks:
-      - dns_egress
+      - egress_immich
       - immich
     environment:
       TZ: ${TIMEZONE:-Europe/Paris}
@@ -2003,14 +2015,16 @@ services:
     image: vaultwarden/server:1.37.2
     container_name: pi-vaultwarden
     profiles: ["vaultwarden", "all"]
+    # Not frontend: no east-west consumer at all. See `vaultwarden_web` below.
     networks:
-      - frontend
+      - vaultwarden_web
       - vault
     expose:
       - 80
-    # So the SSO_AUTHORITY discovery call resolves to Traefik from inside frontend.
+    # So the SSO_AUTHORITY discovery call resolves to Traefik, reached on
+    # vaultwarden_web since this container moved off frontend.
     extra_hosts:
-      - "auth.${HOST_NAME:-pi.lan}:172.30.11.250"
+      - "auth.${HOST_NAME:-pi.lan}:172.30.14.250"
     # Neither SSO_CLIENT_SECRET nor ADMIN_TOKEN has a *_FILE variant, so the mounted
     # secrets are exported before handing over to the image's own /start.sh. Same
     # trick as open-webui. Both values are hex/PHC, so they need no quoting.
@@ -2070,7 +2084,7 @@ services:
       - "homepage.href=https://vault.${HOST_NAME:-pi.lan}"
       - "homepage.description=Bitwarden-compatible password manager"
       - "traefik.enable=true"
-      - "traefik.docker.network=frontend"
+      - "traefik.docker.network=vaultwarden_web"
       # Deliberately no authelia@docker: forward-auth breaks the browser extension
       # and mobile clients, which cannot complete the interactive portal. They are
       # authenticated through OIDC instead (see SSO_* above).
@@ -2644,9 +2658,35 @@ networks:
       config:
         - subnet: 172.30.53.0/24
           gateway: 172.30.53.1
-  dns_egress:
+  # Three single-member segments rather than one shared "dns_egress", which only
+  # bought its members reachability to each other: immich's model downloader
+  # could open unbound:5335, for no functional reason. A bridge is the only way
+  # to give a container egress, so one member is the right size, not waste.
+  #
+  # Pinned outside 172.30.0.0/16 on purpose: these have unrestricted egress and
+  # no peer, and an address inside ALLOW_IP_RANGES is a hairpin route to every
+  # LAN-only service. Pinning also keeps them off the daemon pool, so this file
+  # works on a host whose daemon.json was never updated.
+  egress_unbound:
     driver: bridge
-    name: dns_egress
+    name: egress_unbound
+    ipam:
+      config:
+        - subnet: 172.31.240.0/24
+  egress_immich:
+    driver: bridge
+    name: egress_immich
+    ipam:
+      config:
+        - subnet: 172.31.241.0/24
+  # ddns-updater had no `networks:` key at all, which put it on the implicit
+  # <project>_default: invisible here, holding a zone-scoped Cloudflare token.
+  egress_ddns:
+    driver: bridge
+    name: egress_ddns
+    ipam:
+      config:
+        - subnet: 172.31.242.0/24
   frontend:
     driver: bridge
     name: frontend
@@ -2681,6 +2721,8 @@ networks:
     driver: bridge
     name: auth
     internal: true
+  # Not internal: Code nodes run here, and helpers.httpRequest inside one is a
+  # documented way to reach the internet.
   n8n_runners:
     driver: bridge
     name: n8n_runners
@@ -2706,3 +2748,21 @@ networks:
     ipam:
       config:
         - subnet: 172.30.12.0/24
+  # Same split as `backup`, for the two services worth taking out of a
+  # ~20-container broadcast domain first: dockhand mounts the Docker socket,
+  # vaultwarden is the vault. Neither has an east-west consumer - Uptime Kuma
+  # watches both over docker.sock, not HTTP - so Traefik is the only other member.
+  # Subnets pinned inside 172.30.0.0/16, the only range in ALLOW_IP_RANGES, for
+  # the hairpinned requests these carry back to Traefik.
+  dockhand:
+    driver: bridge
+    name: dockhand
+    ipam:
+      config:
+        - subnet: 172.30.13.0/24
+  vaultwarden_web:
+    driver: bridge
+    name: vaultwarden_web
+    ipam:
+      config:
+        - subnet: 172.30.14.0/24

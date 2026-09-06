@@ -4,6 +4,11 @@
 
 set -eu
 
+# Dockhand sits alone with Traefik on `dockhand`, so the throwaway curl
+# containers must join it. Set before sourcing lib.sh, not after: lib.sh applies
+# its own `:-frontend` default at source time, which a later `:-` would keep.
+DOCKER_CURL_NETWORK="${DOCKER_CURL_NETWORK:-dockhand}"
+
 . "$(dirname "$0")/lib.sh"
 
 MAX_RETRIES=120
@@ -59,7 +64,7 @@ dockhand_login_with_user() {
     # the password reaches jq through the environment, never through argv.
     response="$(DH_PASSWORD="$password" jq -nc --arg u "$username" \
             '{username:$u,password:$ENV.DH_PASSWORD,provider:"local"}' \
-        | docker run --rm -i --network frontend "$CURL_IMAGE" $CURL_TIMEOUTS \
+        | docker run --rm -i --network "$DOCKER_CURL_NETWORK" "$CURL_IMAGE" $CURL_TIMEOUTS \
             -sS -i -X POST \
             -H 'Content-Type: application/json' --data @- \
             "$DOCKHAND_URL_DOCKER/api/auth/login" 2>/dev/null || true)"

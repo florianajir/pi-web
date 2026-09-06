@@ -231,6 +231,42 @@ install_docker() {
     [ -z "$SUDO" ] || $SUDO usermod -aG docker "$(id -un)"
 }
 
+# Networks compose does not pin a subnet for are auto-allocated, and only
+# 172.30.0.0/16 is inside ALLOW_IP_RANGES. The daemon's default hands out /16s
+# from 172.17.0.0/12 - fifteen in total, which this stack nearly exhausts, and
+# the last ones land outside that range, where `lan@docker` answers a bare 403
+# with nothing in the logs to say why. This gives 128 networks, all inside it,
+# starting at .128 so it cannot collide with the /24s compose pins by hand.
+DOCKER_ADDRESS_POOL_JSON='{
+  "default-address-pools": [
+    { "base": "172.30.128.0/17", "size": 24 }
+  ]
+}'
+
+ensure_docker_address_pool() {
+    local f=/etc/docker/daemon.json
+
+    if [ -f "$f" ]; then
+        # No JSON merge here on purpose: jq is not a dependency of this script and
+        # silently rewriting an operator's daemon config is worse than saying so.
+        if ! grep -q 'default-address-pools' "$f"; then
+            log "WARNING: $f exists but sets no default-address-pools."
+            log "  Docker will allocate networks outside ALLOW_IP_RANGES, which shows up"
+            log "  as an unexplained 403 from Traefik. Add this key and restart Docker:"
+            printf '%s\n' "$DOCKER_ADDRESS_POOL_JSON" >&2
+        fi
+        return 0
+    fi
+
+    log "Configuring Docker's default address pool (172.30.128.0/17 in /24s)"
+    # shellcheck disable=SC2086
+    printf '%s\n' "$DOCKER_ADDRESS_POOL_JSON" | $SUDO tee "$f" >/dev/null \
+        || die "could not write $f"
+    # shellcheck disable=SC2086
+    $SUDO systemctl restart docker \
+        || die "wrote $f but could not restart Docker: check 'systemctl status docker'"
+}
+
 ensure_docker() {
     local daemon_ok=""
 
@@ -705,6 +741,7 @@ main() {
     check_privileges
     ensure_base_tools
     ensure_docker
+    ensure_docker_address_pool
     resolve_install_dir
     clone_or_update
     ENV_FILE="$INSTALL_DIR/.env"

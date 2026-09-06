@@ -518,9 +518,14 @@ get_oidc_secret() {
 CURL_IMAGE="${CURL_IMAGE:-curlimages/curl:8.12.1}"
 CURL_TIMEOUTS="--connect-timeout 5 --max-time 30"
 
+# Which network the throwaway container joins. Almost every service is on
+# frontend; a caller whose target sits on a dedicated segment overrides it.
+# Getting it wrong is not subtle: the service name does not resolve at all.
+DOCKER_CURL_NETWORK="${DOCKER_CURL_NETWORK:-frontend}"
+
 docker_curl() {
     # shellcheck disable=SC2086  # CURL_TIMEOUTS is two flag pairs, split on purpose
-    docker run --rm --network frontend "$CURL_IMAGE" -fsS $CURL_TIMEOUTS "$@"
+    docker run --rm --network "$DOCKER_CURL_NETWORK" "$CURL_IMAGE" -fsS $CURL_TIMEOUTS "$@"
 }
 
 # Same, but the request body is read from stdin (`--data @-`) instead of being
@@ -529,7 +534,7 @@ docker_curl() {
 # length of the call. Use this whenever the payload carries a credential.
 docker_curl_stdin() {
     # shellcheck disable=SC2086  # CURL_TIMEOUTS is two flag pairs, split on purpose
-    docker run --rm -i --network frontend "$CURL_IMAGE" -fsS $CURL_TIMEOUTS --data @- "$@"
+    docker run --rm -i --network "$DOCKER_CURL_NETWORK" "$CURL_IMAGE" -fsS $CURL_TIMEOUTS --data @- "$@"
 }
 
 # Usage: api_send_json_stdin <method> <base_url> <path> [cookie]  (body on stdin)

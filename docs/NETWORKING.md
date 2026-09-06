@@ -26,9 +26,9 @@ sequenceDiagram
 | Container | Address | Networks | Role |
 |-----------|---------|----------|------|
 | **Pi-hole** | host `:53` + `${PIHOLE_IP}` (macvlan) + `172.30.11.241` (frontend) | `dns_internal`, `frontend`, `lan` | Filtering, local DNS; web UI bound to `127.0.0.1:8082` and `172.30.11.241:8082` only — never on the macvlan address |
-| **Unbound** | `172.30.53.53:5335` | `dns_internal` (no gateway), `dns_egress` | Recursive resolution |
+| **Unbound** | `172.30.53.53:5335` | `dns_internal` (no gateway), `egress_unbound` | Recursive resolution |
 
-`dns_internal` is an internal bridge with no gateway; Unbound's own internet access for root-server queries goes through the separate `dns_egress` network. No other container can reach Unbound, so nothing can bypass Pi-hole's filtering.
+`dns_internal` is an internal bridge with no gateway; Unbound's own internet access for root-server queries goes through the separate `egress_unbound` network, of which it is the only member. No other container can reach Unbound, so nothing can bypass Pi-hole's filtering.
 
 **Unbound validates DNSSEC.** The bind mount replaces the image's entire `unbound.conf`, which is where its own trust-anchor line lived — so before this the resolver did not validate at all, and the `harden-dnssec-stripped: yes` a few lines below it was inert. `auto-trust-anchor-file: "/opt/unbound/etc/unbound/var/root.key"` restores it, and `auto-` rather than a static `trust-anchor-file` so RFC 5011 can roll the key: `var/` is owned by `_unbound`, the user the daemon drops to, so it can rewrite the file. `val-clean-additional: yes` drops unvalidated additional-section records rather than passing them through. A bogus domain now answers SERVFAIL with no address.
 
@@ -189,12 +189,14 @@ Since Pi-hole resolves `*.<HOST_NAME>` to the Pi, every service works from the V
 
 | Network | Subnet | Members | Purpose |
 |---------|--------|---------|---------|
-| `frontend` | `172.30.11.0/24` (Traefik `.250`, Homepage `.240`, Pi-hole `.241`; everything else dynamic) | Traefik + every routed service except Backrest | The network Traefik proxies to by default (`--providers.docker.network`). The three static addresses exist because something binds to or allowlists them by number: Pi-hole's `FTLCONF_webserver_port`, Traefik's `internalapi-allow` ipallowlist, and Homepage's Traefik widget URL. They are high in the range because Docker allocates dynamically from `.2` upwards |
+| `frontend` | `172.30.11.0/24` (Traefik `.250`, Homepage `.240`, Pi-hole `.241`; everything else dynamic) | Traefik + every routed service except Backrest, Dockhand and Vaultwarden | The network Traefik proxies to by default (`--providers.docker.network`). The three static addresses exist because something binds to or allowlists them by number: Pi-hole's `FTLCONF_webserver_port`, Traefik's `internalapi-allow` ipallowlist, and Homepage's Traefik widget URL. They are high in the range because Docker allocates dynamically from `.2` upwards |
 | `backup` | `172.30.12.0/24` | Traefik, Homepage, Backrest | Backrest's `:9898` returns the restic key and the S3 credentials to any authenticated caller, so it is not left on a segment with ~24 other containers. Not internal: restic reaches S3 through it. A service opts in with `traefik.docker.network=backup`. The subnet is pinned rather than left to Docker, which handed out `172.31.0.0/16` — outside `ALLOW_IP_RANGES`, so any request Traefik answered from its `backup` address was refused by `lan@docker` with a bare `403` |
 | `auth` | internal | Authelia, LLDAP, Postgres, Redis | LDAP and auth traffic never crosses an app network |
 | `nextcloud`, `immich`, `ai`, `vault`, `ntfy` | internal | each app + its own backends | Per-app isolation; `vault` deliberately has no path to LLDAP |
 | `dns_internal` | `172.30.53.0/24`, no gateway | Pi-hole, Unbound | Nothing else can query Unbound |
-| `dns_egress` | bridge | Unbound, immich-machine-learning | Outbound-only internet access |
+| `dockhand` | `172.30.13.0/24` (Traefik `.250`) | Traefik, Dockhand | Dockhand reads the Docker socket, so `:3000` is a path to every container on the host; it is not left on a segment with ~20 neighbours. Also on `ntfy`, for its OOM/unhealthy notifications |
+| `vaultwarden_web` | `172.30.14.0/24` (Traefik `.250`) | Traefik, Vaultwarden | The vault has no east-west consumer at all. Traefik's address is static here because Vaultwarden's `extra_hosts` names it by number, so the OIDC discovery call resolves |
+| `egress_unbound`, `egress_immich`, `egress_ddns` | `172.31.240-242.0/24` | one container each | Outbound-only internet access. One shared `dns_egress` used to hold Unbound and immich-machine-learning, which let the model downloader open `unbound:5335` for no functional reason. Pinned outside `172.30.0.0/16` on purpose: these have unrestricted egress and no peer, and an address inside `ALLOW_IP_RANGES` would be a hairpin route to every LAN-only service |
 | `lan` | macvlan on `HOST_LAN_PARENT` | Pi-hole, Stremio (`stremio-lan` profile only) | Direct LAN presence — DNS, and SSDP/mDNS cast discovery |
 | `n8n_runners` | bridge | n8n, n8n-runners | Task-runner traffic |
 
@@ -246,7 +248,12 @@ included.
 
 Two things worth knowing before rebuilding it. `cloudflared` must sit on its own
 Docker network *outside* `ALLOW_IP_RANGES` — on `frontend` its address satisfies
-`lan@docker`, which would quietly publish every LAN-only service. And a wildcard
+`lan@docker`, which would quietly publish every LAN-only service. That network
+has to pin its subnet by hand, and to a range outside `172.30.0.0/16`: the
+daemon's address pool is deliberately configured to allocate *inside* that
+range (see [Security → Network segmentation](SECURITY.md#network-segmentation)),
+so a `cloudflared` network left to allocate itself would land in the allowlist —
+precisely the failure this paragraph warns about, and silently. And a wildcard
 hostname must never point at the tunnel, for the same reason. `ALLOW_IP_RANGES`
 itself cannot be narrowed instead: Uptime Kuma probes the gated routers from
 `172.30.11.6`, and tailnet traffic arrives SNATed as `172.30.11.1`.

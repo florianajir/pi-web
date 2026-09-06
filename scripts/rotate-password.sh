@@ -618,6 +618,9 @@ PY
 
 rotate_dockhand() {
     local url usernames candidate cookie users_json user_id response status
+    # Dockhand sits alone with Traefik on `dockhand`. Scoped to this function:
+    # every other target in this file is still on frontend.
+    local DOCKER_CURL_NETWORK="dockhand"
 
     if ! container_is_running "pi-dockhand"; then
         note "✘ SKIPPED Dockhand (pi-dockhand not running)"
@@ -634,7 +637,7 @@ rotate_dockhand() {
         # because a 401 here is an expected answer, not a failure.
         response="$(RP_OLD_PASSWORD="$OLD_PASSWORD" jq -nc --arg u "$candidate" \
                 '{username:$u,password:$ENV.RP_OLD_PASSWORD,provider:"local"}' \
-            | docker run --rm -i --network frontend "$CURL_IMAGE" $CURL_TIMEOUTS \
+            | docker run --rm -i --network "$DOCKER_CURL_NETWORK" "$CURL_IMAGE" $CURL_TIMEOUTS \
                 -sS -i -X POST -H 'Content-Type: application/json' --data @- \
                 "$url/api/auth/login" 2>/dev/null || true)"
         status="$(printf '%s' "$response" | awk 'NR==1 {print $2}')"
