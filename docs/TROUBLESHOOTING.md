@@ -4,7 +4,7 @@ Start here:
 
 ```bash
 make doctor     # anything outside its threshold: disk, RAM, swap, temperature, load, containers, restarts, backups
-make status     # what is running, and on which ports
+make status     # systemd unit state for the stack and the log watcher
 make logs       # follow everything
 ```
 
@@ -100,24 +100,24 @@ Add the domain to the `ALLOW_LISTS` in `scripts/pihole-bootstrap.sh`, not only i
 (**Settings → Mirrors**): the stack seeds one, `https://annas-archive.gl`, and mirror
 availability moves. `annas-archive.is` resolves and loads but does not work as a source.
 A search that returns empty while the log shows it still running is usually the
-Cloudflare solve, not the mirror — `RELEASE_SEARCH_TIMEOUT` allows 300 s for a cold one.
+challenge solve, not the mirror — a cold one takes a couple of minutes.
 
-**A mirror keeps re-challenging even though FlareSolverr solved it.** Expected, and the
-one known rough edge of routing downloads through the VPN. FlareSolverr obtains the
-`cf_clearance` cookie on the residential IP — it is a shared container and is not behind
-gluetun — while Shelfmark then replays that cookie from gluetun's exit IP. Cloudflare
-ties clearance to the IP, so it can challenge again. Two ways out, both deliberate
-choices rather than fixes:
+**A mirror keeps challenging, or direct downloads fail while search still works.**
+Those are the two halves that go through the VPN. Shelfmark's bypasser and its direct
+downloads both egress via gluetun's HTTP proxy (`plugins/network.json`,
+`http://gluetun.docker:8888`), while the Prowlarr API, the OIDC token exchange and the
+metadata providers stay direct — so a gluetun outage costs you direct downloads, not
+search or login. Check gluetun first (`docker compose ps gluetun`).
 
-- Give up the tunnel for direct downloads, accepting they leave on the residential IP
-  (torrents are unaffected — they go through qBittorrent, which is inside gluetun).
-  **Changing `PROXY_MODE` in Settings → Network does not stick**: the proxy is
-  reconciled on every stack start by `scripts/shelfmark-settings-bootstrap.sh`, which
-  owns that value. Blank `GLUETUN_HTTP_PROXY` at the top of that script, or drop gluetun
-  from `COMPOSE_PROFILES` — the script then unwinds the setting itself.
-- Move FlareSolverr behind gluetun too, so the solve and the download share one exit IP.
-  That also puts every Prowlarr indexer solve on the VPN — a larger change, and one
-  Prowlarr does not otherwise need.
+To take direct downloads off the tunnel and accept that they leave on the residential IP
+(torrents are unaffected — they go through qBittorrent, which is inside gluetun):
+**changing `PROXY_MODE` under Settings → Network does not stick**, because the proxy is
+reconciled on every stack start by `scripts/shelfmark-settings-bootstrap.sh`, which owns
+that value. Blank `GLUETUN_HTTP_PROXY` at the top of that script, or drop gluetun from
+`COMPOSE_PROFILES` — the script then unwinds the setting itself and says so in the start
+log. FlareSolverr is not in this path at all: it belongs to Prowlarr, and cannot solve
+the DDoS-Guard challenge Anna's Archive puts up, which is why Shelfmark carries its own
+browser.
 
 **Books do not appear in Kavita.** Shelfmark files into `download/books/`, which Kavita
 scans as its **Books** library; its own in-progress grabs live in `download/shelfmark/`

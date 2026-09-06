@@ -45,7 +45,6 @@ Prefer doing it by hand? See the [Installation guide](docs/INSTALLATION.md).
 | Setup effort | one command | days of glue work | one command |
 | HTTPS + SSO + DNS pre-wired | ✅ | ❌ | partial |
 | Plain Docker Compose you can read | ✅ | ✅ | ❌ app store |
-| Runs on standard Linux, no custom OS | ✅ | ✅ | ❌ |
 | Reproducible from Git, scriptable | ✅ | depends | ❌ |
 
 ## The stack

@@ -24,13 +24,14 @@ The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pul
 | `make update` | Pull code and images, rebuild, re-apply host files, apply in place |
 | `make update-images` | Images only: pull, rebuild, recreate just the containers whose image moved |
 | `make install-system` | Re-apply only what lives outside the repo: sysctl, swap size, kernel command line, `/etc/hosts`, systemd units, the `pi-pcloud` command and its completions |
+| `make pg-upgrade to=<image>` | Move the shared Postgres cluster to a new major (dump/restore). One step of a procedure — read [Postgres upgrades](POSTGRES-UPGRADE.md) first |
 | `make uninstall` | Remove the stack, volumes and units — **destructive** |
 
 ### Day to day
 
 | Command | What it does |
 |---------|--------------|
-| `make status` | Stack status and port bindings |
+| `make status` | `systemctl status` for the stack unit and the Authelia log watcher |
 | `make logs` | Follow live logs |
 | `make doctor` | Report anything outside its threshold: disk, RAM, swap, temperature, load, containers, restarts, backups — then whether each secret still agrees with its consumers |
 | `make services` | List optional services and whether each is enabled |
@@ -38,6 +39,7 @@ The command is a symlink to `scripts/pi-pcloud` inside the checkout, so `git pul
 | `make disable <service>` | Disable a service: update `COMPOSE_PROFILES` and stop it |
 | `make config` | Interactive checklist to choose which optional services run |
 | `make check-env` | Validate the required `.env` variables |
+| `make recovery-kit` | Print the five values that open the off-site backup, as two sheets to store apart — verified against the live repository first ([Monitoring](MONITORING.md#the-off-site-half-needs-a-key-that-is-not-on-this-machine)) |
 | `make test` | Run the installer, CLI, `check-env`, start-sequence and compose-invariant suites (temporary copies only, no host changes) |
 | `make lint` | Run every static check CI runs: shell syntax and `shellcheck -s dash` over every tracked shell file, `yamllint`, `ruff`, `hadolint`, `actionlint` and a `gitleaks` history scan. A gate whose tool is missing is reported as skipped; `LINT_STRICT=1` makes a skip fail |
 
