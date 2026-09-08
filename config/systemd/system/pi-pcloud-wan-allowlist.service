@@ -1,0 +1,12 @@
+[Unit]
+Description=Keep the lan@docker allowlist in step with the WAN address
+After=docker.service pi-pcloud.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=__PROJECT_PATH__
+# No EnvironmentFile=: the script reads .env through lib.sh, so it compares and
+# rewrites the same source - and systemd would put every secret in it into the
+# unit's environment for no benefit.
+ExecStart=/bin/sh __PROJECT_PATH__/scripts/wan-allowlist-sync.sh
