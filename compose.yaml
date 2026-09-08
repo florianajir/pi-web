@@ -354,7 +354,12 @@ services:
       # can opt out of it. Vaultwarden needs to (see its labels), so the frame policy
       # lives here and is attached per router instead.
       - "traefik.http.middlewares.frame-deny.headers.frameDeny=true"
-      - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}"
+      # WAN_HAIRPIN_IP is appended and not merged into ALLOW_IP_RANGES: it is
+      # the one entry that expires, and wan-allowlist-sync.sh owns it. `:+` so
+      # an empty value adds nothing rather than a trailing comma, which Traefik
+      # rejects as an invalid CIDR - taking every router that references the
+      # middleware offline with it. What it fixes: docs/NETWORKING.md.
+      - "traefik.http.middlewares.lan.ipallowlist.sourcerange=${ALLOW_IP_RANGES:-127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16}${WAN_HAIRPIN_IP:+,${WAN_HAIRPIN_IP}}"
       - "traefik.http.middlewares.rate-limit-auth.ratelimit.average=10"
       - "traefik.http.middlewares.rate-limit-auth.ratelimit.burst=20"
       - "traefik.http.middlewares.rate-limit-auth.ratelimit.period=1s"
@@ -376,11 +381,16 @@ services:
       - "traefik.http.middlewares.internalapi-allow.ipallowlist.sourcerange=172.30.11.240/32"
       - "traefik.http.routers.internalapi.middlewares=internalapi-allow@docker"
     ports:
-      - "80:80"
-      - "443:443"
+      # 0.0.0.0 and not a bare port, which also binds [::]: with no IPv6 subnet
+      # on any network here, that listener goes through userland docker-proxy,
+      # which rewrites the source to a Docker gateway address - inside
+      # ALLOW_IP_RANGES, so lan@docker admitted every IPv6 caller. Measured, not
+      # theoretical; see docs/NETWORKING.md#ipv6.
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
       # http3=true advertises Alt-Svc, which browsers cache for ~30 days; without
       # this listener they retry QUIC and time out. Also needs a router forward.
-      - "443:443/udp"
+      - "0.0.0.0:443:443/udp"
     expose:
       - 8080
     volumes:
@@ -623,8 +633,11 @@ services:
       - 53
       - 8082
     ports:
-      - "53:53/tcp"
-      - "53:53/udp"
+      # v4-only like traefik's, plus one reason specific to DNS: behind
+      # FTLCONF_dns_listeningMode "all", an IPv6 listener is an open resolver,
+      # and every query through it is attributed to the Docker gateway.
+      - "0.0.0.0:53:53/tcp"
+      - "0.0.0.0:53:53/udp"
     environment:
       TZ: ${TIMEZONE:-Europe/Paris}
       FTLCONF_webserver_api_password: ${PASSWORD}
@@ -646,6 +659,12 @@ services:
       # ipv4_address below.
       FTLCONF_webserver_port: "127.0.0.1:8082,172.30.11.241:8082"
       FTLCONF_dns_domain_name: ${HOST_NAME:-pi.lan}
+      # Default true NXDOMAINs mask.icloud.com so Private Relay cannot bypass
+      # the filter. An iPhone reports that as "Private Relay is unavailable on
+      # this network", and chasing the warning is what put IPv6 back on at the
+      # router - which took the whole LAN off Pi-hole, split-horizon included.
+      # Trade-off in docs/SECURITY.md; the two sibling anti-bypass flags stay on.
+      FTLCONF_dns_specialDomains_iCloudPrivateRelay: "false"
       # FTL compares the *host-wide* 15min loadavg (/proc/loadavg is not
       # namespaced) against the core count it can see, which `cpuset: "0-1"`
       # below caps at 2. On this 4-core Pi that warns at ~50% utilisation, so
@@ -862,7 +881,10 @@ services:
       - 9090
       - 50443
     ports:
-      - "3478:3478/udp"
+      # v4-only: stun_listen_addr is 0.0.0.0:3478, so an IPv6 client arriving
+      # through docker-proxy would be told its address is a Docker gateway -
+      # worse than finding no v6 STUN endpoint at all. docs/NETWORKING.md#ipv6.
+      - "0.0.0.0:3478:3478/udp"
     volumes:
       - ./config/headscale:/etc/headscale:ro
       - headscale_data:/var/lib/headscale

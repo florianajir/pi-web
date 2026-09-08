@@ -24,7 +24,12 @@ make logs       # follow everything
 
 ## Access
 
-**A service returns 403.** The `lan` middleware refused your source IP. Either you are reaching it from outside your LAN and tailnet, or the request hairpinned through your router and arrived with the WAN address. Check `ALLOW_IP_RANGES` in `.env` against the network you are actually on.
+**A service returns 403.** The `lan` middleware refused your source IP. Either you are reaching it from outside your LAN and tailnet, or the request hairpinned through your router and arrived with the WAN address. Check `ALLOW_IP_RANGES` in `.env` against the network you are actually on, and read the `"ClientHost"` of the rejected request in `docker logs pi-traefik` — it names the address that was refused. If that is your public address the request hairpinned, and `WAN_HAIRPIN_IP` is the fix; if the timer that maintains it is meant to be doing that for you, check it ran:
+
+```sh
+systemctl status pi-pcloud-wan-allowlist.timer
+sudo ./scripts/wan-allowlist-sync.sh   # runs the same check now; silent means nothing to change
+```
 
 **The browser downloads a 9-byte `Forbidden` file instead of showing the 403.** Same refusal, and the
 `autodetect` middleware is not reaching it. Check it is still **last** on the `websecure` entrypoint

@@ -1,0 +1,12 @@
+[Unit]
+Description=Check the WAN address against the lan@docker allowlist
+
+[Timer]
+# ddns-updater re-checks every 10 minutes, so 15 follows it rather than racing
+# it. The window that matters is how long a stale entry keeps allowlisting
+# whoever inherited the old address.
+OnBootSec=3min
+OnUnitActiveSec=15min
+
+[Install]
+WantedBy=timers.target

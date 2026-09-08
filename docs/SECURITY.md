@@ -338,6 +338,41 @@ Traefik. Narrowing it means pinning static addresses for Uptime Kuma's probes an
 the tailnet and host gateways; the services behind those routers each have their
 own login, so the gain was judged smaller than the breakage risk.
 
+This is also why every published port is bound to `0.0.0.0` explicitly. A bare
+`"443:443"` binds `[::]` too, and with no IPv6 subnet on any Docker network that
+listener goes through userland `docker-proxy`, which rewrites the client address
+to a Docker gateway one - inside the range above, so the allowlist admitted every
+IPv6 caller. See [Networking → IPv6](NETWORKING.md#ipv6) for the measurement.
+
+**`WAN_HAIRPIN_IP` allowlists the line's own public address.** It is how a LAN
+client that resolves through the router instead of Pi-hole gets past `lan@docker`:
+the router hairpins the connection back inside with the source SNAT'd to its WAN
+address. Only a connection that left the LAN is hairpinned, so on a line whose
+address is not shared this admits no new source - a request from the internet
+keeps its own. On a CGNAT line it would admit every co-subscriber, which is why
+`wan-allowlist-sync.sh` refuses any address in CGNAT or private space rather than
+trusting the operator to notice.
+
+The risk that remains is staleness: after the line's address moves, the entry
+admits whoever inherits it, gated only by each service's own login - and several
+`lan`-only routers have no login at all. `pi-pcloud-wan-allowlist.timer` bounds
+that to 15 minutes, using `tailscale netcheck` (a STUN view of the current
+address) rather than `ddns-updater`'s state file, which only records what was
+last published and would confirm a stale value indefinitely. What is left is a
+window of one timer interval, plus however long a broken `tailscaled` goes
+unnoticed - in which case the script logs a warning and changes nothing.
+
+**Pi-hole no longer blocks iCloud Private Relay.**
+`dns.specialDomains.iCloudPrivateRelay` is off, so `mask.icloud.com` resolves and
+Safari traffic on Apple devices leaves through Apple's relay, unfiltered and with
+its DNS answered by Apple rather than Pi-hole. The default was costing more than
+it bought: the block surfaces on an iPhone as "Private Relay is unavailable on
+this network", and chasing that warning is what put IPv6 back on at the router -
+whereupon the router's RA took every client off Pi-hole entirely, split-horizon
+DNS included. Local names still resolve through Pi-hole because the relay is
+bypassed for names that answer with a private address. `mozillaCanary` and
+`designatedResolver`, the two other anti-bypass defaults, stay on.
+
 **Authelia binds to LLDAP as the directory's super-admin.** A dedicated service
 account in `lldap_password_manager` would be tighter - password reset is enabled,
 so read-only is not an option - but it needs its own bootstrap, secret and

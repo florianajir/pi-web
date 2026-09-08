@@ -10,6 +10,7 @@ PROJECT_PATH := $(shell pwd)
 HEAD_BEFORE_PULL := $(shell git rev-parse HEAD 2>/dev/null)
 UNIT         := pi-pcloud.service
 WATCH_UNIT   := pi-pcloud-authelia-ntfy.service
+WAN_UNIT     := pi-pcloud-wan-allowlist.service
 COMPOSE      := docker compose
 
 # Sourcing scripts/lib.sh from a recipe, guarded so a broken lib.sh under the
@@ -187,15 +188,19 @@ install-system:
 	$(LIB_SH); \
 	LAN_PARENT_VAL=$$(unquote_env_value "$$(read_env_value_from_file .env HOST_LAN_PARENT)"); \
 	LAN_PARENT_VAL=$${LAN_PARENT_VAL:-eth0}; \
-	for unit in $(UNIT) $(WATCH_UNIT) nextcloud-cron.service; do \
+	for unit in $(UNIT) $(WATCH_UNIT) $(WAN_UNIT) nextcloud-cron.service; do \
 		sed -e 's|__PROJECT_PATH__|$(PROJECT_PATH)|g' \
 		    -e "s|__HOST_LAN_PARENT__|$$(sed_escape "$$LAN_PARENT_VAL")|g" \
 		    "config/systemd/system/$$unit" > "$$rendered"; \
 		$(SUDO) install -m 644 -o root -g root "$$rendered" "/etc/systemd/system/$$unit"; \
 	done
 	$(SUDO) cp config/systemd/system/nextcloud-cron.timer /etc/systemd/system/
+	$(SUDO) cp config/systemd/system/pi-pcloud-wan-allowlist.timer /etc/systemd/system/
 	$(SUDO) systemctl daemon-reload
-	$(SUDO) systemctl enable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer
+	$(SUDO) systemctl enable $(UNIT) $(WATCH_UNIT)
+# --now on the timers: `enable` alone arms them for the next boot only, so a
+# fresh install waits until then for the first run.
+	$(SUDO) systemctl enable --now nextcloud-cron.timer pi-pcloud-wan-allowlist.timer
 	@echo "✅ Systemd units installed"
 	@echo "🔗 Installing the pi-pcloud command..."
 # A symlink, not a copy: the command follows this checkout, so a git pull
@@ -223,6 +228,7 @@ uninstall:
 	@printf "Are you sure? Type 'yes' to confirm: "; read -r confirm && [ "$$confirm" = "yes" ] || (echo "Aborted"; exit 1)
 	@echo ""
 	@echo "🛑 Stopping services..."
+	-$(SUDO) systemctl stop pi-pcloud-wan-allowlist.timer 2>/dev/null || true
 	-$(SUDO) systemctl stop $(WATCH_UNIT) 2>/dev/null || true
 	-$(SUDO) systemctl stop $(UNIT) 2>/dev/null || true
 	@echo "🐳 Removing containers and volumes..."
@@ -257,9 +263,11 @@ uninstall:
 	@echo "🧹 Removing the pi-pcloud command..."
 	-$(SUDO) rm -f $(BIN_LINK) $(BASH_COMPLETION) $(ZSH_COMPLETION)
 	@echo "🧹 Removing systemd units..."
-	-$(SUDO) systemctl disable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer 2>/dev/null || true
+	-$(SUDO) systemctl disable $(UNIT) $(WATCH_UNIT) nextcloud-cron.timer pi-pcloud-wan-allowlist.timer 2>/dev/null || true
 	-$(SUDO) rm -f /etc/systemd/system/$(UNIT)
 	-$(SUDO) rm -f /etc/systemd/system/$(WATCH_UNIT)
+	-$(SUDO) rm -f /etc/systemd/system/$(WAN_UNIT)
+	-$(SUDO) rm -f /etc/systemd/system/pi-pcloud-wan-allowlist.timer
 	-$(SUDO) rm -f /etc/systemd/system/nextcloud-cron.service
 	-$(SUDO) rm -f /etc/systemd/system/nextcloud-cron.timer
 	-$(SUDO) systemctl daemon-reload

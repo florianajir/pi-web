@@ -114,8 +114,39 @@ Two ways to tell it apart from a broken app, both from the Pi:
     "select client, count(*) from queries where timestamp > strftime('%s','now')-86400 group by client;"
   ```
 
-Where the DHCP option is unavailable, the per-device fallback is a `hosts` entry per gated
-hostname — `/etc/hosts` on Linux and macOS, `%SystemRoot%\System32\drivers\etc\hosts` on Windows:
+**The one-entry fix is `WAN_HAIRPIN_IP`.** Set it in `.env` to the line's public address as a
+`/32`; the `lan` middleware appends it to `ALLOW_IP_RANGES`, and every device, hostname and
+resolver is covered at once with nothing to configure per device:
+
+```
+WAN_HAIRPIN_IP=203.0.113.7/32
+```
+
+It admits LAN clients only, **provided the address is yours alone**. Hairpinning is what rewrites the
+source to the WAN address, and only a connection that left the LAN gets hairpinned; a request that
+really comes from the internet arrives with its own source, which the allowlist still refuses. That
+argument fails on a CGNAT or otherwise shared line, where the same address fronts other subscribers
+— so `scripts/wan-allowlist-sync.sh` refuses to allowlist anything in CGNAT or private space.
+
+What the entry does do is expire: once the line's address moves, it keeps admitting whoever
+inherits the old one. So that script keeps the value current on a 15-minute
+`pi-pcloud-wan-allowlist.timer` installed by `make install`. Two things about it are deliberate:
+
+- **The address comes from `tailscale netcheck`,** a STUN observation of what the line presents
+  *now*. `ddns-updater`'s state file is the obvious source and the wrong one: it records what was
+  last *published*, and is only rewritten when that changes, so it goes on confirming a stale value
+  forever once publishing has broken.
+- **The check is against the running container's label,** not against `.env`. `.env` is what the
+  next `up` will render, not what Traefik is enforcing; keying off it alone means one failed
+  `compose` call short-circuits every later run and leaves the stale range live. For the same
+  reason it is `up` and not `restart` — Traefik reads middleware definitions from container labels,
+  which are fixed at creation.
+
+Measured cadence on the line this was written for is about twice a year, so the timer is insurance
+rather than a hot path — and it is why the value is best left to the timer rather than hand-edited.
+
+If you would rather not allowlist the public address at all, the per-device fallback is a `hosts`
+entry per gated hostname — `/etc/hosts` on Linux and macOS, `%SystemRoot%\System32\drivers\etc\hosts` on Windows:
 
 ```
 ${HOST_LAN_IP}  nextcloud.<HOST_NAME>
@@ -141,6 +172,36 @@ warm indefinitely, so it never re-resolves. Measured on Orion (WebKit): a single
 kept serving `homepage`, `immich`, `kavita`, `nextcloud` and `qbittorrent` — all 403 — while Chrome
 on the same machine, having resolved afresh, got 200. Quit the browser fully after editing `hosts`;
 closing the tab is not enough.
+
+### IPv6
+
+The stack is IPv4-only by design, and two things follow from that as soon as the router starts
+announcing IPv6.
+
+**A client can be taken off Pi-hole without its DNS settings changing.** The router advertises
+itself as a resolver in its Router Advertisements (RDNSS), and an IPv6-capable client uses that list
+even when Pi-hole is set by hand for IPv4 — measured on iOS, where the manual per-network DNS entry
+did not displace it. The client resolves through the router, gets the WAN address and lands on the
+hairpin `403` above. The same thing is visible from the Pi itself: `/etc/resolv.conf` picks up the
+router's global and link-local addresses alongside its IPv4 one. `WAN_HAIRPIN_IP` covers this case,
+which is the main reason to prefer it over per-device DNS.
+
+**Every published port is bound to `0.0.0.0` explicitly.** A bare `"443:443"` also binds `[::]`,
+and because no Docker network here has an IPv6 subnet, that listener is served by userland
+`docker-proxy` — which replaces the client's address with a Docker gateway address. `ALLOW_IP_RANGES`
+contains `172.30.0.0/16`, so `lan@docker` admitted **every** IPv6 caller. Measured on this host: an
+IPv6 request to the Pi's global address returned `302` and logged `"ClientHost":"172.30.12.1"`,
+where the same request over the IPv4 hairpin correctly returned `403`. Only the router's IPv6
+firewall was holding that shut. The same rewrite would make Pi-hole an open resolver
+(`FTLCONF_dns_listeningMode` is `all`) and would have Headscale's STUN server report a Docker
+address back to its clients.
+
+Doing IPv6 properly means the daemon (`"ipv6": true`, `"ip6tables": true`) plus a subnet on every
+network that needs one, which restores the real source address and would let the allowlist carry
+the delegated prefix instead. It is worth having — IPv6 has no NAT, so the hairpin problem
+disappears outright, and a LAN client reaches a global address directly over the local link without
+the router's firewall being involved — but it is a daemon-wide change and the delegated prefix is
+not guaranteed stable. Until then, v4-only is what keeps the allowlist meaningful.
 
 ## Casting to a DLNA renderer
 
@@ -210,6 +271,8 @@ Since Pi-hole resolves `*.<HOST_NAME>` to the Pi, every service works from the V
 | 53 | TCP/UDP | Pi-hole | Host + macvlan IP, for LAN and VPN clients |
 | 3478 | UDP | Headscale | STUN, via the embedded DERP relay |
 | 41641 | UDP | Tailscale (host network) | WireGuard |
+
+Each of these is published on `0.0.0.0` rather than as a bare port, so Docker does not also open an IPv6 listener alongside it — see [IPv6](#ipv6) for why that is load-bearing rather than cosmetic.
 
 Everything else — Postgres `5432`, Redis `6379`, LDAP `3890`, every app port — is `expose`-only inside Docker networks and never published on the host.
 

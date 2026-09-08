@@ -84,6 +84,7 @@ Defaults suit a `192.168.1.0/24` LAN. The installer auto-detects all of these.
 | `STREMIO_IP` | `192.168.1.251` | Only for the `stremio-lan` profile — Stremio's own LAN address, so it can discover cast renderers. Same constraints as `PIHOLE_IP`. The installer derives it from the detected subnet on a `/24`; on any other subnet it warns and you set it by hand. An `.env` from before this variable existed has no line for it — `stremio-lan-pre-start.sh` refuses the start and names the fix rather than letting Compose fail with "Invalid address" |
 | `PIHOLE_DNS_UPSTREAMS` | `172.30.53.53#5335;1.1.1.1;9.9.9.9` | Semicolon-separated. dnsmasq load-balances across all of them rather than treating the first as primary, so the public resolvers do see a share of normal traffic — leave only the Unbound entry to stop that. See [Networking](NETWORKING.md#the-dns-pipeline) |
 | `ALLOW_IP_RANGES` | `127.0.0.1/32,192.168.1.0/24,100.64.0.0/10,172.30.0.0/16` | Comma-separated CIDRs allowed to reach the services |
+| `WAN_HAIRPIN_IP` | *(empty)* | Appended to `ALLOW_IP_RANGES`. Set it to your line's public address as a `/32` if your router hairpins — see [Networking](NETWORKING.md#routers-that-cannot-set-the-dhcp-dns-option). Maintained by `pi-pcloud-wan-allowlist.timer` once set, so leave it to the timer rather than editing it back |
 
 `ALLOW_IP_RANGES` in order: localhost, your home LAN (**adjust to your network**), the Tailscale allocation, and the Docker internal networks. It drives Traefik's `lan` middleware — see [Security](SECURITY.md#per-service-protection).
 
