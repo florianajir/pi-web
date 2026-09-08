@@ -237,10 +237,17 @@ install_docker() {
 # the last ones land outside that range, where `lan@docker` answers a bare 403
 # with nothing in the logs to say why. This gives 128 networks, all inside it,
 # starting at .128 so it cannot collide with the /24s compose pins by hand.
+#
+# ip6tables is stated rather than left to its default because traefik's [::]
+# publishes depend on it: without it the daemon programs no IPv6 DNAT, userland
+# docker-proxy serves the listener instead and rewrites the source to a Docker
+# gateway address - which is inside ALLOW_IP_RANGES, so `lan@docker` would admit
+# every IPv6 caller. A default is not something to rest that on.
 DOCKER_ADDRESS_POOL_JSON='{
   "default-address-pools": [
     { "base": "172.30.128.0/17", "size": 24 }
-  ]
+  ],
+  "ip6tables": true
 }'
 
 ensure_docker_address_pool() {
@@ -252,13 +259,19 @@ ensure_docker_address_pool() {
         if ! grep -q 'default-address-pools' "$f"; then
             log "WARNING: $f exists but sets no default-address-pools."
             log "  Docker will allocate networks outside ALLOW_IP_RANGES, which shows up"
-            log "  as an unexplained 403 from Traefik. Add this key and restart Docker:"
+            log "  as an unexplained 403 from Traefik. Add these keys and restart Docker:"
             printf '%s\n' "$DOCKER_ADDRESS_POOL_JSON" >&2
+        fi
+        if grep -qE '"ip6tables"[[:space:]]*:[[:space:]]*false' "$f"; then
+            log "WARNING: $f disables ip6tables."
+            log "  Traefik's [::] publishes then go through userland docker-proxy, which"
+            log "  rewrites the client address to one inside ALLOW_IP_RANGES - so lan@docker"
+            log "  admits every IPv6 caller. Set it true, or drop the [::] ports."
         fi
         return 0
     fi
 
-    log "Configuring Docker's default address pool (172.30.128.0/17 in /24s)"
+    log "Configuring Docker's default address pool (172.30.128.0/17 in /24s) and ip6tables"
     # shellcheck disable=SC2086
     printf '%s\n' "$DOCKER_ADDRESS_POOL_JSON" | $SUDO tee "$f" >/dev/null \
         || die "could not write $f"
